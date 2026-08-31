@@ -1,0 +1,8 @@
+node_modules/
+server/node_modules/
+*.log
+.DS_Store
+icon_preview.png
+icon_preview.b64
+all_class_icons.png
+.fly/

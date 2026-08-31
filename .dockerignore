@@ -1,0 +1,11 @@
+server/node_modules
+**/node_modules
+*.md
+Game Report*.md
+Playthrough*.md
+Rank Up*.md
+Card Behavior*.md
+*.zip
+.git
+icon_preview.*
+all_class_icons.png

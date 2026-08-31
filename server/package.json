@@ -1,0 +1,10 @@
+{
+  "name": "rank-up-room-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rank Up! lockstep-relay room server (game-agnostic: rooms, seed authority, ordered action relay).",
+  "type": "commonjs",
+  "main": "room-server.js",
+  "scripts": { "start": "node room-server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}
