@@ -192,3 +192,78 @@ The single biggest risk is **making the existing engine deterministic and giving
 
 - **"build online mode"** → start Phase 0 → Phase 1 (first cross-network 2-player game).
 - Content work (classes/evolutions/modes) can proceed in parallel any time — it's independent of the netcode by design.
+
+---
+
+## 9. Multiplayer bug-fix pass (2026-09-04)
+
+Fixes to the first playable 2-player build, after real player-vs-player testing surfaced bugs. All verified
+with two browser tabs against the local room server (same-origin on :8833).
+
+**Root-cause principle applied:** the engine assumed "the human is always the 'player' seat, and 'ai' is a
+bot." Online, EITHER seat can be the local human. Turn controls, prompts, and interactive flows were rebuilt
+around **`G._myTurn`** (this client's seat is the active one) instead of `isP` (`G.turn==='player'`).
+
+- **#1/#5 Switchdraw (mandatory + optional) never showed / not selectable online.** Un-neutralized the
+  net-mode switchdraw. `beginPhase` now opens the interactive modal for whichever seat's owner is active
+  (`myTurn`), off-turn client waits. `openSwitchdrawModal`/`finishSwitchdraw` run under a POV swap
+  (`ruWithLocalPOV`) so the seat-1 owner sees THEIR OWN hand. `doSD` is a relayed action `{t:'sd'}`
+  (apply-by-tag), completion is a seat-agnostic `{t:'sdDone'}` applied canonically on both. The modal list
+  refresh (`ruRefreshSwitchdrawList`) is POV-aware and, on the seat-1 foreign-apply path, deferred one tick
+  so it targets the right seat.
+- **#2 Opponent name showed "AI".** Server sends name0/name1 → `_netName` on seat data → HUD + label fns.
+  (Verified "Alice"/"Bob".)
+- **#3 (control half) "Feels bot-like / can't choose on my own turn."** Button visibility (adv/end/sd/rv/atk)
+  is now `myTurn`-driven in `beginPhase`, and the render-time `btn-adv` override (updateModeButtons) reads the
+  stored **canonical** `G._myTurn` (reliable inside the POV/foreign-apply swap where `G.turn` is toggled).
+  The seat-1 human now gets full controls on their turn; the off-turn client is correctly locked out.
+- **#3 (reactions half) Safeguard/Retaliatory auto-activated without a prompt.** In net mode `resolveAtk` no
+  longer runs the AI defense brain (`aiConsiderSafeguard/Retaliation/Divide/ProtectFlank`) for a net-human
+  defender — it was auto-activating cards the player never chose AND risked DESYNC (AI heuristics can consume
+  the un-synced `ruAiRand` stream). Attacks now resolve deterministically. **Remaining:** interactive
+  networked defender reactions (pause attacker + relay the defender's choice) — a focused follow-up.
+- **#4 "Draw animation on every click."** Fixed earlier this pass: the POV render swap double-flipped the
+  bottom hand during foreign-apply. `renderAll` now swaps iff `(localSeat==='ai') XOR G._foreignSwapped`.
+- **#6 Rooms stalled / start never fired after reloads.** Server assigns the lowest-free seat index (not by
+  room size) and resets a room to a clean waiting state when a player leaves; client handles the `reset`
+  message (returns to lobby).
+
+Swap-invariance note: phase transitions (`beginPhase`) must run on CANONICAL state for `G._myTurn` and turn
+controls to be correct. A seat-1 action reaches `beginPhase` inside the foreign-apply swap, so `G._myTurn` is
+computed by undoing the swap's turn-toggle when `G._foreignSwapped`. Turn handoff stays canonical (deferred
+via setTimeout, outside the foreign-apply).
+
+---
+
+## 10. Mobile / all-screen responsive pass (2026-09-05)
+
+The game now plays on any screen size (phones, tablets, desktop) and pinch-zoom stays enabled (the viewport
+was already `width=device-width, initial-scale=1` — no `user-scalable=no`). Desktop (>820px, tall) is
+pixel-identical to before.
+
+Mechanism (mirrors `layoutThreeWay`'s measure→CSS-var pattern):
+- **`--zs`** (zone scale) is applied via CSS `zoom` to the 2-player board rows (`.bf:not(.three-way) .pfield`).
+  `zoom` scales the layout box too (no overflow) and keeps click/tap hit-testing correct — verified taps on
+  both a board zone and a hand card land on the right element, and a tap opens the card modal end-to-end.
+- **`--hz`** (chrome scale) zooms the hand, opponent-hand, and HUD rows. It is set per-breakpoint (NOT by JS),
+  so those rows' heights stay stable and `fitBoard` can read the real battlefield height without a feedback
+  loop. `fitBoard()` (index.html, next to `layoutThreeWay`) computes `--zs = min(1, widthFit, heightFit)`,
+  snaps ≥0.94 to 1 (desktop untouched), floors at 0.26; called from `renderAll` + a global
+  resize/orientationchange hook + settle timers at match start. 3-way keeps its own scaling (`--zs`=1 there).
+- **Chrome reflow** (styles.css media queries): portrait ≤820px stacks the right-hand column (battle log)
+  below the board for full width; landscape ≤820px keeps the row layout (frees vertical height) with a
+  narrower side column; the phase rail is hidden on mobile (redundant — actbar has the buttons, HUD shows
+  turn); actbar wraps with bigger tap targets; class grid reflows 4→3→2 columns; modals go full-width;
+  coarse-pointer devices drop sticky hover-lifts.
+
+Online games inherit all of this automatically (same DOM + `renderAll`→`fitBoard`; the POV swap doesn't
+change element sizes). Verified: desktop 1280×800 (--zs=1, row), portrait 375×812 (column, --zs≈0.50, fits,
+taps work), landscape 740×360 (row, --zs≈0.31, fits). No horizontal overflow at any size.
+
+**Δ Deck builder mobile tuning (2026-09-05):** the builder renders into the standard modal (already full-width
+on mobile). Its card list + Area Support list used a fixed `max-height:410px`; both now use a `.delta-scroll`
+class = 410px on desktop (unchanged), `46vh` on mobile so the whole builder fits — the list scrolls
+internally and, on very short landscape, the modal overlay scrolls to reach the bottom nav buttons. Modal
+buttons get bigger tap targets on mobile. Verified portrait 375×812 (fits without overlay scroll, Add button
+tappable), landscape 740×360 (list 166px, overlay scrolls, buttons reachable), desktop 1280×800 (410px,
+unchanged). Area Support sub-view tuned the same way.

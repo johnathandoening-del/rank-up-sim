@@ -65,7 +65,9 @@ wss.on('connection', (ws, req) => {
       let room = rooms.get(code);
       if (!room) { room = { seed: newSeed(), seq: 0, started: false, sockets: new Set(), seatBySocket: new Map(), nameBySocket: new Map(), clsBySocket: new Map() }; rooms.set(code, room); }
       if (room.sockets.size >= 2) { send(ws, { type: 'error', msg: 'Room full.' }); return; }   // 2-player for v1
-      const seatIdx = room.sockets.size;               // 0 = seat 'player', 1 = seat 'ai'
+      // Lowest free seat index (robust to leaves), NOT size — avoids seat collisions after a reload.
+      const usedSeats = new Set([...room.sockets].map(s => s._seatIdx));
+      let seatIdx = 0; while (usedSeats.has(seatIdx)) seatIdx++;
       const seat = SEATS[seatIdx];
       room.sockets.add(ws); room.seatBySocket.set(ws, seat); room.nameBySocket.set(ws, String(msg.name || 'guest').slice(0, 24));
       room.clsBySocket.set(ws, String(msg.cls || 'light'));
@@ -83,8 +85,10 @@ wss.on('connection', (ws, req) => {
         const bySeat = {}; socks.forEach(s => { bySeat[s._seatIdx] = s; });
         const seat0Class = room.clsBySocket.get(bySeat[0]);
         const seat1Class = room.clsBySocket.get(bySeat[1]);
+        const name0 = room.nameBySocket.get(bySeat[0]);
+        const name1 = room.nameBySocket.get(bySeat[1]);
         const firstSeat = room.seed % 2;
-        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, firstSeat, mySeat: s._seatIdx }));
+        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, name0, name1, firstSeat, mySeat: s._seatIdx }));
         console.log(`[start] room=${code} seed=${room.seed} classes=[${seat0Class},${seat1Class}] firstSeat=${firstSeat}`);
       }
       return;
@@ -109,10 +113,16 @@ wss.on('connection', (ws, req) => {
     if (!room) return;
     const seat = room.seatBySocket.get(ws);
     const name = room.nameBySocket.get(ws);
-    room.sockets.delete(ws); room.seatBySocket.delete(ws); room.nameBySocket.delete(ws);
+    room.sockets.delete(ws); room.seatBySocket.delete(ws); room.nameBySocket.delete(ws); room.clsBySocket.delete(ws);
+    if (room.sockets.size === 0) { rooms.delete(code); console.log(`[gc] room ${code} emptied`); return; }
+    // A player left an in-progress or forming match. With no reconnect (v1), reset the room to a clean
+    // WAITING state — new seed, clear started, re-seat the remaining player(s) as 0,1,… — so a fresh
+    // opponent can start a clean game (this fixes the "room stalls / start never fires" bug after reloads).
+    room.started = false; room.seed = newSeed(); room.seq = 0;
+    let i = 0; for (const s of room.sockets) { s._seatIdx = i; room.seatBySocket.set(s, SEATS[i]); i++; }
     broadcast(room, { type: 'peer', event: 'leave', seat, name, players: roomPlayers(room) });
-    console.log(`[leave] room=${code} seat=${seat} (${room.sockets.size} left)`);
-    if (room.sockets.size === 0) { rooms.delete(code); console.log(`[gc] room ${code} emptied`); }
+    broadcast(room, { type: 'reset', reason: 'opponent-left' });
+    console.log(`[leave] room=${code} seat=${seat} → reset; ${room.sockets.size} waiting`);
   });
 });
 

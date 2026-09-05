@@ -8,6 +8,13 @@
   --border-gold:rgba(201,168,76,.4);--border-gold-bright:rgba(201,168,76,.8);
   --text-main:#e8dfc0;--text-dim:#8a7a5a;--morale:#4ac9a8;--casualty:#c94a4a;
   --zone-bg:#13131f;--zone-border:rgba(201,168,76,.25);--bank-bg:#1a3a2a;--bank-border:#3a7a5a;
+  /* --zs = board "zone scale". 1 on desktop (layout unchanged); JS (fitBoard) lowers it so the whole
+     2-player board + hand shrink to fit any screen. Applied via `zoom`, which scales the layout box too
+     (so no overflow) and keeps click hit-testing correct. 3-way keeps its own layoutThreeWay scaling.
+     --hz scales the hand + opponent-hand rows. It is set per-breakpoint (NOT by fitBoard), so those rows'
+     heights don't depend on --zs — that keeps the battlefield's measured height stable and lets fitBoard
+     compute the board fit from it without a feedback loop. */
+  --zs:1;--hz:1;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',serif;min-height:100vh;overflow-x:hidden;}
@@ -63,11 +70,19 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 #game-screen{flex-direction:row;height:100vh;overflow:hidden;background:radial-gradient(115% 95% at 50% 42%,rgba(140,102,58,.40) 0%,rgba(66,48,28,.12) 50%,rgba(0,0,0,0) 74%),linear-gradient(180deg,#1e160d 0%,#2a1f12 50%,#140d07 100%);}
 .game-main{flex:1;min-width:0;display:flex;flex-direction:column;height:100vh;overflow:hidden;}
 /* Opponent hand: fanned face-down "Rank Up!" backs; count = AI's real hand size (renderOppHand). */
-.opp-hand{flex-shrink:0;display:flex;justify-content:center;align-items:flex-start;gap:0;overflow:visible;min-height:90px;padding:5px 0 2px;}
+.opp-hand{flex-shrink:0;display:flex;justify-content:center;align-items:flex-start;gap:0;overflow:visible;min-height:90px;padding:5px 0 2px;zoom:var(--hz);}
 .ocw{flex-shrink:0;width:56px;height:82px;margin:0 -8px;transform-origin:bottom center;transform:translateY(var(--ty,0px)) rotate(var(--rot,0deg));transition:transform .15s;}
 .card-back{width:100%;height:100%;background:url('rankup-back.png') center/cover no-repeat;border-radius:6px;border:1px solid rgba(201,168,76,.4);box-shadow:0 2px 6px rgba(0,0,0,.55);}
 /* HUD middle strip: two rows (opponent / player), each = [stats | name+class | Location/Advantage] */
-.hud-strip{flex-shrink:0;display:flex;flex-direction:column;margin:6px 2px;padding:5px 16px;border-radius:12px;background:linear-gradient(180deg,rgba(28,20,11,.72),rgba(15,10,6,.62));border:1px solid rgba(201,168,76,.22);box-shadow:inset 0 1px 0 rgba(255,240,210,.05);}
+.hud-strip{flex-shrink:0;display:flex;flex-direction:column;margin:6px 2px;padding:5px 16px;border-radius:12px;background:linear-gradient(180deg,rgba(28,20,11,.72),rgba(15,10,6,.62));border:1px solid rgba(201,168,76,.22);box-shadow:inset 0 1px 0 rgba(255,240,210,.05);zoom:var(--hz);position:relative;}
+/* Switchdraw reveal: fills the empty band between the name and the Location/Advantage labels. When a player
+   switchdraws, the swapped-out cards show as minis in the row DIAGONAL to them and their names in the row
+   NEXT to them (column-aligned). Positioned by renderSwitchdrawReveal(); an inert overlay (no clicks). */
+#sd-reveal{position:absolute;display:none;flex-direction:row;align-items:stretch;justify-content:center;gap:5px;pointer-events:none;z-index:3;overflow:hidden;}
+#sd-reveal .sdr-col{display:flex;flex-direction:column;align-items:center;justify-content:stretch;flex:0 0 auto;}
+#sd-reveal .sdr-top,#sd-reveal .sdr-bot{flex:1 1 50%;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+#sd-reveal .sdr-name{font-family:'Cinzel',serif;font-size:.46rem;letter-spacing:.02em;color:var(--text-main);text-align:center;line-height:1.02;max-width:100%;overflow:hidden;}
+#sd-reveal .sdr-card{flex:0 0 auto;}
 .hud-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;padding:5px 0;}
 .hud-row+.hud-row{border-top:1px solid rgba(201,168,76,.12);}
 .hud-c-stats{display:flex;gap:8px;justify-self:start;flex-wrap:wrap;}
@@ -120,6 +135,8 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
    the battlefield rows need more room than the flex:1 share gives them, .bf was growing past its
    own allocation and overlapping the hand area below instead of scrolling internally. */
 .bf{flex:1;display:flex;flex-direction:column;overflow:auto;padding:.45rem;gap:.38rem;min-height:0;}
+/* 2-player boards scale to fit via `zoom` (3-way keeps its own transform scaling, so exclude it). */
+.bf:not(.three-way) .pfield{zoom:var(--zs);}
 /* ═══════════════════════════════════════════════════════════════════════════
    1v1v1 (3-WAY) — RADIAL TABLE LAYOUT
    Three identical boards arranged as a triangle around the battlefield center,
@@ -144,26 +161,65 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
    (2-player mode is untouched: none of these rules apply without .three-way, and
    the AI boards keep their `.ai-side` mirrored layout there.)
    ═══════════════════════════════════════════════════════════════════════════ */
-.bf.three-way{position:relative;display:block;overflow:visible;padding:0;
-  --s:.55;--pl-s:.74;--pl-dy:150px;--ai-dx:360px;--ai-dy:0px;}
-/* Each board pinned to the battlefield center, then offset + spun to face inward.
-   overflow:visible + min-height:0 so the free-floating rotated boards aren't
-   clipped or forced to reserve strip height. */
-.bf.three-way .pfield{position:absolute;left:50%;top:50%;flex:0 0 auto;
-  min-height:0;margin:0;overflow:visible;pointer-events:none;}
-/* container is click-through (its wide invisible bounding box overlaps the other
-   seats) while each real zone stays clickable on its own rotated footprint. */
-.bf.three-way .pfield .zone{pointer-events:auto;}
-/* flatten the 2-player "stepped depth" nudges — every 3-way board is a clean
-   straight row like the reference. */
-.bf.three-way .pfield .zdepth-front,.bf.three-way .pfield .zdepth-mid,
-.bf.three-way .pfield .zdepth-back,.bf.three-way .pfield .zdepth-rank{transform:none;}
-/* seat transforms: translate to center, offset in screen space (dx/dy stay
-   axis-aligned), then rotate+scale each board about its own center. */
+/* Shared radial container (1v1v1 + Royale): boards are absolutely pinned to the battlefield centre and
+   spun to face inward. `.three-way`/`.four-way` only add the per-seat transforms + first-paint var defaults. */
+.bf.radial{position:relative;display:block;overflow:visible;padding:0;}
+.bf.three-way{--s:.55;--pl-s:.74;--pl-dy:150px;--ai-dx:360px;--ai-dy:0px;}
+.bf.four-way{--s4:.42;--r4-dx:400px;--r4-dy:230px;}
+/* Each board pinned to centre, offset + spun. overflow:visible + min-height:0 so the free-floating
+   rotated boards aren't clipped or forced to reserve strip height. */
+.bf.radial .pfield{position:absolute;left:50%;top:50%;flex:0 0 auto;min-height:0;margin:0;overflow:visible;pointer-events:none;}
+/* container is click-through (its wide invisible bounding box overlaps the other seats) while each real
+   zone stays clickable on its own rotated footprint. */
+.bf.radial .pfield .zone{pointer-events:auto;}
+/* flatten the 2-player "stepped depth" nudges — every radial board is a clean straight row. */
+.bf.radial .pfield .zdepth-front,.bf.radial .pfield .zdepth-mid,
+.bf.radial .pfield .zdepth-back,.bf.radial .pfield .zdepth-rank{transform:none;}
+/* 1v1v1 seat transforms: bottom (you) 0°, and two AI boards spun to the top-left / top-right. */
 .bf.three-way #pl-field{transform:translate(-50%,-50%) translate(0,var(--pl-dy)) rotate(0deg) scale(var(--pl-s));z-index:3;}
 .bf.three-way #ai-field{transform:translate(-50%,-50%) translate(calc(-1*var(--ai-dx)),var(--ai-dy)) rotate(120deg) scale(var(--s));z-index:2;}
 .bf.three-way #ai2-field{transform:translate(-50%,-50%) translate(var(--ai-dx),var(--ai-dy)) rotate(240deg) scale(var(--s));z-index:2;}
-.bf.three-way .divider{display:none;}
+/* Royale (4-way) seat transforms: bottom (you) 0°, left 90°, top 180°, right 270° — one per screen edge. */
+.bf.four-way #pl-field{transform:translate(-50%,-50%) translate(0,var(--r4-dy)) rotate(0deg) scale(var(--s4));z-index:3;}
+.bf.four-way #ai-field{transform:translate(-50%,-50%) translate(calc(-1*var(--r4-dx)),0) rotate(90deg) scale(var(--s4));z-index:2;}
+.bf.four-way #ai2-field{transform:translate(-50%,-50%) translate(0,calc(-1*var(--r4-dy))) rotate(180deg) scale(var(--s4));z-index:2;}
+.bf.four-way #ai3-field{transform:translate(-50%,-50%) translate(var(--r4-dx),0) rotate(270deg) scale(var(--s4));z-index:2;}
+.bf.radial .divider{display:none;}
+/* ── Radial: per-seat hands behind boards + a single centre stat panel (hidden entirely in 1v1) ── */
+.pf-hand3,.hud-center{display:none;}
+.bf.radial #hud-strip{display:none;}                 /* the 2-seat top strip is replaced by #hud-center */
+.bf.radial .pf-hand3{display:flex;position:absolute;left:50%;top:50%;justify-content:center;align-items:flex-start;transform-origin:center center;pointer-events:none;z-index:1;will-change:transform;}
+/* Wide bar (like the 1v1 top strip): [stats | name·class | reveal-band | meta]. */
+.bf.radial .hud-center{display:flex;flex-direction:column;gap:2px;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);transform-origin:center center;z-index:6;padding:6px 16px;border-radius:14px;background:linear-gradient(180deg,rgba(22,15,8,.93),rgba(12,8,4,.87));border:1px solid rgba(201,168,76,.32);box-shadow:inset 0 1px 0 rgba(255,240,210,.06),0 8px 30px rgba(0,0,0,.55);pointer-events:none;width:min(720px,72vw);}
+/* FIXED columns (identical every row) so the reveal band is the same width/position in all rows — the name
+   in one row lines up over the card in the adjacent row. `auto` columns collapsed differently per row
+   (LOCATION row vs empty row), breaking that alignment. */
+.hud-center .hc-seat{display:grid;grid-template-columns:auto 84px 1fr 78px;gap:2px 7px;align-items:center;padding:3px 4px;border-radius:9px;transition:background .2s;min-height:26px;}
+.hud-center .hc-seat+.hc-seat{border-top:1px solid rgba(201,168,76,.12);}
+.hud-center .hc-seat.active{background:rgba(240,200,74,.13);box-shadow:inset 0 0 0 1px rgba(240,200,74,.4);}
+.hud-center .hc-seat.elim{opacity:.4;filter:grayscale(.7);}
+.hud-center .hc-stats{display:flex;gap:4px;justify-self:start;}
+/* compact pills/name/meta so the middle reveal band keeps real room even in the narrow 1v1v1 bar */
+.hud-center .hpill{font-size:.44rem;padding:.06rem .3rem;gap:.18rem;}
+.hud-center .hpill b{font-size:.52rem;}
+.hud-center .hc-id{white-space:nowrap;}
+.hud-center .hc-nm{font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.05em;color:var(--text-main);}
+.hud-center .hc-cls{font-family:'Cinzel',serif;font-size:.46rem;letter-spacing:.08em;}
+.hud-center .hc-meta{font-family:'Crimson Pro',serif;font-size:.52rem;color:var(--text-main);justify-self:end;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.hud-center .hc-meta .hud-meta-lbl{font-size:.44rem;}
+.hud-center .hc-band{}   /* now just an empty 1fr spacer that pushes the meta to the right edge */
+/* Switchdraw reveal — a full-width strip under the rows (fits even the narrow 1v1v1 bar). Two lines (cards
+   / names) with fixed-width slots so slot i in one line sits directly over slot i in the other → each name
+   is on a DIFFERENT row than its card, column-aligned (the 1v1 split). */
+.hud-center .hc-reveal-strip{display:flex;flex-direction:column;gap:1px;align-items:center;width:100%;padding-top:4px;margin-top:3px;border-top:1px solid rgba(201,168,76,.14);}
+.hud-center .hc-rev-line{display:flex;justify-content:center;align-items:center;gap:8px;max-width:100%;overflow:hidden;}
+.hud-center .hc-rev-slot{width:46px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+.hud-center .hc-swap-card{width:64px;height:93px;zoom:.42;flex:0 0 auto;}
+.hud-center .hc-swap-card .nc{width:100%;height:100%;}
+.hud-center .hc-swap-name{font-family:'Cinzel',serif;font-size:.5rem;letter-spacing:.02em;color:var(--text-main);max-width:46px;text-align:center;line-height:1.05;overflow:hidden;}
+/* 1v1v1: the two AI boards sit at the top corners closer to centre, so keep the HUD bar narrower there
+   than in Royale (whose boards are out at the screen edges) to avoid overlapping them. */
+.bf.three-way .hud-center{width:min(444px,46vw);}
 .divider{height:1px;background:linear-gradient(to right,transparent,var(--gold-dark),var(--gold),var(--gold-dark),transparent);flex-shrink:0;opacity:.5;}
 /* min-height is a real floor (not 0), sized to Rank Zone + Bank (.rankstack's centered content)
    plus Rear Flank's own outward allowance plus an 8px safety buffer, so that column can never be
@@ -263,7 +319,7 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .hand-area{flex-shrink:0;padding:.28rem .42rem;border-top:1px solid var(--border-gold);background:transparent;display:flex;flex-direction:column;gap:.2rem;}
 .hlabel{font-family:'Cinzel',serif;font-size:.54rem;letter-spacing:.12em;color:var(--text-dim);}
 /* Fanned hand: cards arc like a held hand; per-card --rot/--ty set in renderHand (applyHandFan). */
-.hand-cards{display:flex;justify-content:center;align-items:flex-start;gap:0;overflow:visible;padding:2px 0 4px;min-height:150px;}
+.hand-cards{display:flex;justify-content:center;align-items:flex-start;gap:0;overflow:visible;padding:2px 0 4px;min-height:150px;zoom:var(--hz);}
 .hcw{flex-shrink:0;width:91px;height:132px;margin:0 -9px;cursor:pointer;transform-origin:bottom center;transform:translateY(var(--ty,0px)) rotate(var(--rot,0deg));transition:transform .17s cubic-bezier(.2,.72,.3,1),filter .17s ease;will-change:transform;}
 .hcw .nc{width:100%;height:100%;}
 .hcw.hsel{transform:translateY(calc(var(--ty,0px) - 16px)) rotate(var(--rot,0deg));filter:drop-shadow(0 0 5px rgba(201,168,76,.6));z-index:150;}
@@ -316,6 +372,8 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .delta-summon{animation:deltaSummon 1.05s ease-out;}
 @keyframes deltaSummon{0%{transform:scale(.86);box-shadow:0 0 0 rgba(111,4,23,0)}40%{transform:scale(1.09);box-shadow:0 0 28px rgba(255,120,150,.95)}100%{transform:scale(1);box-shadow:0 0 6px rgba(111,4,23,.25)}}
 .delta-list-card{border:1px solid rgba(111,4,23,.55);border-radius:6px;padding:.55rem;background:rgba(111,4,23,.08);margin-bottom:.45rem;}
+/* Δ Deck builder scroll region — viewport-capped so the whole builder fits any screen (mobile override below). */
+.delta-scroll{max-height:410px;overflow-y:auto;padding-right:.2rem;}
 .delta-pill{display:inline-block;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.08em;border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:.08rem .4rem;margin:.05rem;color:#ffb0b8;}
 
 
@@ -378,3 +436,67 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .pfield.ai-side .zstack .zone.dz{border-bottom-left-radius:7px;border-bottom-right-radius:7px;border-top-left-radius:0;border-top-right-radius:0;}
 .pfield.ai-side .zstack .zone.evo{top:auto;bottom:100%;border-radius:5px 5px 0 0;}
 .nc-amalgamation .ctag{display:none!important;}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE / MOBILE  (all screen sizes; pinch-zoom stays enabled via the
+   default viewport). The 2-player board + hands auto-shrink to fit through the
+   JS-set --zs (see fitBoard); these queries reflow the surrounding chrome so
+   nothing overflows and controls stay tappable. Desktop (>820px) is untouched.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width:820px){
+  .rail-phase{display:none;}                       /* redundant on mobile: phase/turn shown in HUD + actbar */
+  #side-log-panel .log{max-height:46px;}
+  .bf{padding:.3rem;gap:.3rem;}
+  #game-screen{--hz:.66;}                           /* hand/opp rows scale independently of the board fit */
+
+  /* HUD strip scales with --hz (like the hand rows); just tighten its spacing here. */
+  .hud-strip{padding:3px 10px;margin:3px 2px;}
+  .hud-row{gap:6px;padding:3px 0;}
+
+  /* Action bar: wrap, larger tap targets, hint on its own line. */
+  .actbar{gap:.3rem;padding:.35rem .4rem;margin:5px 6px 3px;}
+  .actbar .pbtn{font-size:.64rem;padding:.5rem .75rem;}
+  .actbar .hint{flex:1 0 100%;order:9;padding-top:2px;}
+  .hand-area{padding:.22rem .3rem;}
+
+  /* Title / class-select / lobby fit narrow screens. */
+  #title-screen{padding:1.1rem .7rem;}
+  .class-grid{grid-template-columns:repeat(3,1fr);gap:.4rem;}
+  .online-panel{max-width:100%;}
+  .online-row input{flex:1 1 100%;}
+
+  /* Modals use the full width with tighter padding. */
+  .mo{padding:.5rem;align-items:flex-start;}
+  .mbox{padding:.95rem;max-width:100%;}
+  .mbox p{font-size:.8rem;}
+  .cdet .cdt,.cdet .cds{font-size:.72rem;}
+  /* Bigger modal-button tap targets (covers Δ Deck builder's Add/Remove/nav buttons). */
+  .mbox .mb{padding:.5rem .85rem;font-size:.7rem;}
+  .mbr{gap:.4rem;}
+  /* Δ Deck builder: keep the whole builder within the screen — the card list scrolls internally. */
+  .delta-scroll{max-height:46vh;}
+  .delta-list-card{padding:.6rem;}
+}
+@media (max-width:480px){
+  .class-grid{grid-template-columns:repeat(2,1fr);}
+  .title-logo h1{font-size:clamp(2rem,13vw,3.2rem);}
+  .actbar .pbtn{font-size:.62rem;padding:.48rem .6rem;}
+}
+/* PORTRAIT phones/tablets: stack the side column (battle log) BELOW the board so it gets full width. */
+@media (max-width:820px) and (orientation:portrait){
+  #game-screen{flex-direction:column;height:100dvh;--hz:.62;}
+  .game-main{height:auto;flex:1 1 auto;min-height:0;width:100%;}
+  .game-side{width:100%;flex:0 0 auto;flex-direction:row;align-items:stretch;padding:4px 6px;gap:6px;overflow:visible;}
+  #side-log-panel{flex:1;}
+}
+/* LANDSCAPE phones: keep the side column on the RIGHT (row layout frees vertical height for the short
+   screen); just narrow it and shrink the hand rows more. */
+@media (max-width:820px) and (orientation:landscape){
+  .game-side{width:184px;padding:8px 6px 14px;}
+  #game-screen{--hz:.42;}
+}
+/* Coarse-pointer (touch) devices: give card faces a real tap target and drop sticky hover-lifts. */
+@media (hover:none) and (pointer:coarse){
+  .hcw:hover{transform:translateY(var(--ty,0px)) rotate(var(--rot,0deg));filter:none;}
+  .nc:hover{transform:none;}
+}

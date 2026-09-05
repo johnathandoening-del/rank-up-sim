@@ -22,6 +22,14 @@
     window.RU_NET_CONFIG = { seed: cfg.seed, mySeat: cfg.mySeat, seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat };
     if (typeof startGame === 'function') startGame();
     window.RU_NET_CONFIG = null;
+    // Attach the real player names to the seat data so the HUD shows them (and they follow the POV swap).
+    try {
+      if (typeof G !== 'undefined' && G) {
+        if (G.player) G.player._netName = cfg.name0 || 'Player 1';
+        if (G.ai) G.ai._netName = cfg.name1 || 'Player 2';
+        if (typeof renderAll === 'function') renderAll();
+      }
+    } catch(e){}
     log2('game started — seed ' + cfg.seed + ', you are seat ' + (cfg.mySeat + 1) + ' (' + (typeof G !== 'undefined' && G ? G._localSeat : '?') + '), controlling the bottom board.');
   }
 
@@ -49,7 +57,14 @@
         break;
       case 'peer':
         log2('peer ' + msg.event + ' (seat ' + msg.seat + ', ' + (msg.players ? msg.players.length : '?') + ' in room)');
-        if (msg.event === 'leave' && state.active) setStatus('Your opponent left the match.', 'err');
+        break;
+      case 'reset':
+        // Opponent left (no reconnect in v1) — the room reset to a clean waiting state. Return to the
+        // lobby so a fresh match can start; the seat this client will get may change, so we re-sync on the
+        // next 'joined'/'start'.
+        state.active = false; state.mySeat = null;
+        setStatus('Your opponent left — match ended. You are back in the room; a new opponent can join, or change the code.', 'err');
+        try { var gs = document.getElementById('game-screen'), ts = document.getElementById('title-screen'); if (gs) gs.classList.remove('active'); if (ts) ts.classList.add('active'); } catch(e){}
         break;
       case 'error':
         log2('room error: ' + msg.msg);

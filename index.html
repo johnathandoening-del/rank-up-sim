@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rank Up! — Classic Mode v14.0.0</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=20260905b">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
 </style>
@@ -57,6 +57,22 @@
       <div class="deltastack zdepth-mid" id="ai2-delta-stack"><div class="zone delta" id="ai2-delta" onclick="deltaZoneClick('ai2')"><span>&#916;<br>ZONE</span></div><div class="zone delements empty" id="ai2-elements">ELEMENTS: 0</div></div>
       <div class="zone dead zdepth-back" id="ai2-dead" onclick="viewZone('ai2','deadzone')"><span id="ai2-dead-n">0</span><span>DEADZONE</span></div>
     </div>
+    <!-- 4th seat (Royale). Hidden unless a 4-way board is active. -->
+    <div class="pfield ai-side" id="ai3-field" style="display:none"><div class="field-area-overlay" id="ai3-area-overlay"></div>
+      <div class="zstack zdepth-back">
+        <div class="zone dz" onclick="viewZone('ai3','deck')"><span id="ai3-dk-n">0</span><span>DECK</span></div>
+        <div class="zone evo" id="ai3-evo" onclick="viewZone('ai3','evolutions')"><span>EVO <span id="ai3-evo-n">0</span></span></div>
+      </div>
+      <div class="zone disc zdepth-mid" id="ai3-disc" onclick="viewZone('ai3','discard')"><span id="ai3-disc-n">0</span><span>DISCARD</span></div>
+      <div class="zone fz zdepth-front" id="ai3-lf">LEFT<br>FLANK<br>ZONE</div>
+      <div class="rankstack zdepth-rank">
+        <div class="zone rear" id="ai3-rear" style="display:none">REAR<br>FLANK<br>ZONE</div>
+        <div class="rbs"><div class="zone rz" id="ai3-rz">RANK<br>ZONE</div><div class="zone bk">BANK <span id="ai3-bk-n">0</span></div></div>
+      </div>
+      <div class="zone fz zdepth-front" id="ai3-rf">RIGHT<br>FLANK<br>ZONE</div>
+      <div class="deltastack zdepth-mid" id="ai3-delta-stack"><div class="zone delta" id="ai3-delta" onclick="deltaZoneClick('ai3')"><span>&#916;<br>ZONE</span></div><div class="zone delements empty" id="ai3-elements">ELEMENTS: 0</div></div>
+      <div class="zone dead zdepth-back" id="ai3-dead" onclick="viewZone('ai3','deadzone')"><span id="ai3-dead-n">0</span><span>DEADZONE</span></div>
+    </div>
     <div class="divider" id="ai2-divider" style="display:none"></div>
     <div class="pfield ai-side" id="ai-field"><div class="field-area-overlay" id="ai-area-overlay"></div>
       <div class="zstack zdepth-back">
@@ -100,6 +116,7 @@
         </div>
         <div class="hud-c hud-c-meta"><span class="hud-meta-lbl">ADVANTAGE:</span> <span id="hud-advantage">nA</span></div>
       </div>
+      <div id="sd-reveal"></div>
     </div>
     <div class="pfield player-field" id="pl-field"><div class="field-area-overlay" id="pl-area-overlay"></div>
       <div class="zstack zdepth-back">
@@ -116,6 +133,12 @@
       <div class="deltastack zdepth-mid" id="pl-delta-stack"><div class="zone delta" id="pl-delta" onclick="deltaZoneClick('player')"><span>&#916;<br>ZONE</span></div><div class="zone delements empty" id="pl-elements">ELEMENTS: 0</div></div>
       <div class="zone dead zdepth-back" id="pl-dead" onclick="deadzoneClick('player')"><span id="pl-dead-n">0</span><span>DEADZONE</span></div>
     </div>
+    <!-- 1v1v1 only: each opponent's fanned hand sits BEHIND its own rotated board (positioned by layoutThreeWay),
+         and a single stat panel for all three seats sits in the empty centre of the triangle. Hidden in 1v1. -->
+    <div class="pf-hand3" id="ai-hand3"></div>
+    <div class="pf-hand3" id="ai2-hand3"></div>
+    <div class="pf-hand3" id="ai3-hand3"></div>
+    <div class="hud-center" id="hud-center"></div>
   </div>
   <div class="actbar">
     <button class="pbtn primary" id="btn-adv" onclick="advPhase()">Next Phase &rarr;</button>
@@ -249,7 +272,7 @@ function buildDeck(cls){
 // ═══════════════════════════════════════════
 // TITLE SCREEN
 // ═══════════════════════════════════════════
-let pCls=null,aCls=null,aCls2=null;
+let pCls=null,aCls=null,aCls2=null,aCls3=null;
 function evolutionsAllowed(){const e=el('allow-evolutions');return !e||!!e.checked;}
 function toggleEvoChoice(){const lab=el('evo-toggle-label');if(lab)lab.classList.toggle('off',!evolutionsAllowed());}
 function buildTitle(){
@@ -284,6 +307,7 @@ function refreshAIPick(){
   const aiLevelOpts=(typeof window.aiLevelOptions==='function'?window.aiLevelOptions():'');
   const aiLevelOptsB=(typeof window.aiLevelOptions==='function'?window.aiLevelOptions(window.RU_AI_LEVEL_KEY_B):'');
   const classOpts2=(typeof window.classOptions==='function'?window.classOptions(aCls2):Object.keys(CM).map(k=>'<option value="'+k+'" '+(k===aCls2?'selected':'')+'>'+(CM[k]?CM[k].icon+' '+CM[k].name:k)+'</option>').join(''));
+  const classOpts3=Object.keys(CM).map(k=>'<option value="'+k+'" '+(k===aCls3?'selected':'')+'>'+(CM[k]?CM[k].icon+' '+CM[k].name:k)+'</option>').join('');
   const html='<span class="ai-choice">'+deckLabel+': <select id="ai-class-select" onchange="setAICls(this.value)">'+classOpts+'</select></span>'+
     '<button onclick="randomAICls()" style="font-family:Cinzel,serif;font-size:.6rem;padding:.15rem .5rem;background:transparent;border:1px solid var(--border-gold);color:var(--text-dim);cursor:pointer;border-radius:3px;">Random AI Deck</button>'+
     '<button onclick="cycleAICls()" style="font-family:Cinzel,serif;font-size:.6rem;padding:.15rem .5rem;background:transparent;border:1px solid var(--border-gold);color:var(--gold);cursor:pointer;border-radius:3px;">Cycle AI</button>'+
@@ -293,8 +317,9 @@ function refreshAIPick(){
     '<button id="ai2-random-btn" style="display:'+(mode==='1v1v1'?'':'none')+';font-family:Cinzel,serif;font-size:.6rem;padding:.15rem .5rem;background:transparent;border:1px solid var(--border-gold);color:var(--text-dim);cursor:pointer;border-radius:3px;" onclick="randomAICls2()">Random AI 2 Deck</button>'+
     '<button id="ai2-cycle-btn" style="display:'+(mode==='1v1v1'?'':'none')+';font-family:Cinzel,serif;font-size:.6rem;padding:.15rem .5rem;background:transparent;border:1px solid var(--border-gold);color:var(--gold);cursor:pointer;border-radius:3px;" onclick="cycleAICls2()">Cycle AI 2</button>'+
     '<button id="ai2-view-btn" style="display:'+(mode==='1v1v1'?'':'none')+';font-family:Cinzel,serif;font-size:.6rem;padding:.15rem .5rem;background:transparent;border:1px solid var(--border-gold);color:var(--text-dim);cursor:pointer;border-radius:3px;" onclick="viewDeckPreview(\'ai2\')">View AI 2 Deck</button>'+
+    '<span class="ai-choice" id="ai3-pick-wrap" style="display:'+(mode==='royale4'?'inline-flex':'none')+'">AI 3 Deck: <select id="ai-class-select-3" onchange="setAICls3(this.value)">'+classOpts3+'</select></span>'+
     '<div class="ru135-mode-panel">'+
-    '<span class="ai-choice">Mode: <select id="ru135-mode-select" onchange="ru135SetMode(this.value)"><option value="standard">Standard Match</option><option value="tournament">Tournament Mode</option><option value="ai-vs-ai">AI vs AI Watch</option><option value="1v1v1">1v1v1 (3-Way)</option></select></span>'+
+    '<span class="ai-choice">Mode: <select id="ru135-mode-select" onchange="ru135SetMode(this.value)"><option value="standard">Standard Match</option><option value="tournament">Tournament Mode</option><option value="ai-vs-ai">AI vs AI Watch</option><option value="1v1v1">1v1v1 (3-Way)</option><option value="royale4">Royale (4-Player)</option></select></span>'+
     '<span class="ai-choice" id="ru135-bracket-wrap">Bracket: <select id="ru135-bracket-size" onchange="ru135SetBracket(this.value)"><option>4</option><option selected>8</option><option>16</option><option>32</option><option>64</option></select></span>'+
     '<span class="ai-choice" id="ai-level-a-wrap" style="display:none">AI A Proficiency: <select id="ai-level-select-a" onchange="window.RU_AI_LEVEL_KEY_A=this.value;window.RU_AI_LEVEL_NUM_A=1;if(window.ruRebuildSubA)window.ruRebuildSubA();">'+aiLevelOptsA+'</select></span>'+
     '<span class="ai-choice" id="ai-sublevel-a-wrap"> Level: <select id="ai-sublevel-select-a" onchange="window.RU_AI_LEVEL_NUM_A=parseInt(this.value,10)||1;if(window.ruLogSubA)window.ruLogSubA();"></select></span>'+
@@ -436,24 +461,28 @@ function sideMeta(sideId){
     if(sideId==='player')return {controller:'human',clsKey:pCls,elId:'pl-name',fieldId:'pl-field',zonePrefix:'pl',label:'YOU'};
     if(sideId==='ai')return {controller:'ai',clsKey:aCls,elId:'ai-name',fieldId:'ai-field',zonePrefix:'ai',label:'AI'};
     if(sideId==='ai2')return {controller:'ai',clsKey:aCls2,elId:'ai2-name',fieldId:'ai2-field',zonePrefix:'ai2',label:'AI 2'};
+    if(sideId==='ai3')return {controller:'ai',clsKey:aCls3,elId:'ai3-name',fieldId:'ai3-field',zonePrefix:'ai3',label:'AI 3'};
     return {controller:'ai',clsKey:aCls,elId:'ai-name',fieldId:'ai-field',zonePrefix:'ai',label:'AI'};
   }
   const clsKey=G[sideId].class;
   if(sideId==='player')return {controller:'human',clsKey:clsKey,elId:'pl-name',fieldId:'pl-field',zonePrefix:'pl',label:'YOU'};
   if(sideId==='ai')return {controller:'ai',clsKey:clsKey,elId:'ai-name',fieldId:'ai-field',zonePrefix:'ai',label:'AI'};
   if(sideId==='ai2')return {controller:'ai',clsKey:clsKey,elId:'ai2-name',fieldId:'ai2-field',zonePrefix:'ai2',label:'AI 2'};
+  if(sideId==='ai3')return {controller:'ai',clsKey:clsKey,elId:'ai3-name',fieldId:'ai3-field',zonePrefix:'ai3',label:'AI 3'};
   return {controller:'ai',clsKey:clsKey,elId:'ai-name',fieldId:'ai-field',zonePrefix:'ai',label:'AI'};
 }
 window.sideMeta=sideMeta;
 function sideNameLabel(w){
+  // Online: use the real player name (rides on the seat data, so it's correct even mid-foreign-apply).
+  if(G&&G._netMode&&G[w]&&G[w]._netName)return G[w]._netName;
   if(G&&G.ruMode==='ai-vs-ai')return w==='player'?'AI A':(w==='ai2'?'AI 2':'AI B');
   if(w==='player')return 'You';
   return window.sideMeta?sideMeta(w).label:(w==='ai2'?'AI 2':'AI');
 }
 function sideSubjectLabel(w){return sideNameLabel(w);}
-function sideObjectLabel(w){return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'you':sideNameLabel(w);}
-function sidePossessiveLabel(w){return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'Your':sideNameLabel(w)+"'s";}
-function sideVerbLabel(w,base,third){return sideSubjectLabel(w)+' '+((w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?base:(third||base+'s'));}
+function sideObjectLabel(w){if(G&&G._netMode)return sideNameLabel(w);return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'you':sideNameLabel(w);}
+function sidePossessiveLabel(w){if(G&&G._netMode)return sideNameLabel(w)+"'s";return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'Your':sideNameLabel(w)+"'s";}
+function sideVerbLabel(w,base,third){var useThird=(G&&G._netMode)||w!=='player'||(G&&G.ruMode==='ai-vs-ai');return sideSubjectLabel(w)+' '+(useThird?(third||base+'s'):base);}
 window.sideNameLabel=sideNameLabel;window.sideSubjectLabel=sideSubjectLabel;window.sideObjectLabel=sideObjectLabel;window.sidePossessiveLabel=sidePossessiveLabel;window.sideVerbLabel=sideVerbLabel;
 // Shorthand for the many scattered "pl-X"/"ai-X" DOM-id ternaries throughout this file --
 // resolves to whichever side's own zone-id prefix, so a 3rd (or later) seat's elements get found
@@ -480,8 +509,9 @@ function layoutThreeWay(force){
   const bbW=BW*cos+BH*sin, bbH=BW*sin+BH*cos;        // an AI board rotated 120° → ~512 x ~707 bbox
   const vM=14, hM=22;                                // edge margins
   // Largest scale that fits vertically (AI board is the tall one), fits horizontally
-  // (two AI bboxes off the centered player + on-screen → the /1736 term), and isn't absurd.
-  let scale=Math.min((H-2*vM)/bbH, (W-2*hM)/1736, 0.90);
+  // (two AI bboxes off the centered player + on-screen → the /1480 term), and isn't absurd. The centre HUD
+  // bar is sized to fit the triangle gap between the boards (see .bf.three-way .hud-center), not the boards.
+  let scale=Math.min((H-2*vM)/bbH, (W-2*hM)/1480, 0.95);
   scale=Math.max(scale,0.28);
   // YOUR board is drawn 1.35× the AI boards' size: it sits at the bottom and grows up into the
   // open center below the top-anchored AI boards, so it stays clear of them (verified collision-free
@@ -497,15 +527,79 @@ function layoutThreeWay(force){
   bf.style.setProperty('--pl-dy',Math.round(plDy)+'px');
   bf.style.setProperty('--ai-dx',Math.round(aiDx)+'px');
   bf.style.setProperty('--ai-dy',Math.round(aiDy)+'px');
+  // Position each opponent's hand BEHIND its own board: the board's exact translate+rotate+scale, plus a
+  // local +Y push (translateY, in the board's own rotated/scaled frame) that lands it just past the board's
+  // outer edge — so every seat's hand fans out from its back, like players seated around a table.
+  var handBack=128;                                   // local px from board centre to the hand row (≈ board half-height + a card)
+  var aiH=el('ai-hand3');
+  if(aiH)aiH.style.transform='translate(-50%,-50%) translate('+(-Math.round(aiDx))+'px,'+Math.round(aiDy)+'px) rotate(120deg) scale('+scale.toFixed(3)+') translateY('+handBack+'px)';
+  var ai2H=el('ai2-hand3');
+  if(ai2H)ai2H.style.transform='translate(-50%,-50%) translate('+Math.round(aiDx)+'px,'+Math.round(aiDy)+'px) rotate(240deg) scale('+scale.toFixed(3)+') translateY('+handBack+'px)';
 }
 window.layoutThreeWay=layoutThreeWay;
+// ROYALE (4-way): four identical boards at the screen edges, each facing centre — bottom 0°, left 90°,
+// top 180°, right 270°. Scale fits the tallest element (the rotated left/right boards are BW tall) and the
+// widest row (centre board + the two side boards). Each AI hand sits behind its own board (local +Y push).
+function layoutFourWay(force){
+  const bf=el('battlefield');
+  if(!bf||!bf.classList.contains('four-way'))return;
+  const W=bf.clientWidth, H=bf.clientHeight;
+  if(W<80||H<80)return;
+  if(!force && layoutFourWay._w===W && layoutFourWay._h===H)return;
+  layoutFourWay._w=W; layoutFourWay._h=H;
+  const BW=712, BH=180, vM=14, hM=16;
+  var scaleV=(H-2*vM)/BW;                     // left/right boards are BW tall (rotated 90°)
+  var scaleH=(W-2*hM)/(BW+2*BH+70);           // centre board (BW) + two side boards (BH) + gaps fit the width
+  var scale=Math.max(0.22, Math.min(scaleV, scaleH, 0.82));   // fill the space — usually height-bound (side boards)
+  var dy=H/2 - vM - (BH*scale)/2;             // top/bottom board centres, pushed to the edges
+  var dx=W/2 - hM - (BH*scale)/2;             // left/right board centres, pushed to the edges
+  bf.style.setProperty('--s4',scale.toFixed(3));
+  bf.style.setProperty('--r4-dx',Math.round(dx)+'px');
+  bf.style.setProperty('--r4-dy',Math.round(dy)+'px');
+  var hb=128;                                 // local px from board centre to the hand row (past the back edge)
+  function setHand(id,dxv,dyv,deg){ var h=el(id); if(h)h.style.transform='translate(-50%,-50%) translate('+dxv+'px,'+dyv+'px) rotate('+deg+'deg) scale('+scale.toFixed(3)+') translateY('+hb+'px)'; }
+  setHand('ai-hand3', -Math.round(dx), 0, 90);      // left seat
+  setHand('ai2-hand3', 0, -Math.round(dy), 180);    // top seat
+  setHand('ai3-hand3', Math.round(dx), 0, 270);     // right seat
+}
+window.layoutFourWay=layoutFourWay;
+function ruFitRadial(force){ var bf=el('battlefield'); if(!bf)return; if(bf.classList.contains('four-way'))layoutFourWay(force); else if(bf.classList.contains('three-way'))layoutThreeWay(force); }
+window.ruFitRadial=ruFitRadial;
+// Fit the 2-player board + hands to ANY screen by setting --zs (a `zoom` factor applied to the board rows
+// and hands in styles.css). Width comes from the battlefield's own box; height uses the STABLE window
+// height (not bf.clientHeight) so the hand/opp rows — which also scale with --zs — can't create a feedback
+// loop. Desktop stays at --zs=1 (identical layout). 3-way keeps its own layoutThreeWay scaling.
+function fitBoard(){
+  var gs=el('game-screen'); if(!gs)return;
+  var bf=el('battlefield'); if(!bf)return;
+  if(bf.classList.contains('radial')){ gs.style.setProperty('--zs','1'); return; }   // radial modes manage their own scaling
+  var availW=bf.clientWidth, availH=bf.clientHeight; if(availW<60||availH<60)return; // not laid out yet — a later call catches it
+  var NAT_W=726;                                                  // natural 2-player board row width (zones+gaps)
+  var NAT_ROWS=2*190;                                             // two board rows incl. flank overhang
+  var hud=el('hud-strip'); var hudH=hud?hud.getBoundingClientRect().height:64; // rect = the real (zoomed) height
+  var zsW=(availW-6)/NAT_W;
+  var zsH=(availH-hudH-20)/NAT_ROWS;                              // real battlefield height (−20 for bf padding+gaps; hand/opp use --hz so this is stable)
+  var zs=Math.min(1,zsW,zsH); zs=Math.max(zs,0.26);
+  if(zs>0.94)zs=1;                                                // near-fit → leave desktop pixel-identical (bf's own overflow absorbs the sliver)
+  var cur=parseFloat(gs.style.getPropertyValue('--zs'))||1;
+  if(Math.abs(zs-cur)<0.015)return;                              // ignore jitter → never oscillates
+  gs.style.setProperty('--zs',zs.toFixed(3));
+}
+window.fitBoard=fitBoard;
+// One always-on handler keeps BOTH layouts fitted to the window (2-player via --zs, 1v1v1 via transforms).
+if(!window.__ruFitHooked){
+  window.__ruFitHooked=true;
+  var _refit=function(){ try{ fitBoard(); }catch(e){} try{ if(window.ruFitRadial)ruFitRadial(); }catch(e){} };
+  window.addEventListener('resize',_refit);
+  window.addEventListener('orientationchange',function(){ _refit(); setTimeout(_refit,250); });
+}
 // Single source of truth for a fresh match's G object. Both initGame and initTutorialGame build
 // through here so the state shape can never drift between them (the old duplicate tutorial literal
 // was already missing `eliminated` and `_lastWinResult`). `seats` is the ordered seat list;
 // `clsFor(seat)` returns that seat's Combat-class. Each seat's side is built from its own id prefix.
 function makeGameState(seats,firstTurn,clsFor,buildOrder){
   const sideOrder=seats.slice();
-  const pfxFor=function(w){return w==='player'?'p':w==='ai'?'a':w==='ai2'?'a2':w;};
+  const pfxFor=function(w){return w==='player'?'p':w==='ai'?'a':w==='ai2'?'a2':w==='ai3'?'a3':w;};
   const G0={turn:firstTurn||sideOrder[0],phase:'draw',exchange:1,firstTurn:true,gameOver:false,
     _exchangeAnchor:(firstTurn||sideOrder[0]),
     sideOrder,eliminated:{},_turnsCompletedBy:{},_lastWinResult:null,_addons:[],allowEvolutions:evolutionsAllowed(),
@@ -520,8 +614,11 @@ function makeGameState(seats,firstTurn,clsFor,buildOrder){
 }
 function initGame(){
   var netCfg=window.RU_NET_CONFIG||null;   // {seed, mySeat, seat0Class, seat1Class, firstSeat} for online mirrored-local
-  const is3Way=!netCfg && (window.modeState&&window.modeState.mode)==='1v1v1';
-  const seats=is3Way?['player','ai','ai2']:['player','ai'];
+  const _mode=(window.modeState&&window.modeState.mode);
+  const is4Way=!netCfg && _mode==='royale4';                 // 4-player free-for-all (Royale)
+  const is3Way=!netCfg && _mode==='1v1v1';
+  const isRadial=is3Way||is4Way;                             // both use the radial (edge-facing) board layout
+  const seats=is4Way?['player','ai','ai2','ai3']:is3Way?['player','ai','ai2']:['player','ai'];
   // Seed the game's deterministic RNG BEFORE any shuffle (turn order + all deck shuffles derive from it).
   // Online, the room injects the shared seed (via netCfg) so all clients match; solo generates one locally.
   const _gameSeed=netCfg?(netCfg.seed>>>0):((window.RU_INJECTED_SEED!=null)?(window.RU_INJECTED_SEED>>>0):((Math.random()*0xFFFFFFFF)>>>0));
@@ -544,35 +641,37 @@ function initGame(){
   } else {
     sideOrder=shuffle(seats.slice());
     firstTurn=sideOrder[0];
-    if(is3Way)log(`Turn order: ${sideOrder.map(w=>sideMeta(w).label).join(' \u2192 ')}.`,'imp');
+    if(isRadial)log(`Turn order: ${sideOrder.map(w=>sideMeta(w).label).join(' \u2192 ')}.`,'imp');
     else log(`Coin flip: ${firstTurn==='player'?'You go':'AI goes'} first!`,'imp');
-    clsFor=function(w){return w==='player'?pCls:w==='ai'?aCls:aCls2;};
+    clsFor=function(w){return w==='player'?pCls:w==='ai'?aCls:w==='ai2'?aCls2:aCls3;};
   }
   G=makeGameState(sideOrder,firstTurn,clsFor,buildOrder);
   if(G){ G._seed=window.ruGameSeed(); if(netCfg){ G._netMode=true; G._localSeat=(netCfg.mySeat===1)?'ai':'player'; } }
-  ['ai2-hud','ai2-field','ai2-divider'].forEach(function(id){const e=el(id);if(e)e.style.display=is3Way?'':'none';});
-  const bfEl=el('battlefield');if(bfEl)bfEl.classList.toggle('three-way',is3Way);
-  // In the 3-way radial layout every board reads identically (rotation alone tells the seats
-  // apart), so the AI boards drop the 2-player mirrored `.ai-side` layout and render exactly like
-  // your own board; restored for any non-3-way match started afterward.
-  ['ai-field','ai2-field'].forEach(function(id){const f=el(id);if(f)f.classList.toggle('ai-side',!is3Way);});
-  if(is3Way){
-    // Keep the triangle fitted to the battlefield on window resize. (renderAll also re-fits after
-    // content changes, and a ResizeObserver covers browsers that deliver it — belt and suspenders,
-    // since a plain resize event is the one universally-reliable signal.)
-    if(!window.__threeWayResizeHooked){
-      window.__threeWayResizeHooked=true;
-      window.addEventListener('resize',function(){layoutThreeWay();});
+  // ai2 shows in 3-way OR 4-way; ai3 only in 4-way.
+  ['ai2-hud','ai2-field','ai2-divider'].forEach(function(id){const e=el(id);if(e)e.style.display=isRadial?'':'none';});
+  ['ai3-field'].forEach(function(id){const e=el(id);if(e)e.style.display=is4Way?'':'none';});
+  // Radial modes replace the single top opponent-hand strip with per-seat hands behind each board (it lives
+  // OUTSIDE .bf, so it can't be hidden by a CSS selector — toggle it here).
+  {const oh=el('opp-hand-cards');if(oh)oh.style.display=isRadial?'none':'';}
+  const bfEl=el('battlefield');if(bfEl){bfEl.classList.toggle('radial',isRadial);bfEl.classList.toggle('three-way',is3Way);bfEl.classList.toggle('four-way',is4Way);}
+  // In a radial layout every board reads identically (rotation alone tells the seats apart), so the AI
+  // boards drop the 2-player mirrored `.ai-side` layout and render exactly like your own board; restored
+  // for any non-radial match started afterward.
+  ['ai-field','ai2-field','ai3-field'].forEach(function(id){const f=el(id);if(f)f.classList.toggle('ai-side',!isRadial);});
+  if(isRadial){
+    // Keep the radial boards fitted to the battlefield on resize + across the settle window (the hand/log
+    // render beneath it right after this, shrinking its box). ruFitRadial dispatches to the right fitter.
+    if(!window.__radialResizeHooked){
+      window.__radialResizeHooked=true;
+      window.addEventListener('resize',function(){ruFitRadial();});
       if(typeof ResizeObserver!=='undefined'&&bfEl){
-        try{new ResizeObserver(function(){layoutThreeWay();}).observe(bfEl);}catch(e){}
+        try{new ResizeObserver(function(){ruFitRadial();}).observe(bfEl);}catch(e){}
       }
     }
-    // The battlefield keeps shrinking for a moment after this point as the hand and log render
-    // beneath it, so force a re-fit across that settling window.
-    layoutThreeWay(true);
-    requestAnimationFrame(function(){layoutThreeWay(true);});
-    setTimeout(function(){layoutThreeWay(true);},60);
-    setTimeout(function(){layoutThreeWay(true);},250);
+    ruFitRadial(true);
+    requestAnimationFrame(function(){ruFitRadial(true);});
+    setTimeout(function(){ruFitRadial(true);},60);
+    setTimeout(function(){ruFitRadial(true);},250);
   }
   seats.forEach(function(w){
     const m=sideMeta(w);
@@ -583,6 +682,9 @@ function initGame(){
   log(`Match: ${seats.map(w=>CM[sideMeta(w).clsKey].name).join(' vs ')}. All sides start 15 MP.`,'imp');
   log(`Evolutions: ${G.allowEvolutions?'enabled':'disabled'} for this match.`,'info');
   beginPhase('draw');
+  // Fit the board to the screen now, then again across the settle window (hand/log render beneath the
+  // battlefield right after this, shrinking its box — same belt-and-suspenders as layoutThreeWay).
+  if(window.fitBoard){ fitBoard(); requestAnimationFrame(fitBoard); setTimeout(fitBoard,60); setTimeout(fitBoard,250); }
   if(G){
     G.aiLevel=window.RU_AI_LEVEL_KEY;
     try{const lv=ruEffectiveAILevel();log(`AI Proficiency: ${lv.label} (${lv.score||ruLevel().score||0}/100).`,'info');}catch(e){}
@@ -626,7 +728,7 @@ window.finalizeDeckOut=function(w){
   const EG=window.endGame||endGame;
   // 3+-way: the side that decked out simply loses and is eliminated (greyed out). The match ends
   // only if that leaves <=1 side standing -- otherwise the remaining opponents fight on.
-  const order=['player','ai','ai2'].filter(function(s){return G[s];});
+  const order=['player','ai','ai2','ai3'].filter(function(s){return G[s];});
   if(order.length>=3){
     G.eliminated=G.eliminated||{};
     if(!G.eliminated[w]){
@@ -2423,14 +2525,28 @@ function beginPhaseBase(ph){
   G.phase=ph;G.mode='normal';G.selAttacker=null;G.selAddon=null;G.selRelieveTarget=null;
   clearHL();hide('btn-can');hide('btn-atk');hide('btn-sd');hide('btn-rv');setHint('');
   const isP=G.turn==='player';
-  if(isP)show('btn-adv');else hide('btn-adv');
-  if(isP)show('btn-end');else hide('btn-end');
+  // ONLINE: either seat can be the local human. "myTurn" = it is THIS client's seat that is active, so
+  // this client shows the interactive controls/prompts; the other client shows nothing and waits, staying
+  // in lockstep via relayed actions (its AI auto-play is suppressed by aiDo's net guard). Solo/vs-bot keeps
+  // the original behaviour (myTurn === isP), where the 'player' seat is the human and 'ai' auto-plays.
+  const netLive=!!(typeof G!=='undefined'&&G&&G._netMode);
+  // "myTurn" must reflect the CANONICAL turn, not G.turn as-seen: a seat-1 action reaches beginPhase inside
+  // the foreign-apply swap, where G.turn is toggled. Undo that toggle when _foreignSwapped so G._localSeat
+  // (a fixed per-client id that never swaps) is compared to the real active seat.
+  const _canonTurn=(netLive&&G._foreignSwapped)?(G.turn==='player'?'ai':(G.turn==='ai'?'player':G.turn)):G.turn;
+  const myTurn=netLive?(G._localSeat===_canonTurn):isP;
+  // Stored because render-time helpers (updateModeButtons) run inside the POV seat-swap, where recomputing
+  // G._localSeat===G.turn would be unreliable.
+  G._myTurn=myTurn;
+  if(myTurn)show('btn-adv');else hide('btn-adv');
+  if(myTurn)show('btn-end');else hide('btn-end');
   const p=G[G.turn];
   const turnSubject=window.sideSubjectLabel?sideSubjectLabel(G.turn):(isP?'You':'AI');
   const turnPossessive=window.sidePossessiveLabel?sidePossessiveLabel(G.turn):(isP?'Your':"AI's");
 
   if(ph==='draw'){
     p._attackedThisTurn=false;
+    G._sdSession=(G._sdSession||0)+1; // new switchdraw session; the reveal resets only when THIS seat actually switches (persists showing the last switchdraw otherwise)
     draw(G.turn,2);
     // FIRST TURN PER PLAYER: Action Cards must be switchdrawn. Area and Rank³+ are optional for the human only.
     const firstForThisPlayer=!p._firstDrawDone;
@@ -2444,27 +2560,32 @@ function beginPhaseBase(ph){
           });
         });
       }
-      if(isP && !(G&&G._netMode)){renderAll();setTimeout(()=>openSwitchdrawModal(true),360);return;}
-      // Online (net mode): the human player's mandatory first-turn switchdraw is auto-resolved like the AI's
-      // (identical on both clients → stays in sync). Proper interactive switchdraw over the net is a later add.
+      // Interactive first-turn switchdraw for the human whose turn it is (solo 'player', or EITHER seat's
+      // owner online). openSwitchdrawModal builds against the local seat's hand (POV-aware).
+      if(myTurn){renderAll();setTimeout(()=>openSwitchdrawModal(true),360);return;}
+      // Online off-turn client: do NOT auto-resolve — wait for the acting seat's relayed switchdraw actions
+      // (which mutate the shared state identically on both clients). Only solo/vs-bot AI auto-switches below.
+      if(netLive){renderAll();return;}
       let _aiSwN=0,_aiSwGuard=0;
       while(p.hand.some(c=>c.type==='action') && _aiSwGuard++<25){
         const acts=p.hand.filter(c=>c.type==='action');
-        acts.forEach(c=>{p.hand.splice(p.hand.indexOf(c),1);const ins=Math.min(p.deck.length,15);p.deck.splice(ins,0,c);draw(G.turn,1);_aiSwN++;});
+        acts.forEach(c=>{p.hand.splice(p.hand.indexOf(c),1);const ins=Math.min(p.deck.length,15);p.deck.splice(ins,0,c);draw(G.turn,1);ruRecordSwitchOut(G.turn,c);_aiSwN++;});
         if(!p.deck.length)break; // deck exhausted of replacements
       }
       if(_aiSwN)log(`${turnSubject} first-turn switchdrew ${_aiSwN} Action Card(s) until none remained.`,'info');
     }
     log(`${turnPossessive} Draw Phase — drew 2.`);
     // Offer optional switchdraw each turn for Action Cards. On turn 1, the mandatory modal above handles Actions plus optional Area/Rank³+.
-    if(isP&&!firstForThisPlayer&&!(G&&G._netMode)&&G.player.hand.some(c=>c.type==='action')){
+    if(myTurn&&!firstForThisPlayer&&G[G.turn].hand.some(c=>c.type==='action')){
       G.mode='switchdraw';renderAll();setTimeout(()=>openSwitchdrawModal(false),360);return;
     }
+    // Online off-turn client waits (the acting owner's optional switchdraw is relayed).
+    if(netLive&&!firstForThisPlayer){renderAll();return;}
     // AI may switch out Action Cards it cannot currently use after its first turn.
     if(!isP&&!firstForThisPlayer){
       const aiAC=p.hand.filter(c=>c.type==='action');
-      if(aiAC.length>0&&p.rankZone&&(p.rankZone.A||0)===0){
-        aiAC.forEach(c=>{p.hand.splice(p.hand.indexOf(c),1);const ins=Math.min(p.deck.length,15);p.deck.splice(ins,0,c);draw(G.turn,1);});
+      if(aiAC.length>0&&p.rankZone&&ruEffectiveA(p)===0){
+        aiAC.forEach(c=>{p.hand.splice(p.hand.indexOf(c),1);const ins=Math.min(p.deck.length,15);p.deck.splice(ins,0,c);draw(G.turn,1);ruRecordSwitchOut(G.turn,c);});
         log(`${turnSubject} switchdraws ${aiAC.length} Action Card(s).`,'info');
       }
     }
@@ -2475,27 +2596,29 @@ function beginPhaseBase(ph){
   }
   else if(ph==='promotion'){
     log(`${turnPossessive} Promotion Phase.`);
-    if(isP){show('btn-sd');setHint('Play a Numeral from hand to promote (NP +1\u20133, Rank \u00b10 or +1), or Stand Down. Next Phase \u2192');}
-    else setTimeout(()=>aiDo('promotion'),700);renderAll();
+    if(myTurn){show('btn-sd');setHint('Play a Numeral from hand to promote (NP +1\u20133, Rank \u00b10 or +1), or Stand Down. Next Phase \u2192');}
+    else if(!netLive)setTimeout(()=>aiDo('promotion'),700);renderAll();
   }
   else if(ph==='rally'){
     log(`${turnPossessive} Rally Phase.`);
-    if(isP){show('btn-sd');show('btn-rv');setHint('Flank from hand, Stand Down, or Relieve. Next Phase \u2192');}
-    else setTimeout(()=>aiDo('rally'),600);renderAll();
+    if(myTurn){show('btn-sd');show('btn-rv');setHint('Flank from hand, Stand Down, or Relieve. Next Phase \u2192');}
+    else if(!netLive)setTimeout(()=>aiDo('rally'),600);renderAll();
   }
   else if(ph==='main'){
-    p.actUsed=0;p._advCardsThisTurn=[];const maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
-    if(isP&&G.player.mx1NoActionNext){G.player.mx1NoActionNext=false;G.player.actUsed=Math.max(0,G.player.rankZone?(G.player.rankZone.A||0):0);log('Maximum 1 effect: Cannot use Action Cards this turn.','dmg');}
-  if(!isP&&p.mx1NoActionNext){p.mx1NoActionNext=false;p.actUsed=Math.max(0,p.rankZone?(p.rankZone.A||0):0);}
+    G._sdReveal=null;                 // switchdraw reveal clears once Main Phase begins (shown through Draw/Promotion/Rally only)
+    p.actUsed=0;p._advCardsThisTurn=[];const maxA=ruEffectiveA(p);
+    if(isP&&G.player.mx1NoActionNext){G.player.mx1NoActionNext=false;G.player.actUsed=ruEffectiveA(G.player);log('Maximum 1 effect: Cannot use Action Cards this turn.','dmg');}
+  if(!isP&&p.mx1NoActionNext){p.mx1NoActionNext=false;p.actUsed=ruEffectiveA(p);}
   log(`${turnPossessive} Main Phase \u2014 ${maxA} Action slot(s). Use Skills/Area Cards.`);
     wildfireMainPhase(); // Wildfire passive triggers during its owner's opponent's Main Phase
-    if(isP){show('btn-sd');show('btn-rv');setHint(`Advantageous cards (${maxA} slots), Numeral Skills, Area Cards. Next Phase \u2192`);}
-    else setTimeout(()=>aiDo('main'),800);renderAll();
+    if(myTurn){show('btn-sd');show('btn-rv');setHint(`Advantageous cards (${maxA} slots), Numeral Skills, Area Cards. Next Phase \u2192`);}
+    else if(!netLive)setTimeout(()=>aiDo('main'),800);renderAll();
   }
   else if(ph==='standby'){
     log(`${turnPossessive} Standby Phase.`);
-    if(!isP)phaseAfter('battle',400);
-    else{show('btn-sd');show('btn-rv');setHint('Advantageous cards, Numeral Skills, Area Cards still usable. Next Phase \u2192');}
+    // Online: neither client auto-advances (that would desync) \u2014 the acting owner clicks Next Phase.
+    if(myTurn){show('btn-sd');show('btn-rv');setHint('Advantageous cards, Numeral Skills, Area Cards still usable. Next Phase \u2192');}
+    else if(!netLive)phaseAfter('battle',400);
     renderAll();
   }
   else if(ph==='battle'){
@@ -2503,8 +2626,8 @@ function beginPhaseBase(ph){
     if(!isP)G.player.actUsed=0; // fresh Action slots for the human's Safeguard/Retaliatory responses
     G._defState={};G._sgUsedThisAttack=false;
     log(`${turnPossessive} Battle Phase!`);
-    if(isP){show('btn-atk');show('btn-sd');setHint('\u2694 Declare Attack. You may use Safeguard/Retaliatory cards from hand now.');}
-    else setTimeout(()=>aiDo('battle'),900);renderAll();
+    if(myTurn){show('btn-atk');show('btn-sd');setHint('\u2694 Declare Attack. You may use Safeguard/Retaliatory cards from hand now.');}
+    else if(!netLive)setTimeout(()=>aiDo('battle'),900);renderAll();
   }
   else if(ph==='end'){
     // Reset temp buffs — currentNP/RP revert to base at end of turn
@@ -2710,7 +2833,7 @@ function beginPhaseL14(ph){
     if(G){
       const active=G.turn;
       if(ph==='main'&&window.hhLockedRBP13(active)){
-        const p=window.psideRA9(active);p.actUsed=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+        const p=window.psideRA9(active);p.actUsed=ruEffectiveA(p);
         window.logSafeAI8('Halcyon Highlands: '+window.pnameRBP13(active)+' cannot use Action Cards for '+p._hhLockTurns+' more turn(s).','info');
       }
       if(ph==='battle'&&window.hhLockedRBP13(active)){
@@ -2844,6 +2967,10 @@ function beginPhaseL28(ph){
     var _skipInner=false;
     if(ph==='draw'&&G&&G.turn&&G._zero6SkipDraw===G.turn){
       var isP=G.turn==='player';
+      var netLive=!!(G&&G._netMode);
+      var _canonTurn=(netLive&&G._foreignSwapped)?(G.turn==='player'?'ai':(G.turn==='ai'?'player':G.turn)):G.turn;
+      var myTurn=netLive?(G._localSeat===_canonTurn):isP;
+      G._myTurn=myTurn;
       G.phase='draw';
       G._zero6SkipDraw=null;
       window.safeLogL6((isP?'You draw':'AI draws')+' 0 cards due to Zero 6.','dmg');
@@ -2852,11 +2979,11 @@ function beginPhaseL28(ph){
       try{
         if(typeof clearHL==='function')clearHL();
         ['btn-can','btn-atk','btn-sd','btn-rv'].forEach(function(id){try{hide(id);}catch(e){}});
-        if(isP){show('btn-adv');show('btn-end');}else{hide('btn-adv');hide('btn-end');}
+        if(myTurn){show('btn-adv');show('btn-end');}else{hide('btn-adv');hide('btn-end');}
       }catch(e){}
       window.renderSafeL6();
-      if(!isP&&typeof aiDo==='function')setTimeout(function(){aiDo('promotion');},700);
-      else if(isP)try{setHint('Draw skipped. Advance ->');}catch(e){}
+      if(!myTurn&&!netLive&&typeof aiDo==='function')setTimeout(function(){aiDo('promotion');},700);
+      else if(myTurn)try{setHint('Draw skipped. Advance ->');}catch(e){}
       _skipInner=true;
     }
     if(!_skipInner){
@@ -3190,15 +3317,33 @@ function doSD(cardId,isFirstTurn){
   const p=G.player;const idx=p.hand.findIndex(c=>c.id===cardId);if(idx===-1)return;
   const c=p.hand.splice(idx,1)[0];
   const ins=Math.min(p.deck.length,15);p.deck.splice(ins,0,c);draw('player',1);
+  ruRecordSwitchOut(G._foreignSwapped?'ai':'player', c);   // canonical seat (G.player is swapped during a foreign-apply)
   log(`You switchdrew ${c.name}.`,'info');renderAll();
   const b=ruSwitchBuckets(isFirstTurn);
-  if(!b.must.length&&!b.can.length&&isFirstTurn){closeModal();G.mode='normal';beginPhase('promotion');return;}
-  const sdList=document.getElementById('sd-list');if(!sdList)return;
-  sdList.innerHTML='';
-  b.must.forEach(cc=>{const div=document.createElement('div');div.className='sd-item';div.id=`sd-${cc.id}`;div.innerHTML=`<span class="sd-name">${cc.name}<span style="color:#a0d060;font-size:.65rem;margin-left:.3rem">[Action — MUST]</span></span><button onclick="doSD('${cc.id}',${!!isFirstTurn})">Switchdraw</button>`;sdList.appendChild(div);});
-  b.can.forEach(cc=>{const div=document.createElement('div');div.className='sd-item';div.id=`sd-${cc.id}`;div.innerHTML=`<span class="sd-name">${cc.name}<span style="color:var(--text-dim);font-size:.65rem;margin-left:.3rem">[${cc.type==='area'?'Area':'Rank³+'} — optional]</span></span><button onclick="doSD('${cc.id}',${!!isFirstTurn})">Switchdraw</button>`;sdList.appendChild(div);});
-  ruSyncSwitchButtons(isFirstTurn);
+  // Solo: switching the last card auto-advances. Online: never auto-advance here (doSD runs under the
+  // foreign-apply seat swap; beginPhase must stay on canonical state) — the owner clicks Done → 'sdDone'.
+  if(!b.must.length&&!b.can.length&&isFirstTurn&&!(G&&G._netMode)){closeModal();G.mode='normal';beginPhase('promotion');return;}
+  // Refresh the modal list. When this doSD is running INSIDE a foreign-apply seat swap (the seat-1 owner
+  // driving their own switchdraw online), defer to a canonical tick so the POV-aware rebuild targets the
+  // right seat and nothing from the swap-unwind stomps it. Otherwise rebuild in place.
+  if(G&&G._netMode&&G._foreignSwapped) setTimeout(()=>ruRefreshSwitchdrawList(isFirstTurn),0);
+  else ruRefreshSwitchdrawList(isFirstTurn);
 }
+// Rebuild the switchdraw modal's card list from the LOCAL seat's current buckets (POV-aware).
+// Only when THIS client is actively switchdrawing — a relayed switch on the off-turn client (whose modal is
+// closed) must not rewrite its stale hidden list with the wrong seat's cards.
+function ruRefreshSwitchdrawList(isFirstTurn){
+  if(!G||G.mode!=='switchdraw')return;
+  ruWithLocalPOV(function(){
+    const b=ruSwitchBuckets(isFirstTurn);
+    const sdList=document.getElementById('sd-list');if(!sdList)return;
+    sdList.innerHTML='';
+    b.must.forEach(cc=>{const div=document.createElement('div');div.className='sd-item';div.id=`sd-${cc.id}`;div.innerHTML=`<span class="sd-name">${cc.name}<span style="color:#a0d060;font-size:.65rem;margin-left:.3rem">[Action — MUST]</span></span><button onclick="doSD('${cc.id}',${!!isFirstTurn})">Switchdraw</button>`;sdList.appendChild(div);});
+    b.can.forEach(cc=>{const div=document.createElement('div');div.className='sd-item';div.id=`sd-${cc.id}`;div.innerHTML=`<span class="sd-name">${cc.name}<span style="color:var(--text-dim);font-size:.65rem;margin-left:.3rem">[${cc.type==='area'?'Area':'Rank³+'} — optional]</span></span><button onclick="doSD('${cc.id}',${!!isFirstTurn})">Switchdraw</button>`;sdList.appendChild(div);});
+    ruSyncSwitchButtons(isFirstTurn);
+  });
+}
+window.ruRefreshSwitchdrawList=ruRefreshSwitchdrawList;
 
 // ═══════════════════════════════════════════
 // PROMOTION
@@ -4411,15 +4556,23 @@ function resolveAtkL27(aWho,aZone,dWho,dZone,addonNP){
     }
 
 function resolveAtk(aWho,aZone,dWho,dZone,addonNP){
-      if(window.aiConsiderSafeguardRAtk28(aWho,aZone,dWho,dZone,addonNP))return;
+      // ONLINE: the defender is a REMOTE HUMAN, not a bot. The AI reactive-defense brain must not fire for
+      // them — it would auto-activate Safeguard/Retaliatory without a prompt (which the player never chose)
+      // and, worse, its heuristics can consume the un-synced AI RNG stream and DESYNC the two clients. So in
+      // net mode attacks resolve deterministically with no auto-reaction; interactive defender reactions are
+      // handled separately. (Solo/vs-bot keeps the full AI defense behaviour.)
+      var netLive=!!(G&&G._netMode);
+      if(!netLive && window.aiConsiderSafeguardRAtk28(aWho,aZone,dWho,dZone,addonNP))return;
       // Reactive defenses fire whenever the DEFENDER is AI-controlled (any AI seat), not only the
       // old player->ai pairing -- so ai2 defends too and AI-vs-AI attacks are covered.
-      var relevant=(dWho!==aWho&&G[dWho]&&window.sideMeta&&window.sideMeta(dWho).controller==='ai');
+      var relevant=(!netLive&&dWho!==aWho&&G[dWho]&&window.sideMeta&&window.sideMeta(dWho).controller==='ai');
       var preMP=relevant?G[dWho].mp:null,preCas=relevant?(G[dWho].cas||0):null;
       var r=resolveAtkL27.apply(this,arguments);
       if(relevant)window.aiApplyProtectFlankRAtk28();
-      window.aiConsiderDivideRAtk28(dWho,preMP,preCas);
-      window.aiConsiderRetaliationRAtk28(aWho,aZone,dWho,dZone);
+      if(!netLive){
+        window.aiConsiderDivideRAtk28(dWho,preMP,preCas);
+        window.aiConsiderRetaliationRAtk28(aWho,aZone,dWho,dZone);
+      }
       return r;
     }
 window.resolveAtk=resolveAtk;
@@ -4555,7 +4708,7 @@ function _aiBase(ph){
     renderAll();beginPhase('main');
   }
   else if(ph==='main'){
-    const maxA=Math.max(0,ai.rankZone?(ai.rankZone.A||0):0);let used=0;
+    const maxA=ruEffectiveA(ai);let used=0;
     ai.hand.filter(c=>c.type==='action'&&c.sub==='Advantageous').forEach(c=>{
       if(used>=maxA)return;
       if(c.name==='Plus'){
@@ -4844,7 +4997,7 @@ function _aiL7(ph){
 }
 function _aiL8(ph){
   if(G&&G.turn==='ai'&&hhLocked('ai')){
-    if(ph==='main'){G.ai.actUsed=Math.max(0,G.ai.rankZone?(G.ai.rankZone.A||0):0);window.logSafeAI8('Halcyon Highlands: AI cannot use Action Cards.','info');}
+    if(ph==='main'){G.ai.actUsed=ruEffectiveA(G.ai);window.logSafeAI8('Halcyon Highlands: AI cannot use Action Cards.','info');}
     if(ph==='battle'){window.logSafeAI8('Halcyon Highlands: AI cannot attack.','info');return beginPhase('end');}
   }
   const before=G&&G.ai&&G.ai.rankZone&&G.ai.rankZone.id;
@@ -4969,7 +5122,7 @@ function safeLog(msg,type){try{log(msg,type||'info');}catch(e){}}
 function reasonLoserValue(r){return r&&typeof r==='object'&&!Array.isArray(r)?r.loser:null;}
 function sideHasFatalLoss(w){
   if(!G||!G[w])return false;
-  const order=['player','ai','ai2'].filter(function(s){return G[s];});
+  const order=['player','ai','ai2','ai3'].filter(function(s){return G[s];});
   const lowlandsActive=order.some(function(s){return (G[s].deadzone||[]).some(function(c){return c&&c.name==='The Lowlands';});});
   return lowlandsActive?(G[w].mp<=0&&G[w].cas>=15):(G[w].mp<=0||G[w].cas>=15);
 }
@@ -5151,6 +5304,10 @@ function renderAllBase(){
     rz('ai2-rz',G.ai2.rankZone,'ai2','rank');rz('ai2-lf',G.ai2.leftFlank,'ai2','left-flank');rz('ai2-rf',G.ai2.rightFlank,'ai2','right-flank');
     updRearFlank('ai2');
   }
+  if(G.ai3){
+    rz('ai3-rz',G.ai3.rankZone,'ai3','rank');rz('ai3-lf',G.ai3.leftFlank,'ai3','left-flank');rz('ai3-rf',G.ai3.rightFlank,'ai3','right-flank');
+    updRearFlank('ai3');
+  }
   updEvolutionVisibility();
   updEliminatedVisuals();
   renderHand();renderOppHand();updPhase();
@@ -5261,14 +5418,19 @@ function renderAll(){
   // We swap the two seat objects + the turn label ONLY around the paint, then restore — so every render
   // function (fields, hand, HUD, delta, opp-hand) shows the local seat at the bottom with no per-function
   // change, while the game STATE stays canonical (shared-identity → lockstep preserved).
-  var _pov=(typeof G!=='undefined' && G && G._localSeat==='ai');
+  // Swap iff the local seat is 'ai' XOR we're already in a foreign-apply swap — so the LOCAL seat is
+  // always rendered at the bottom whether the state is canonical or mid-foreign-apply. Without the XOR
+  // the double-swap during foreign-apply flips the bottom hand every render → phantom "draw" animations.
+  var _pov=(typeof G!=='undefined' && G && ((G._localSeat==='ai') !== !!G._foreignSwapped));
   if(_pov){ var _t=G.player; G.player=G.ai; G.ai=_t; G.turn=(G.turn==='player')?'ai':((G.turn==='ai')?'player':G.turn); }
   var r;
   try{ r=renderAllL15(); }
   finally{ if(_pov){ var _t2=G.player; G.player=G.ai; G.ai=_t2; G.turn=(G.turn==='player')?'ai':((G.turn==='ai')?'player':G.turn); } }
-  // Keep the 1v1v1 triangle fitted to the battlefield after any render that may have changed its
-  // size (hand gaining/losing a row, etc.). No-ops instantly unless the battlefield actually resized.
-  if(window.layoutThreeWay)window.layoutThreeWay();
+  // Keep the radial boards (1v1v1 / Royale) fitted to the battlefield after any render that may have
+  // changed its size. No-ops instantly unless the battlefield actually resized.
+  if(window.ruFitRadial)window.ruFitRadial();
+  // Keep the 2-player board + hands fitted to the screen (no-ops past the jitter threshold).
+  if(window.fitBoard)window.fitBoard();
   return r;
 }
 window.renderAll=renderAll;
@@ -5287,12 +5449,24 @@ function updEvolutionVisibility(){
   const enabled=G.allowEvolutions!==false;
   const ids=['pl-evo','pl-delta','ai-evo','ai-delta'];
   if(G.ai2)ids.push('ai2-evo','ai2-delta');
+  if(G.ai3)ids.push('ai3-evo','ai3-delta');
   ids.forEach(id=>{
     const z=el(id); if(!z)return;
     z.classList.toggle('evo-disabled',!enabled);
     z.title=enabled?'Evolution play is enabled for this match.':'Evolution play is disabled for this match.';
   });
 }
+// Effective Action-card cap for a seat: normally the Rank Zone's A value, but a card in the Delta Zone whose
+// A value is HIGHER than the Rank Zone's raises the cap to that higher value (never lowers it). Math.max
+// captures exactly "use the Delta A only if it's higher." Canonical — every action-slot computation reads this.
+function ruEffectiveA(p){
+  if(!p) return 0;
+  var rA=(p.rankZone&&p.rankZone.A!=null)?(Number(p.rankZone.A)||0):0;
+  var d0=(p.delta&&p.delta[0])?p.delta[0]:null;
+  var dA=(d0&&d0.A!=null)?(Number(d0.A)||0):0;
+  return Math.max(0, rA, dA);
+}
+window.ruEffectiveA=ruEffectiveA;
 function updHUD(){
   const s=(id,v)=>{const e=el(id);if(e)e.textContent=v;};
   (G.sideOrder||['player','ai']).forEach(function(w){
@@ -5330,7 +5504,27 @@ function renderPhaseRail(){
 }
 window.renderPhaseRail=renderPhaseRail;
 // Opponent hand: face-down "Rank Up!" backs, fanned, count = the AI's real hand size.
+// Fill a container with a fanned row of face-down "Rank Up!" backs, one per card in `seat`'s hand.
+function fillHandBacks(container, seat){
+  if(!container)return;
+  var n=(seat&&seat.hand)?seat.hand.length:0;
+  container.innerHTML='';
+  for(var i=0;i<n;i++){
+    var w=document.createElement('div'); w.className='ocw';
+    var b=document.createElement('div'); b.className='card-back';
+    w.appendChild(b); container.appendChild(w);
+  }
+  applyHandFan(container);
+}
 function renderOppHand(){
+  // 1v1v1: each opponent's hand is a fanned row behind its OWN board (positioned by layoutThreeWay),
+  // not a single strip at the top. The top strip stays hidden (see initGame).
+  if(typeof G!=='undefined' && G && G.ai2){
+    fillHandBacks(document.getElementById('ai-hand3'), G.ai);
+    fillHandBacks(document.getElementById('ai2-hand3'), G.ai2);
+    if(G.ai3) fillHandBacks(document.getElementById('ai3-hand3'), G.ai3);
+    return;
+  }
   var c=document.getElementById('opp-hand-cards'); if(!c)return;
   var opp=(typeof G!=='undefined'&&G)?G.ai:null;
   var n=(opp&&opp.hand)?opp.hand.length:0;
@@ -5364,12 +5558,69 @@ function animateOppDraw(container, fromIdx, toN){
 window.renderOppHand=renderOppHand;
 function toggleSidePanel(id){var p=document.getElementById(id);if(p)p.classList.toggle('collapsed');}
 window.toggleSidePanel=toggleSidePanel;
+// Radial (1v1v1 / Royale) centre stat panel — a wide bar mirroring the 1v1 top strip: each seat is a row
+// [stats | name·class | switchdraw-reveal band | meta]. LOCATION rides the top opponent row and ADVANTAGE
+// the YOU row (as in 1v1); the middle band shows that seat's swapped-out cards during its switchdraw.
+function renderHudCenter(){
+  var host=document.getElementById('hud-center'); if(!host)return;
+  var whoLbl={player:'YOU',ai:'AI 1',ai2:'AI 2',ai3:'AI 3'};
+  var area=(typeof globalActiveArea==='function')?globalActiveArea():null;
+  var loc=(area&&area.card)?area.card.name:'Standard Battlefield';
+  var adv=(area&&area.who)?((G._netMode&&G[area.who]&&G[area.who]._netName)?G[area.who]._netName:(whoLbl[area.who]||area.who)):'nA';
+  var seats=['ai','ai2','ai3','player'].filter(function(w){return G[w];});
+  var topRow=seats[0];   // first opponent row carries LOCATION (player row carries ADVANTAGE) — same split as 1v1
+  function seatRow(w){
+    var p=G[w];
+    var k=p.cls||p.class;
+    var nm=(typeof CM!=='undefined'&&CM[k]&&CM[k].name)||k||'';
+    var col=(typeof CLASS_COLORS!=='undefined'&&CLASS_COLORS[k])||'#c9a84c';
+    var lbl=(G._netMode&&p._netName)?p._netName:(whoLbl[w]||w);
+    var active=(G.turn===w), elim=!!(G.eliminated&&G.eliminated[w]);
+    var meta=(w===topRow)?'<span class="hud-meta-lbl">LOCATION:</span> '+loc
+            :(w==='player')?'<span class="hud-meta-lbl">ADVANTAGE:</span> '+adv:'';
+    return '<div class="hc-seat'+(active?' active':'')+(elim?' elim':'')+'" data-seat="'+w+'">'+
+      '<div class="hc-stats">'+
+        '<span class="hpill hpill-m"><span class="hpi">&#9829;</span>MORALE <b>'+p.mp+'</b></span>'+
+        '<span class="hpill hpill-c"><span class="hpi">&#9760;</span>CASUALTY <b>'+(p.cas||0)+'</b>/15</span>'+
+        '<span class="hpill hpill-h"><span class="hpi">&#127136;</span>HAND <b>'+p.hand.length+'</b></span>'+
+      '</div>'+
+      '<div class="hc-id"><span class="hc-nm">'+lbl+'</span> <span class="hc-cls" style="color:'+col+'">'+(nm?String(nm).toUpperCase():'')+'</span></div>'+
+      '<div class="hc-band"></div>'+
+      '<div class="hc-meta">'+meta+'</div>'+
+    '</div>';
+  }
+  host.innerHTML=seats.map(seatRow).join('');
+  // Switchdraw reveal — full-width strip under the rows so it fits even the narrow 1v1v1 bar. Two lines:
+  // the swapped CARDS and their NAMES, on DIFFERENT rows and column-aligned (fixed-width slots), exactly the
+  // 1v1 split. Opponents show names above cards; YOU shows cards above names.
+  var rev=G._sdReveal;
+  if(rev&&rev.cards&&rev.cards.length){
+    var strip=document.createElement('div'); strip.className='hc-reveal-strip';
+    var cardsLine=document.createElement('div'); cardsLine.className='hc-rev-line';
+    var namesLine=document.createElement('div'); namesLine.className='hc-rev-line';
+    rev.cards.forEach(function(entry){
+      var cslot=document.createElement('div'); cslot.className='hc-rev-slot';
+      var cw=document.createElement('div'); cw.className='hc-swap-card'; try{ cw.appendChild(buildCard(entry.card)); }catch(e){} cslot.appendChild(cw); cardsLine.appendChild(cslot);
+      var nslot=document.createElement('div'); nslot.className='hc-rev-slot';
+      var nm=document.createElement('div'); nm.className='hc-swap-name'; nm.textContent=entry.name; nslot.appendChild(nm); namesLine.appendChild(nslot);
+    });
+    if(rev.who==='player'){ strip.appendChild(cardsLine); strip.appendChild(namesLine); }   // YOU: card above name
+    else { strip.appendChild(namesLine); strip.appendChild(cardsLine); }                     // opponents: name above card
+    host.appendChild(strip);
+  }
+}
+window.renderHudCenter=renderHudCenter;
 // HUD middle strip: per-side class label+colour, ACTIVE TURN marker, and Location/Advantage from the active Area.
 function renderHudStrip(){
   if(typeof G==='undefined'||!G)return;
+  if(G.ai2){ renderHudCenter(); return; }   // 1v1v1 uses the centre panel instead of the 2-seat top strip
   function clsInfo(w){var p=G[w];if(!p)return {label:'',color:''};var k=p.cls||p.class;var nm=(typeof CM!=='undefined'&&CM[k]&&CM[k].name)||k||'';var col=(typeof CLASS_COLORS!=='undefined'&&CLASS_COLORS[k])||'';return {label:nm?String(nm).toUpperCase()+'-CLASS':'',color:col};}
   // The game sets #ai-name/#pl-name as "Name · Class"; strip the class suffix here since the class has its own label.
-  ['ai-name','pl-name'].forEach(function(id){var e=document.getElementById(id);if(!e)return;var raw=e.textContent||'';var dot=raw.indexOf('·');if(dot>=0)e.textContent=raw.slice(0,dot).trim();});
+  // Online, show the real player names instead of YOU/AI (they ride on the seat data, so they follow the POV swap).
+  ['ai-name','pl-name'].forEach(function(id){var e=document.getElementById(id);if(!e)return;
+    var seat=(id==='pl-name')?'player':'ai';
+    if(G._netMode && G[seat] && G[seat]._netName){ e.textContent=G[seat]._netName; return; }
+    var raw=e.textContent||'';var dot=raw.indexOf('·');if(dot>=0)e.textContent=raw.slice(0,dot).trim();});
   var ai=clsInfo('ai'), pl=clsInfo('player');
   var aiCls=document.getElementById('ai-cls'), plCls=document.getElementById('pl-cls');
   if(aiCls){aiCls.textContent=ai.label; if(ai.color)aiCls.style.color=ai.color;}
@@ -5380,9 +5631,58 @@ function renderHudStrip(){
   var area=(typeof globalActiveArea==='function')?globalActiveArea():null;
   var loc=document.getElementById('hud-location'), adv=document.getElementById('hud-advantage');
   if(loc)loc.textContent=(area&&area.card)?area.card.name:'Standard Battlefield';
-  if(adv){var whoLbl={player:'Player',ai:'AI',ai2:'AI 2'};adv.textContent=(area&&area.who)?(whoLbl[area.who]||area.who):'nA';}
+  if(adv){var whoLbl={player:'Player',ai:'AI',ai2:'AI 2'};adv.textContent=(area&&area.who)?((G._netMode&&G[area.who]&&G[area.who]._netName)?G[area.who]._netName:(whoLbl[area.who]||area.who)):'nA';}
+  renderSwitchdrawReveal();
 }
 window.renderHudStrip=renderHudStrip;
+// Record a card that was just switched out (swapped to Deck) so the HUD can reveal it. Grouped by the
+// switchdrawing seat; the group is cleared when a new draw phase begins (see beginPhase 'draw').
+function ruRecordSwitchOut(who, card){
+  if(typeof G==='undefined'||!G||!card)return;
+  var sess=G._sdSession||0;
+  if(!G._sdReveal || G._sdReveal.sess!==sess) G._sdReveal={who:who, sess:sess, cards:[]};  // first switch of a new session → fresh group
+  G._sdReveal.who=who;
+  G._sdReveal.cards.push({name:card.name||'', card:card});
+  if(G._sdReveal.cards.length>12) G._sdReveal.cards.shift();
+}
+window.ruRecordSwitchOut=ruRecordSwitchOut;
+// Paint the switchdraw reveal into the empty band of the 2-player HUD strip. Swapped-out cards show as
+// minis in the row DIAGONAL to the switchdrawer; their names show in the switchdrawer's OWN row, each
+// name column-aligned above/below its card. (1v1v1 uses the centre HUD, so this is 2-player only.)
+function renderSwitchdrawReveal(){
+  var host=document.getElementById('sd-reveal'); if(!host)return;
+  var rev=(typeof G!=='undefined'&&G)?G._sdReveal:null;
+  var strip=document.getElementById('hud-strip');
+  if(!rev||!rev.cards||!rev.cards.length||(G&&G.ai2)||!strip){ host.style.display='none'; host.innerHTML=''; return; }
+  var aiRow=strip.querySelector('.hud-row[data-side="ai"]'), plRow=strip.querySelector('.hud-row[data-side="player"]');
+  if(!aiRow||!plRow){ host.style.display='none'; host.innerHTML=''; return; }
+  function R(e){ return e?e.getBoundingClientRect():null; }
+  var sb=R(strip), ar=R(aiRow), pr=R(plRow);
+  var idR=Math.max((R(aiRow.querySelector('.hud-c-id'))||{right:0}).right,(R(plRow.querySelector('.hud-c-id'))||{right:0}).right);
+  var metaL=Math.min((R(aiRow.querySelector('.hud-c-meta'))||{left:sb.right}).left,(R(plRow.querySelector('.hud-c-meta'))||{left:sb.right}).left);
+  host.style.display='flex';
+  host.style.left=Math.round((idR-sb.left)+10)+'px';
+  host.style.right=Math.round((sb.right-metaL)+10)+'px';
+  host.style.top=Math.round(ar.top-sb.top)+'px';
+  host.style.height=Math.round(pr.bottom-ar.top)+'px';
+  var rowH=Math.max(24,(pr.bottom-ar.top)/2);
+  var cardScale=Math.min(1,(rowH-6)/132);                          // scale a full card down to fit one HUD row
+  var playerSwitched=(rev.who==='player');
+  host.innerHTML='';
+  rev.cards.forEach(function(entry){
+    var col=document.createElement('div'); col.className='sdr-col';
+    var top=document.createElement('div'); top.className='sdr-top';
+    var bot=document.createElement('div'); bot.className='sdr-bot';
+    var cardWrap=document.createElement('div'); cardWrap.className='sdr-card';
+    cardWrap.style.width='91px'; cardWrap.style.height='132px'; cardWrap.style.zoom=cardScale.toFixed(3);
+    try{ cardWrap.appendChild(buildCard(entry.card)); }catch(e){}
+    var nameEl=document.createElement('div'); nameEl.className='sdr-name'; nameEl.textContent=entry.name;
+    if(playerSwitched){ top.appendChild(cardWrap); bot.appendChild(nameEl); }   // player: card in AI (top) row = diagonal, name in own (bottom) row
+    else { top.appendChild(nameEl); bot.appendChild(cardWrap); }                // AI: name in own (top) row, card in player (bottom) row = diagonal
+    col.appendChild(top); col.appendChild(bot); host.appendChild(col);
+  });
+}
+window.renderSwitchdrawReveal=renderSwitchdrawReveal;
 function cardCls(card){
   if(card&&card.type==='evolution')return 'nc-amalgamation';
   if(!card)return'';
@@ -5657,7 +5957,7 @@ function handClickBase(idx,card){
   }
   // Advantageous
   if(card.type==='action'&&card.sub==='Advantageous'&&['main','standby'].includes(G.phase)){
-    const maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+    const maxA=ruEffectiveA(p);
     const useBtn=p.actUsed<maxA?[{label:`Use ${card.name}`,cls:'mb-skill',fn:()=>{closeModal();playAction(idx,card);}}]:[];
     showCardModal(card,idx,useBtn);return;
   }
@@ -5670,7 +5970,7 @@ function handClickBase(idx,card){
 // ACTION CARD USE
 // ═══════════════════════════════════════════
 function useAdv(idx,card){
-  const p=G.player;const maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+  const p=G.player;const maxA=ruEffectiveA(p);
   if(p.actUsed>=maxA){log(`No Action Card slots (max ${maxA}).`);return;}
   p.hand.splice(idx,1);p.discard.push(card);p.actUsed++;(p._advCardsThisTurn=p._advCardsThisTurn||[]).push(card.name);
   const mg=card.M||0;if(mg){p.mp+=mg;log(`You use ${card.name}: ${mg>0?'+':''}${mg} MP.`,mg>0?'heal':'dmg');}
@@ -5808,7 +6108,7 @@ function showCardModal(card,handIdx,extraBtns){
       body+=`</div>`;
       const btns=[...(extraBtns||[])];
       if(handIdx!==undefined&&G.turn==='player'&&card.type==='action'&&card.sub==='Advantageous'&&['main','standby'].includes(G.phase)&&!btns.some(b=>b.label&&b.label.startsWith('Use'))){
-        const maxA=Math.max(0,G.player.rankZone?(G.player.rankZone.A||0):0);
+        const maxA=ruEffectiveA(G.player);
         if(G.player.actUsed<maxA)btns.unshift({label:`Use ${card.name}`,cls:'mb-skill',fn:()=>{closeModal();playAction(handIdx,card);}});
       }
       if(card.type==='evolution'&&G.turn==='player'&&G.player.delta&&G.player.delta[0]===card&&['main','standby','battle'].includes(G.phase)&&!card.usedSkill){
@@ -7059,7 +7359,7 @@ function playActionBase(idx,card){
   }
   if(G._spyNoMoreActions==='player'){log('Spy: you cannot use other Action Cards this turn.','dmg');return;}
   if(G._noAttackingAdvantage&&G._noAttackingAdvantage.player){log('You cannot use Attacking Advantage this turn (Maximum 10 skill).','dmg');return;}
-  const maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+  const maxA=ruEffectiveA(p);
   if(p.actUsed>=maxA){log(`No Action Card slots remaining (max ${maxA} from Rank Zone A value).`,'dmg');return;}
   const advMult=(G._advMultiplier&&G._advMultiplier.player!=null)?G._advMultiplier.player:1;
   openModal(`Use: ${card.name}`,
@@ -7230,7 +7530,7 @@ function playActionL10(idx,card){
 function playActionL11(idx,card){
   if(card && card.name === 'MAX Star' && window.isMaximumSidePA11('player')){
     var p = window.sidePA11('player'), o = window.sidePA11('ai');
-    if((p.actUsed || 0) >= Math.max(0,(p.rankZone ? (p.rankZone.A || 0) : 0))){ window.safeLogPA11('MAX Star: no Action slot is open.','dmg'); return; }
+    if((p.actUsed || 0) >= ruEffectiveA(p)){ window.safeLogPA11('MAX Star: no Action slot is open.','dmg'); return; }
     if(p.hand[idx] !== card){ idx = p.hand.indexOf(card); if(idx === -1){ window.safeLogPA11('MAX Star is no longer in hand.','dmg'); return; } }
     p.hand.splice(idx,1); window.putToPA11(p,card,'discard'); p.actUsed = (p.actUsed || 0) + 1; p.mp += card.M || 0;
     var finishBuff = function(){
@@ -7917,7 +8217,7 @@ function offerRetaliation(onDone){
   if(hhLocked('player')){try{log('Halcyon Highlands: Retaliatory Action Cards are locked.','info');}catch(e){}onDone();return;}
   G._sgUsedThisAttack=false; // reset for next attack
   const p=G.player;
-  const maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+  const maxA=ruEffectiveA(p);
   if((p.actUsed||0)>=maxA){onDone();return;} // need a spare Action (A) slot
   const ret=p.hand.filter(c=>c.type==='action'&&c.sub==='Retaliatory');
   if(!ret.length){onDone();return;}
@@ -7954,6 +8254,8 @@ function randomAICls(){
 }
 // AI 2's own class picker -- only surfaced in 1v1v1 mode, mirrors the AI 1 helpers above.
 function setAICls2(k){if(!CM[k])return;aCls2=k;refreshAIPick();}
+function setAICls3(k){if(!CM[k])return;aCls3=k;refreshAIPick();}
+window.setAICls3=setAICls3;
 function cycleAICls2(){
   const keys=Object.keys(CM);let i=keys.indexOf(aCls2);
   aCls2=keys[(i+1+keys.length)%keys.length];
@@ -8293,21 +8595,72 @@ function renderSwitchdrawModal(isFirstTurn){
   b.must.forEach(c=>{body+=`<div class="sd-item" id="sd-${c.id}"><span class="sd-name">${c.name} <span style="color:#a0d060;font-size:.65rem;">[Action${isFirstTurn?' — MUST':''}]</span></span><button onclick="doSD('${c.id}',${!!isFirstTurn})">Switchdraw</button></div>`;});
   b.can.forEach(c=>{body+=`<div class="sd-item" id="sd-${c.id}"><span class="sd-name">${c.name} <span style="color:var(--text-dim);font-size:.65rem;">[${c.type==='area'?'Area':'Rank\u00b3+'} — optional]</span></span><button onclick="doSD('${c.id}',${!!isFirstTurn})">Switchdraw</button></div>`;});
   body+='</div>';
+  // Bulk buttons ("Switchdraw Action" = all Action cards, keeping Area/Rank\u00b3+; "Switchdraw All" = everything
+  // switchable) are only shown when 2+ cards are switchable \u2014 ruSyncSwitchButtons toggles them by count.
+  // ("Skip" was removed: it did exactly what "Done (Continue)" does, so "Switchdraw Action" takes its place.)
   openModal(isFirstTurn?'First Turn \u2014 Switchdraw':'Draw Phase \u2014 Switchdraw (Optional)',body,[
-    {label:'Done (Continue)',fn:()=>{if(isFirstTurn&&ruSwitchBuckets(true).must.length){ruSyncSwitchButtons(true);log('Switchdraw all mandatory Action Cards first.','info');return;}closeModal();G.mode='normal';beginPhase('promotion');}},
-    {label:'Skip',fn:()=>{if(isFirstTurn&&ruSwitchBuckets(true).must.length){ruSyncSwitchButtons(true);log('Switchdraw all mandatory Action Cards first.','info');return;}closeModal();G.mode='normal';beginPhase('promotion');}}
+    {label:'Done (Continue)',fn:()=>finishSwitchdraw(isFirstTurn)},
+    {label:'Switchdraw Action',cls:'mb-skill',fn:()=>ruBulkSwitchdraw(isFirstTurn,false)},
+    {label:'Switchdraw All',cls:'mb-skill',fn:()=>ruBulkSwitchdraw(isFirstTurn,true)}
   ]);
   setTimeout(()=>ruSyncSwitchButtons(isFirstTurn),0);
 }
+// Bulk switchdraw. actionsOnly (Switchdraw Action) switches every Action card (mandatory on turn 1) and
+// KEEPS Area/Rank\u00b3+; includeOptional=true (Switchdraw All) also switches the Area/Rank\u00b3+ cards. Each swap
+// goes through doSD, so it relays correctly online and re-uses all the per-card logic.
+function ruBulkSwitchdraw(isFirstTurn, includeOptional){
+  if(includeOptional){
+    // switch each currently-optional card once (snapshot ids so a freshly-drawn optional isn't re-switched)
+    ruSwitchBuckets(isFirstTurn).can.slice().forEach(function(c){ if(window.doSD)doSD(c.id,isFirstTurn); });
+  }
+  // switch all Action cards; on turn 1 they're mandatory, so loop until none remain (drawn actions included)
+  var guard=0;
+  while(guard++<60){
+    var m=ruSwitchBuckets(isFirstTurn).must;
+    if(!m.length) break;
+    if(window.doSD)doSD(m[0].id,isFirstTurn);
+  }
+  if(typeof ruRefreshSwitchdrawList==='function')ruRefreshSwitchdrawList(isFirstTurn);
+}
+window.ruBulkSwitchdraw=ruBulkSwitchdraw;
+// Completing the switchdraw (Done/Skip). Extracted so it can be a single relayable online action
+// ('sdDone'): both clients run the same closeModal + advance-to-promotion, staying in lockstep.
+function finishSwitchdraw(isFirstTurn){
+  var g=(typeof G!=='undefined')?G:null;
+  // Owner-side guard only: block completion while the acting (local) seat still holds mandatory Action
+  // Cards. Skip when replaying a relayed 'sdDone' — the acting owner already validated, and re-checking here
+  // would test the wrong seat on the off-turn client (→ desync).
+  if(!(g&&g._replaying)){
+    var stillMust=ruWithLocalPOV(function(){ return !!(isFirstTurn&&ruSwitchBuckets(true).must.length); });
+    if(stillMust){ if(typeof ruSyncSwitchButtons==='function')ruWithLocalPOV(function(){ruSyncSwitchButtons(true);}); log('Switchdraw all mandatory Action Cards first.','info'); return false; }
+  }
+  // Online: relay completion as a single seat-agnostic action so both clients advance identically. beginPhase
+  // runs on CANONICAL state (never under a swap) so each client's turn controls resolve correctly.
+  if(g&&g._netMode&&!g._replaying&&window.ruRec){ window.ruRec({t:'sdDone',first:!!isFirstTurn}); }
+  closeModal(); if(g)g.mode='normal'; beginPhase('promotion'); return true;
+}
+window.finishSwitchdraw=finishSwitchdraw;
+// Run fn with the LOCAL seat mapped to G.player, so switchdraw (which is authored around G.player) shows
+// and edits the correct hand when this client controls the 'ai' seat online. Mirrors renderAll's POV swap.
+function ruWithLocalPOV(fn){
+  var pov=!!(typeof G!=='undefined'&&G&&G._netMode&&((G._localSeat==='ai')!==!!G._foreignSwapped));
+  if(pov){var t=G.player;G.player=G.ai;G.ai=t;G.turn=(G.turn==='player')?'ai':((G.turn==='ai')?'player':G.turn);}
+  try{ return fn(); } finally { if(pov){var t2=G.player;G.player=G.ai;G.ai=t2;G.turn=(G.turn==='player')?'ai':((G.turn==='ai')?'player':G.turn);} }
+}
+window.ruWithLocalPOV=ruWithLocalPOV;
 function openSwitchdrawModal(isFirstTurn){
   if(G&&G.ruMode==='ai-vs-ai'&&G.turn==='player'){
     ru135BotResolveSwitchdraw('player',!!isFirstTurn,true);
     return;
   }
   G.mode='switchdraw';
-  const b=ruSwitchBuckets(isFirstTurn);
-  if(!b.must.length&&!b.can.length){G.mode='normal';beginPhase('promotion');return;}
-  renderSwitchdrawModal(isFirstTurn);
+  var empty=ruWithLocalPOV(function(){
+    const b=ruSwitchBuckets(isFirstTurn);
+    if(!b.must.length&&!b.can.length) return true;
+    renderSwitchdrawModal(isFirstTurn);
+    return false;
+  });
+  if(empty){ finishSwitchdraw(isFirstTurn); }   // nothing to switch → advance (relays 'sdDone' online, canonically)
 }
 
 
@@ -8882,7 +9235,7 @@ ADEFS['Seven Heaven']={
     body+=deltaDeckSummaryHTML();
     const counts=deltaDeckCounts();
     const cards=AMALGAMATION_LIBRARY.filter(c=>c.pool===pool);
-    body+=`<div style="max-height:410px;overflow-y:auto;padding-right:.2rem;">`;
+    body+=`<div class="delta-scroll">`;
     cards.forEach(c=>{
       const cnt=counts[c.id]||0; const addOk=canAddDelta(c.id);
       body+=`<div class="delta-list-card"><div style="display:flex;justify-content:space-between;gap:.5rem;align-items:center;"><strong style="color:#ffb0b8;">${c.displayName}</strong><span style="color:var(--gold);font-family:Cinzel,serif;font-size:.7rem;">Copies: ${cnt}</span></div>
@@ -9606,7 +9959,7 @@ ADEFS['Seven Heaven']={
   // so we re-run target validity during AI resolution through resolveAtk and keep the original target if still present.
 
   // Current Action cap: if a Δ Numeral is the active attacker, its A can be used independently.
-  function actionCapPlayer(){return Math.max(0,(G._deltaActionCap!=null)?G._deltaActionCap:(G.player.rankZone?(G.player.rankZone.A||0):0));}
+  function actionCapPlayer(){return Math.max(0,(G._deltaActionCap!=null)?G._deltaActionCap:ruEffectiveA(G.player));}
   window.actionCapPlayerPA1=actionCapPlayer;
 })();
 
@@ -10199,7 +10552,7 @@ window.amalgDisplayName=amalgDisplayName;
     // multiple sides cross a threshold simultaneously stays deterministic -- this exactly matches
     // the original 2-player code, which always checked 'player' before 'ai' regardless of who
     // went first.
-    const order=['player','ai','ai2'].filter(function(w){return G[w];});
+    const order=['player','ai','ai2','ai3'].filter(function(w){return G[w];});
     if(order.length<2)return null;
     const eliminated=G.eliminated||{};
     const standing=order.filter(function(w){return !eliminated[w];});
@@ -10244,7 +10597,7 @@ window.amalgDisplayName=amalgDisplayName;
   // computeDeferredWin/queueWin instead, so this never has anything to queue.
   function checkPendingEliminations(){
     if(!G||G.gameOver)return;
-    const order=['player','ai','ai2'].filter(function(w){return G[w];});
+    const order=['player','ai','ai2','ai3'].filter(function(w){return G[w];});
     if(order.length<3)return;
     const eliminated=G.eliminated||{};
     const standing=order.filter(function(w){return !eliminated[w];});
@@ -10264,7 +10617,7 @@ window.amalgDisplayName=amalgDisplayName;
     if(!G||G.gameOver||!G._queuedEliminations)return false;
     const pending=Object.keys(G._queuedEliminations);
     if(!pending.length)return false;
-    const order=['player','ai','ai2'].filter(function(w){return G[w];});
+    const order=['player','ai','ai2','ai3'].filter(function(w){return G[w];});
     G.eliminated=G.eliminated||{};
     let lastReason=null,lastEliminated=null;
     pending.forEach(function(w){
@@ -10355,7 +10708,7 @@ function acDropFromDead(w,count,to='discard'){
   return n;
 }
 function acDropFromDiscardToDeck(w,count){const p=G[w];let n=0;while(n<count&&p.discard.length){p.deck.push(p.discard.pop());n++;}if(n)shuffle(p.deck);return n;}
-function acActionCapForDefense(){const p=G.player;return Math.max(0,(p.rankZone?p.rankZone.A||0:0));}
+function acActionCapForDefense(){const p=G.player;return ruEffectiveA(p);}
 
 // Complete/refresh Advantageous and Advantageous Star definitions used from hand.
 Object.assign(ACDEFS,{
@@ -10450,7 +10803,7 @@ function useRetL2(idx,card){
   window.addClasslessEqualRAE4=addClasslessEqual;
   function lastAttack(){return G._lastResolvedAttack||{};}
   window.lastAttack=lastAttack;
-  function isPlayerActionSlotOpen(){const p=G.player, cap=Math.max(0,(p.rankZone?p.rankZone.A||0:0));return (p.actUsed||0)<cap;}
+  function isPlayerActionSlotOpen(){const p=G.player, cap=ruEffectiveA(p);return (p.actUsed||0)<cap;}
   window.isPlayerActionSlotOpen=isPlayerActionSlotOpen;
   function commitFromHand(card,dest='discard'){
     const p=G.player; const idx=p.hand.indexOf(card); if(idx===-1){log(`${card.name} is no longer in hand.`,'dmg');return false;}
@@ -10834,11 +11187,16 @@ function useRetL2(idx,card){
   function ruSyncSwitchButtons(isFirstTurn){
     const status=document.getElementById('sd-status');
     if(status)status.textContent=ruSwitchStatusText(isFirstTurn);
-    const block=!!(isFirstTurn&&ruSwitchBuckets(isFirstTurn).must.length);
+    const bk=ruSwitchBuckets(isFirstTurn);
+    const block=!!(isFirstTurn&&bk.must.length);
+    const showBulk=(bk.must.length+bk.can.length)>=2;   // the two bulk buttons only appear with 2+ switchable cards
     const buttons=[...document.querySelectorAll('#m-btns button')];
     buttons.forEach(btn=>{
-      if(btn.textContent.includes('Continue')||btn.textContent.includes('Skip')){
-        btn.disabled=block;
+      const t=btn.textContent;
+      if(t.includes('Switchdraw Action')||t.includes('Switchdraw All')){
+        btn.style.display=showBulk?'':'none';
+      } else if(t.includes('Continue')){
+        btn.disabled=block;                              // Done stays blocked until all mandatory Action Cards are switched
         btn.title=block?'Switchdraw all mandatory Action Cards first.':'';
       }
     });
@@ -12286,7 +12644,7 @@ function useRetL2(idx,card){
   }
   function makeActionCandidates(ph){
     const p=P('ai'),o=P(other('ai'));if(!p||!o||typeof ACDEFS==='undefined'||ph!=='main')return [];
-    const maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+    const maxA=ruEffectiveA(p);
     if((p.actUsed||0)>=maxA)return [];
     return (p.hand||[]).filter(c=>isAct(c)&&c.sub==='Advantageous'&&ACDEFS[c.name]).map((c,idx)=>{
       const def=ACDEFS[c.name],text=moveTagsText(c,def),tags=tacticalTags(text),id=`action:${c.id||c.name}:${ph}`;
@@ -12304,7 +12662,7 @@ function useRetL2(idx,card){
     try{
       if(typeof SF!=='undefined')SF={who,fieldZone:cand.zone,card,def:{steps},stepIdx:0,ctx};
       if(cand.kind==='action'){
-        if((p.actUsed||0)>=Math.max(0,(p.rankZone?(p.rankZone.A||0):0)))return false;
+        if((p.actUsed||0)>=ruEffectiveA(p))return false;
         p.actUsed=(p.actUsed||0)+1;
         const mg=card.M||0;if(mg){p.mp+=mg;if(!simulate)logSafe(`AI uses ${card.name}: ${mg>0?'+':''}${mg} MP.`,mg>0?'heal':'dmg');}
       }else{
@@ -13338,22 +13696,29 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     const wrap=document.getElementById('ru135-bracket-wrap');
     if(wrap)wrap.style.display=modeState.mode==='tournament'?'inline-flex':'none';
     const start=document.getElementById('start-btn');
-    if(start)start.textContent=modeState.mode==='ai-vs-ai'?'BEGIN AI MATCH':(modeState.mode==='tournament'?'BEGIN TOURNAMENT':(modeState.mode==='1v1v1'?'BEGIN 3-WAY MATCH':'BEGIN MATCH'));
+    if(start)start.textContent=modeState.mode==='ai-vs-ai'?'BEGIN AI MATCH':(modeState.mode==='tournament'?'BEGIN TOURNAMENT':(modeState.mode==='1v1v1'?'BEGIN 3-WAY MATCH':(modeState.mode==='royale4'?'BEGIN ROYALE':'BEGIN MATCH')));
     const label=document.querySelector('.pick-label');
     if(label)label.textContent=modeState.mode==='ai-vs-ai'?'Choose AI A Combat-Class':'Choose Your Combat-Class';
     const aWrap=document.getElementById('ai-level-a-wrap');
     if(aWrap)aWrap.style.display=modeState.mode==='ai-vs-ai'?'inline-flex':'none';
     const is3way=modeState.mode==='1v1v1';
-    // Selecting 1v1v1 activates the third seat, so give it a real deck class NOW — the same way
-    // picking your class defaults AI 1's deck. Without this, aCls2 stays null (the AI 2 <select>
-    // only shows a default option; its onchange never fired), and buildDeck(null) throws at match
-    // start before the 3-way board can even render. Sync the dropdown so it shows what will be used.
-    if(is3way){
-      if(!aCls2||aCls2===pCls||aCls2===aCls) aCls2=Object.keys(CM).find(k=>k!==pCls&&k!==aCls)||pCls;
+    const isRoyale=modeState.mode==='royale4';
+    const isMulti=is3way||isRoyale;   // both need extra AI seats given real deck classes NOW
+    // Selecting a multi-seat mode activates the extra seat(s), so give them real deck classes NOW — the
+    // same way picking your class defaults AI 1's deck — otherwise buildDeck(null) throws at match start.
+    if(isMulti){
+      if(!aCls||aCls===pCls) aCls=Object.keys(CM).find(k=>k!==pCls)||pCls;   // AI 1 must have a class too
+      var taken=[pCls,aCls];
+      if(!aCls2||taken.indexOf(aCls2)!==-1) aCls2=Object.keys(CM).find(k=>taken.indexOf(k)===-1)||pCls;
+      taken.push(aCls2);
+      if(isRoyale && (!aCls3||taken.indexOf(aCls3)!==-1)) aCls3=Object.keys(CM).find(k=>taken.indexOf(k)===-1)||pCls;
       const s2=document.getElementById('ai-class-select-2');
       if(s2&&aCls2) s2.value=aCls2;
+      const s3=document.getElementById('ai-class-select-3');
+      if(s3&&aCls3) s3.value=aCls3;
     }
-    ['ai2-pick-wrap','ai2-random-btn','ai2-cycle-btn','ai2-view-btn'].forEach(function(id){const e=document.getElementById(id);if(e)e.style.display=is3way?(id==='ai2-pick-wrap'?'inline-flex':'inline-block'):'none';});
+    ['ai2-pick-wrap','ai2-random-btn','ai2-cycle-btn','ai2-view-btn'].forEach(function(id){const e=document.getElementById(id);if(e)e.style.display=isMulti?(id==='ai2-pick-wrap'?'inline-flex':'inline-block'):'none';});
+    {const w3=document.getElementById('ai3-pick-wrap');if(w3)w3.style.display=isRoyale?'inline-flex':'none';}
     const bWrap=document.getElementById('ai-level-b-wrap');if(bWrap)bWrap.style.display=is3way?'inline-flex':'none';
     const bSubWrap=document.getElementById('ai-sublevel-b-wrap');if(bSubWrap)bSubWrap.style.display=is3way?'inline-flex':'none';
   }
@@ -13616,11 +13981,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return out;
   }
   function hasteActionsAvailable(){
-    const p=G.player,maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+    const p=G.player,maxA=ruEffectiveA(p);
     return p.actUsed<maxA&&p.hand.some(c=>c.type==='action'&&c.sub==='Advantageous');
   }
   function openHasteActionWindow(next){
-    const p=G.player,maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);
+    const p=G.player,maxA=ruEffectiveA(p);
     const cards=p.hand.map((c,i)=>({c,i})).filter(x=>x.c.type==='action'&&x.c.sub==='Advantageous');
     if(!cards.length||p.actUsed>=maxA){next();return;}
     let body='<p>Haste has an opponent-turn attack window. You may use available Advantageous Action Card slots before attacking.</p>';
@@ -13769,7 +14134,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     renderAll();beginPhase('main');
   }
   function botMain(w){
-    const p=side(w),maxA=Math.max(0,p.rankZone?(p.rankZone.A||0):0);let used=0;
+    const p=side(w),maxA=ruEffectiveA(p);let used=0;
     const lvl=(window.ruLevelFor?window.ruLevelFor(w):null)||{};
     const Q=window.ruQualityFor?window.ruQualityFor(w):0.5;
     // Data-driven: consider every Advantageous card the deck actually holds (not a fixed 5-name
@@ -14066,7 +14431,12 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     ['btn-adv','btn-end','btn-atk','btn-skill','btn-sd','btn-rv','btn-can'].forEach(id=>{const el=document.getElementById(id);if(el&&watch)el.style.display='none';});
     // At the player's Battle phase there is no "next phase" — the only way forward is End Turn. Hide Next Phase there.
     const advBtn=document.getElementById('btn-adv');
-    if(advBtn&&!watch)advBtn.style.display=(G&&G.turn==='player'&&G.phase==='battle')?'none':'';
+    if(advBtn&&!watch){
+      // Online: Next Phase belongs to whoever's turn it is (canonical G._myTurn — reliable inside the POV
+      // swap), hidden on their Battle phase (End Turn only). Solo keeps the original 'player'-centric rule.
+      if(G&&G._netMode) advBtn.style.display=(G._myTurn && G.phase!=='battle')?'':'none';
+      else advBtn.style.display=(G&&G.turn==='player'&&G.phase==='battle')?'none':'';
+    }
     if(watch){
       if(sur)sur.style.display='none';
       if(exit)exit.style.display='';
@@ -14089,6 +14459,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         const c=p.hand.splice(idx,1)[0];
         p.deck.splice(Math.min(p.deck.length,15),0,c);
         draw(w,1);
+        ruRecordSwitchOut(w,c);
         switched++;
       }
       p._ru135AutoFirstSwitchdrawDone=true;
@@ -15321,7 +15692,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function safeLog(msg,cls){try{log(msg,cls||'info');}catch(e){}}
   window.safeLogPA7=safeLog;
   function canUseActionSlot(p){
-    const maxA=Math.max(0,p&&p.rankZone?(p.rankZone.A||0):0);
+    const maxA=ruEffectiveA(p);
     return (p.actUsed||0)<maxA;
   }
   window.canUseActionSlotPA7=canUseActionSlot;
@@ -16654,7 +17025,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
             if(!tri||tri.reduce(function(s,c){return s+np(c);},0)!==highNP){safeLog('Obelus Star: chosen triple is illegal.','dmg');renderSafe();return;}
             tri.forEach(function(c){moveTo(owner,c,'deadzone');});
             G._noMoreActions=G._noMoreActions||{};G._noMoreActions[w]=true;
-            if(p.rankZone)p.actUsed=p.rankZone.A||p.actUsed||0;
+            if(p.rankZone)p.actUsed=ruEffectiveA(p)||p.actUsed||0;
             safeLog('Obelus Star: selected '+high.name+' and placed 3 Deck Numerals totaling '+highNP+' into that owner Deadzone. No other Action Cards this turn.','dmg');
             renderSafe();checkSafe();
           });
@@ -19855,7 +20226,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.commitActionPA9=commitAction;
   function actionCapOpen(){
     var p = side('player');
-    var cap = Math.max(0,p && p.rankZone ? (p.rankZone.A || 0) : 0);
+    var cap = ruEffectiveA(p);
     return p && (p.actUsed || 0) < cap;
   }
   window.actionCapOpenPA9=actionCapOpen;
@@ -20145,7 +20516,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function actionCapOpen(w){
     var p = side(w);
-    var cap = Math.max(0,p && p.rankZone ? (p.rankZone.A || 0) : 0);
+    var cap = ruEffectiveA(p);
     return p && (p.actUsed || 0) < cap;
   }
   function addMFromE2(w,card){
@@ -21827,7 +22198,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return out;
   }
   function availableAdvantageous(){
-    var p = side('player'), maxA = Math.max(0,p && p.rankZone ? (p.rankZone.A || 0) : 0);
+    var p = side('player'), maxA = ruEffectiveA(p);
     if(!p || !G._ru164HasteAdvAllowed || p.actUsed >= maxA) return [];
     return (p.hand || []).map(function(c,i){ return {card:c,idx:i}; }).filter(function(x){ return x.card && x.card.type === 'action' && x.card.sub === 'Advantageous'; });
   }
@@ -23588,7 +23959,7 @@ window.ruSpecPace=function(base){
   function isAiSeat172(w){return !!(G&&G[w]&&window.sideMeta&&window.sideMeta(w).controller==='ai');}
   function nm172(w){return (window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':'AI'));}
   function aiActionCapOK(d){
-    var ai=G[d],maxA=Math.max(0,ai&&ai.rankZone?(ai.rankZone.A||0):0);
+    var ai=G[d],maxA=ruEffectiveA(ai);
     return !!ai&&(ai.actUsed||0)<maxA;
   }
   function aiFindHandCard(d,name){
@@ -24033,7 +24404,7 @@ window.ruSpecPace=function(base){
   function renderAreaSupportPool(){
     var body='<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:#ffb0b8;margin:.15rem 0 .45rem;">Δ Deck → Area Support</div>';
     body+='<p style="font-size:.78rem;color:var(--text-dim);">Select ONE Area Support card to replace your deck’s normal Area Card. Select again to deselect. This does not use an Amalgamation slot.</p>';
-    body+='<div style="display:flex;flex-direction:column;gap:.4rem;max-height:320px;overflow-y:auto;">';
+    body+='<div class="delta-scroll" style="display:flex;flex-direction:column;gap:.4rem;">';
     AREA_SUPPORT_LIBRARY.forEach(function(c){
       var chosen=window.RU_PLAYER_AREA_SUPPORT===c.id;
       body+='<div style="border:1px solid '+(chosen?'rgba(140,210,255,.6)':'rgba(255,255,255,.12)')+';border-radius:6px;padding:.5rem;background:'+(chosen?'rgba(140,210,255,.08)':'rgba(255,255,255,.02)')+';">'+
@@ -24352,6 +24723,7 @@ window.ruSpecPace=function(base){
     if(g && g._recording){ (g._actionLog=g._actionLog||[]).push(a); }         // local replay-test log
     if(window.ruOnLocalAction){ try{ window.ruOnLocalAction(a); }catch(e){} } // network hook — set by net.js to forward this local action to the room
   }
+  window.ruRec           = rec;   // let net-aware engine code (e.g. finishSwitchdraw) relay a bespoke action
   window.ruActionLog     = function(){ var g=G_(); return g?(g._actionLog||[]):[]; };
   window.ruStartRecording= function(){ var g=G_(); if(g){ g._recording=true; g._actionLog=[]; } };
   window.ruStopRecording = function(){ var g=G_(); if(g) g._recording=false; };
@@ -24366,7 +24738,7 @@ window.ruSpecPace=function(base){
   // BEFORE record/relay also prevents an off-turn no-op from being sent to the opponent (which would apply
   // on their side and desync). View actions (bank/delta/dead/view/skillMenu) and modal/picker responses
   // stay ungated so reactions and browsing work during the opponent's turn.
-  var TURN_GATED={adv:1,end:1,hand:1,sdMode:1,atkMode:1,rvMode:1};
+  var TURN_GATED={adv:1,end:1,hand:1,sdMode:1,atkMode:1,rvMode:1,sd:1};
   function offTurnBlocked(a){ var g=G_(); return !!(g && g._netMode && !g._replaying && a && TURN_GATED[a.t] && g.turn!==g._localSeat); }
   function wrap(name, mk){
     var orig=window[name];
@@ -24389,6 +24761,7 @@ window.ruSpecPace=function(base){
   wrap('bankZoneClick',  function(who){ return {t:'bank', w:who}; });
   wrap('deltaZoneClick', function(who){ return {t:'delta', w:who}; });
   wrap('handClick',      function(idx,card){ return {t:'hand', id:card&&card.id}; });
+  wrap('doSD',           function(id,first){ return {t:'sd', id:id, first:!!first}; });   // switchdraw one card
   wrap('zoneClick',      function(owner,zone){ return {t:'zone', o:owner, z:zone}; });
   wrap('openSkillMenuV10',function(){ return {t:'skillMenu'}; });
   wrap('deadzoneClick',  function(who){ return {t:'dead', w:who}; });
@@ -24401,6 +24774,9 @@ window.ruSpecPace=function(base){
       _showOrig.call(this,title,body,btns);
       try{ var r=document.getElementById('m-btns'); if(!r)return;
         [].forEach.call(r.children,function(el,i){ var f=el.onclick; el.onclick=function(ev){
+          // Switchdraw Done/Skip relay their own seat-agnostic 'sdDone' (via finishSwitchdraw) and must run
+          // on canonical state — do NOT capture them as an index-based 'modal' action or foreign-apply them.
+          var g=G_(); if(g&&g.mode==='switchdraw'){ return f?f.call(this,ev):undefined; }
           if(localDrivesAi()){ rec({t:'modal', i:i}); window.ruApplyForeignAction({t:'modal', i:i}); return; }
           rec({t:'modal', i:i}); return f?f.call(this,ev):undefined;
         }; });
@@ -24444,6 +24820,8 @@ window.ruSpecPace=function(base){
           if(card) window.handClick(idx,card);
           break;
         }
+        case 'sd': if(window.doSD) window.doSD(a.id, a.first); break;         // switchdraw one card (acting seat via apply-by-tag)
+        case 'sdDone': if(window.finishSwitchdraw) window.finishSwitchdraw(a.first); break;  // seat-agnostic; applied canonically (see ruApplyForeignAction)
         case 'modal': {
           var r=document.getElementById('m-btns');
           if(r && r.children[a.i] && r.children[a.i].onclick) r.children[a.i].onclick.call(r.children[a.i]);
@@ -24470,8 +24848,14 @@ window.ruSpecPace=function(base){
      and re-rendering. This lets the deeply 'player'-hardcoded engine drive the opponent seat with zero
      gameplay-code changes. (Synchronous actions — phase/promote/flank/attack/end — are exact; timer-based
      skill flows are validated per-skill during Phase 1 hardening.) */
-  function swapSeats(g){ if(!g) return; var t=g.player; g.player=g.ai; g.ai=t; g.turn = (g.turn==='player')?'ai':((g.turn==='ai')?'player':g.turn); }
-  window.ruApplyForeignAction=function(a){ var g=G_(); if(!g||!a) return false; swapSeats(g); try{ window.ruApplyAction(a); }catch(e){ console.error('[net] foreign apply',e,a); } swapSeats(g); if(window.renderAll){ try{ renderAll(); }catch(e){} } return true; };
+  function swapSeats(g){ if(!g) return; var t=g.player; g.player=g.ai; g.ai=t; g.turn = (g.turn==='player')?'ai':((g.turn==='ai')?'player':g.turn); g._foreignSwapped=!g._foreignSwapped; }
+  // Actions whose effect is seat-agnostic (a phase transition keyed on the canonical G.turn, not on which
+  // seat object is G.player) must NOT be perspective-swapped — beginPhase would then set turn controls from
+  // the wrong seat. Apply them canonically; each client derives its own controls via myTurn.
+  var SEAT_AGNOSTIC={sdDone:1};
+  window.ruApplyForeignAction=function(a){ var g=G_(); if(!g||!a) return false;
+    if(SEAT_AGNOSTIC[a.t]){ try{ window.ruApplyAction(a); }catch(e){ console.error('[net] foreign apply (canonical)',e,a); } if(window.renderAll){ try{ renderAll(); }catch(e){} } return true; }
+    swapSeats(g); try{ window.ruApplyAction(a); }catch(e){ console.error('[net] foreign apply',e,a); } swapSeats(g); if(window.renderAll){ try{ renderAll(); }catch(e){} } return true; };
 })();
 </script>
 <script src="net.js"></script>
