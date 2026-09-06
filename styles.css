@@ -190,36 +190,38 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .bf.radial #hud-strip{display:none;}                 /* the 2-seat top strip is replaced by #hud-center */
 .bf.radial .pf-hand3{display:flex;position:absolute;left:50%;top:50%;justify-content:center;align-items:flex-start;transform-origin:center center;pointer-events:none;z-index:1;will-change:transform;}
 /* Wide bar (like the 1v1 top strip): [stats | name·class | reveal-band | meta]. */
-.bf.radial .hud-center{display:flex;flex-direction:column;gap:2px;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);transform-origin:center center;z-index:6;padding:6px 16px;border-radius:14px;background:linear-gradient(180deg,rgba(22,15,8,.93),rgba(12,8,4,.87));border:1px solid rgba(201,168,76,.32);box-shadow:inset 0 1px 0 rgba(255,240,210,.06),0 8px 30px rgba(0,0,0,.55);pointer-events:none;width:min(720px,72vw);}
+.bf.radial .hud-center{display:flex;flex-direction:column;gap:2px;position:absolute;left:50%;top:50%;transform:translate(calc(-50% + var(--hud-dx,0px)),-50%);transform-origin:center center;z-index:6;padding:6px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(22,15,8,.93),rgba(12,8,4,.87));border:1px solid rgba(201,168,76,.32);box-shadow:inset 0 1px 0 rgba(255,240,210,.06),0 8px 30px rgba(0,0,0,.55);pointer-events:none;width:min(660px,66vw);}
 /* FIXED columns (identical every row) so the reveal band is the same width/position in all rows — the name
-   in one row lines up over the card in the adjacent row. `auto` columns collapsed differently per row
-   (LOCATION row vs empty row), breaking that alignment. */
-.hud-center .hc-seat{display:grid;grid-template-columns:auto 84px 1fr 78px;gap:2px 7px;align-items:center;padding:3px 4px;border-radius:9px;transition:background .2s;min-height:26px;}
+   in one row lines up over the card in the adjacent row. The meta column is wide enough to show
+   "LOCATION: Standard Battlefield" in full (no ellipsis), exactly like the 1v1 strip. */
+.hud-center .hc-seat{display:grid;grid-template-columns:auto 68px 1fr 112px;gap:2px 5px;align-items:center;padding:3px 3px;border-radius:9px;transition:background .2s;min-height:26px;}
 .hud-center .hc-seat+.hc-seat{border-top:1px solid rgba(201,168,76,.12);}
 .hud-center .hc-seat.active{background:rgba(240,200,74,.13);box-shadow:inset 0 0 0 1px rgba(240,200,74,.4);}
 .hud-center .hc-seat.elim{opacity:.4;filter:grayscale(.7);}
 .hud-center .hc-stats{display:flex;gap:4px;justify-self:start;}
-/* compact pills/name/meta so the middle reveal band keeps real room even in the narrow 1v1v1 bar */
-.hud-center .hpill{font-size:.44rem;padding:.06rem .3rem;gap:.18rem;}
-.hud-center .hpill b{font-size:.52rem;}
+/* Radial stats: drop the pill chrome (background/border/rounding) to plain colour-keyed text — keeps the full
+   MORALE / CASUALTY / HAND words but reclaims ~50px so the reveal band has real room in the ~480px gap. */
+.hud-center .hpill{font-size:.37rem;padding:0;gap:.12rem;background:none;border:none;border-radius:0;letter-spacing:.02em;}
+.hud-center .hpill b{font-size:.44rem;}
+.hud-center .hc-stats{gap:5px;}
 .hud-center .hc-id{white-space:nowrap;}
-.hud-center .hc-nm{font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.05em;color:var(--text-main);}
-.hud-center .hc-cls{font-family:'Cinzel',serif;font-size:.46rem;letter-spacing:.08em;}
-.hud-center .hc-meta{font-family:'Crimson Pro',serif;font-size:.52rem;color:var(--text-main);justify-self:end;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
-.hud-center .hc-meta .hud-meta-lbl{font-size:.44rem;}
-.hud-center .hc-band{}   /* now just an empty 1fr spacer that pushes the meta to the right edge */
-/* Switchdraw reveal — a full-width strip under the rows (fits even the narrow 1v1v1 bar). Two lines (cards
-   / names) with fixed-width slots so slot i in one line sits directly over slot i in the other → each name
-   is on a DIFFERENT row than its card, column-aligned (the 1v1 split). */
-.hud-center .hc-reveal-strip{display:flex;flex-direction:column;gap:1px;align-items:center;width:100%;padding-top:4px;margin-top:3px;border-top:1px solid rgba(201,168,76,.14);}
-.hud-center .hc-rev-line{display:flex;justify-content:center;align-items:center;gap:8px;max-width:100%;overflow:hidden;}
-.hud-center .hc-rev-slot{width:46px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
-.hud-center .hc-swap-card{width:64px;height:93px;zoom:.42;flex:0 0 auto;}
+.hud-center .hc-nm{font-family:'Cinzel',serif;font-size:.54rem;letter-spacing:.03em;color:var(--text-main);}
+.hud-center .hc-cls{font-family:'Cinzel',serif;font-size:.42rem;letter-spacing:.06em;}
+.hud-center .hc-meta{font-family:'Crimson Pro',serif;font-size:.48rem;color:var(--text-main);justify-self:end;text-align:right;white-space:nowrap;}
+.hud-center .hc-meta .hud-meta-lbl{font-size:.4rem;color:var(--text-dim);}
+/* The centre band: normally an empty 1fr spacer that pushes the meta to the right edge; during a switchdraw
+   it becomes a centred row of fixed-width reveal slots. Cards ride one seat row's band and names the adjacent
+   row's band — slot i over slot i (equal-width slots, same grid column both rows) = the 1v1 card/name split. */
+.hud-center .hc-band{min-width:0;overflow:hidden;}
+.hud-center .hc-band-rev{display:flex;justify-content:center;align-items:center;gap:4px;overflow:visible;}
+.hud-center .hc-rev-slot{width:28px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+.hud-center .hc-swap-card{width:64px;height:93px;zoom:.28;flex:0 0 auto;}
 .hud-center .hc-swap-card .nc{width:100%;height:100%;}
-.hud-center .hc-swap-name{font-family:'Cinzel',serif;font-size:.5rem;letter-spacing:.02em;color:var(--text-main);max-width:46px;text-align:center;line-height:1.05;overflow:hidden;}
-/* 1v1v1: the two AI boards sit at the top corners closer to centre, so keep the HUD bar narrower there
-   than in Royale (whose boards are out at the screen edges) to avoid overlapping them. */
-.bf.three-way .hud-center{width:min(444px,46vw);}
+.hud-center .hc-swap-name{font-family:'Cinzel',serif;font-size:.44rem;letter-spacing:0;color:var(--text-main);max-width:28px;text-align:center;line-height:1.03;overflow:hidden;}
+/* 1v1v1: the two AI boards sit at the top corners nearer centre than Royale's edge boards; renderHudCenter
+   sizes this bar to the LIVE gap between them and centres it there (--hud-dx) so it never overlaps a board.
+   This is only the pre-JS fallback width. */
+.bf.three-way .hud-center{width:min(480px,50vw);}
 .divider{height:1px;background:linear-gradient(to right,transparent,var(--gold-dark),var(--gold),var(--gold-dark),transparent);flex-shrink:0;opacity:.5;}
 /* min-height is a real floor (not 0), sized to Rank Zone + Bank (.rankstack's centered content)
    plus Rear Flank's own outward allowance plus an 8px safety buffer, so that column can never be

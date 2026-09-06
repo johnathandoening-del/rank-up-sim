@@ -519,9 +519,13 @@ function layoutThreeWay(force){
   const plS=scale*1.35;
   const plDy=H/2 - vM - (BH*plS)/2;                  // player bottom sits vM above the floor
   const aiDy=vM - H/2 + (bbH*scale)/2;               // AI bbox top sits vM below the ceiling
-  const aiDxMax=W/2 - (bbW*scale)/2 - hM;            // furthest out while staying on-screen
+  // The rotated bbox's outer corner is EMPTY (no zones reach it), so we can push a board out past where its
+  // bbox edge would hit the wall — the visible zones still land on-screen. Reserve ~0.40·bbW (measured: the
+  // real visible half-width of a 120°-rotated board) instead of the full 0.5·bbW → boards sit right at the
+  // corners and the centre gap for the HUD widens from ~413px to ~490px without clipping any zone.
+  const aiDxMax=W/2 - (bbW*scale)*0.40 - hM;         // furthest out while visible zones stay on-screen
   const aiDxMin=(bbW*scale)/2 + (BW*scale)/2;        // closest in without bbox reaching player center
-  const aiDx=Math.min(aiDxMax, Math.max(aiDxMin, W*0.30));
+  const aiDx=Math.min(aiDxMax, Math.max(aiDxMin, W*0.50));   // push boards to the corners → widest centre gap for the HUD
   bf.style.setProperty('--s',scale.toFixed(3));
   bf.style.setProperty('--pl-s',plS.toFixed(3));
   bf.style.setProperty('--pl-dy',Math.round(plDy)+'px');
@@ -5590,23 +5594,47 @@ function renderHudCenter(){
     '</div>';
   }
   host.innerHTML=seats.map(seatRow).join('');
-  // Switchdraw reveal — full-width strip under the rows so it fits even the narrow 1v1v1 bar. Two lines:
-  // the swapped CARDS and their NAMES, on DIFFERENT rows and column-aligned (fixed-width slots), exactly the
-  // 1v1 split. Opponents show names above cards; YOU shows cards above names.
+  // Fit the bar to the LIVE gap between the flanking boards so it can never overlap them, and centre it on
+  // that gap — board contents (a filled deadzone, Δ elements) make the two inner edges asymmetric about the
+  // battlefield centre, so a plain centre would drift into one board. 1v1v1 only; Royale's gap is symmetric.
+  // Runs BEFORE the reveal is placed so the band's final width is known when the reveal is scaled to fit it.
+  try{
+    var bf=document.getElementById('battlefield');
+    if(bf&&bf.classList.contains('three-way')){
+      var innerEdge=function(prefix,side){
+        var ids=[prefix+'-rz',prefix+'-lf',prefix+'-rf',prefix+'-rear',prefix+'-delta',prefix+'-dead'],xs=[];
+        ids.forEach(function(id){var e=document.getElementById(id);if(!e)return;var q=e.getBoundingClientRect();if(!q.width)return;xs.push(side==='right'?q.right:q.left);});
+        return xs.length?(side==='right'?Math.max.apply(null,xs):Math.min.apply(null,xs)):null;
+      };
+      var L=innerEdge('ai','right'), R=innerEdge('ai2','left'), bfR=bf.getBoundingClientRect();
+      if(L!=null&&R!=null&&R>L){
+        var pad=13, wpx=Math.max(300, (R-L)-pad*2);
+        host.style.width=Math.round(wpx)+'px';
+        bf.style.setProperty('--hud-dx', Math.round((L+R)/2 - (bfR.left+bfR.right)/2)+'px');
+      }
+    } else if(bf){ host.style.width=''; bf.style.setProperty('--hud-dx','0px'); }
+  }catch(e){}
+  // Switchdraw reveal — exactly the 1v1 split (image 3): the swapped-out CARDS go in one HUD row's centre band
+  // and their NAMES in the ADJACENT row's centre band, column-aligned via equal fixed-width slots. Names ride
+  // the switchdrawer's own row; cards ride the neighbouring row (above when one exists, else below).
   var rev=G._sdReveal;
   if(rev&&rev.cards&&rev.cards.length){
-    var strip=document.createElement('div'); strip.className='hc-reveal-strip';
-    var cardsLine=document.createElement('div'); cardsLine.className='hc-rev-line';
-    var namesLine=document.createElement('div'); namesLine.className='hc-rev-line';
-    rev.cards.forEach(function(entry){
-      var cslot=document.createElement('div'); cslot.className='hc-rev-slot';
-      var cw=document.createElement('div'); cw.className='hc-swap-card'; try{ cw.appendChild(buildCard(entry.card)); }catch(e){} cslot.appendChild(cw); cardsLine.appendChild(cslot);
-      var nslot=document.createElement('div'); nslot.className='hc-rev-slot';
-      var nm=document.createElement('div'); nm.className='hc-swap-name'; nm.textContent=entry.name; nslot.appendChild(nm); namesLine.appendChild(nslot);
-    });
-    if(rev.who==='player'){ strip.appendChild(cardsLine); strip.appendChild(namesLine); }   // YOU: card above name
-    else { strip.appendChild(namesLine); strip.appendChild(cardsLine); }                     // opponents: name above card
-    host.appendChild(strip);
+    var idx=seats.indexOf(rev.who);
+    if(idx!==-1){
+      var cardSeat=(idx>0)?seats[idx-1]:seats[idx+1];
+      var nameBand=host.querySelector('.hc-seat[data-seat="'+rev.who+'"] .hc-band');
+      var cardBand=cardSeat?host.querySelector('.hc-seat[data-seat="'+cardSeat+'"] .hc-band'):null;
+      if(nameBand)nameBand.classList.add('hc-band-rev');
+      if(cardBand)cardBand.classList.add('hc-band-rev');
+      rev.cards.forEach(function(entry){
+        if(nameBand){var ns=document.createElement('div');ns.className='hc-rev-slot';var nm=document.createElement('div');nm.className='hc-swap-name';nm.textContent=entry.name;ns.appendChild(nm);nameBand.appendChild(ns);}
+        if(cardBand){var cs=document.createElement('div');cs.className='hc-rev-slot';var cw=document.createElement('div');cw.className='hc-swap-card';try{cw.appendChild(buildCard(entry.card));}catch(e){}cs.appendChild(cw);cardBand.appendChild(cs);}
+      });
+      // Many switched cards (e.g. Switchdraw All) can exceed the narrow band — scale each band down to fit its
+      // cell so nothing spills over the stats/meta. Both bands hold the same count → the same scale → the
+      // cards stay column-aligned over their names.
+      [nameBand,cardBand].forEach(function(bd){ if(!bd)return; bd.style.transform=''; var avail=bd.clientWidth, need=bd.scrollWidth; if(need>avail+1&&avail>0){var sc=avail/need; bd.style.transform='scale('+sc.toFixed(3)+')'; bd.style.transformOrigin='center center';} });
+    }
   }
 }
 window.renderHudCenter=renderHudCenter;
