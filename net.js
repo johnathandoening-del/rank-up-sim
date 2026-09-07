@@ -15,10 +15,27 @@
   function setStatus(text, cls){ try { var e = document.getElementById('online-status'); if (e) { e.textContent = text; e.className = 'online-status' + (cls ? ' ' + cls : ''); } } catch(_){} }
   function showLeave(on){ try { var b = document.getElementById('online-leave-btn'); if (b) b.style.display = on ? '' : 'none'; var j = document.getElementById('online-join-btn'); if (j) j.disabled = !!on; } catch(_){} }
 
+  function oppName(){
+    // The name of the OTHER seat (for rematch prompts). mySeat 0 → seat1's name, else seat0's.
+    try { return (state.mySeat === 1) ? (state.name0 || 'your opponent') : (state.name1 || 'your opponent'); } catch(e){ return 'your opponent'; }
+  }
+  function postDeclineModal(){
+    // Opponent declined / cancelled a rematch (or we cancelled). Offer the two off-ramps the user asked for:
+    // keep playing (vs a local AI bot) or leave to the menu. Leaving disconnects from the room.
+    try { if (typeof closeModal === 'function') closeModal(); } catch(e){}
+    if (typeof openModal !== 'function') return;
+    openModal('No rematch',
+      '<div class="wbanner"><p>' + oppName() + ' isn’t up for a rematch.</p><p>Play on against a local AI, or leave the room?</p></div>',
+      [{ label:'Play vs AI', cls:'mb-skill', fn:function(){ try{closeModal();}catch(e){} window.RUNet.disconnect(); try{ if(typeof G!=='undefined'&&G)G._netMode=false; }catch(e){} if(typeof startGame==='function') startGame(); }},
+       { label:'Leave to Menu', fn:function(){ try{closeModal();}catch(e){} window.RUNet.disconnect(); try{ var gs=document.getElementById('game-screen'),ts=document.getElementById('title-screen'); if(gs)gs.classList.remove('active'); if(ts)ts.classList.add('active'); if(typeof refreshAIPick==='function')refreshAIPick(); }catch(e){} }}]);
+  }
+  window.ruNetPostDecline = postDeclineModal;
+
   function startNetGame(cfg){
     // SHARED-IDENTITY: every client builds the byte-identical game from the same seed + both classes;
     // only mySeat (which seat this client drives) differs. initGame reads RU_NET_CONFIG.
-    state.seed = cfg.seed; state.mySeat = cfg.mySeat; state.active = true;
+    try { if (typeof closeModal === 'function') closeModal(); } catch(e){}   // dismiss any game-over / rematch-waiting modal before the fresh game builds
+    state.seed = cfg.seed; state.mySeat = cfg.mySeat; state.name0 = cfg.name0; state.name1 = cfg.name1; state.active = true;
     window.RU_NET_CONFIG = { seed: cfg.seed, mySeat: cfg.mySeat, seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat };
     if (typeof startGame === 'function') startGame();
     window.RU_NET_CONFIG = null;
@@ -66,6 +83,16 @@
         setStatus('Your opponent left — match ended. You are back in the room; a new opponent can join, or change the code.', 'err');
         try { var gs = document.getElementById('game-screen'), ts = document.getElementById('title-screen'); if (gs) gs.classList.remove('active'); if (ts) ts.classList.add('active'); } catch(e){}
         break;
+      case 'rematch-vote':
+        // The opponent asked for a rematch. Surface it; if the local game-over modal offers a Rematch
+        // button, the player just clicks it and both restart (server deals a fresh 'start').
+        log2((msg.name || 'Opponent') + ' wants a rematch.');
+        setStatus((msg.name || 'Your opponent') + ' wants a rematch — accept to play again.', 'ok');
+        break;
+      case 'rematch-declined':
+        log2((msg.name || 'Opponent') + ' declined the rematch.');
+        postDeclineModal();
+        break;
       case 'error':
         log2('room error: ' + msg.msg);
         setStatus(msg.msg || 'Room error.', 'err');
@@ -91,6 +118,11 @@
       window.ruOnLocalAction = function(a){ if (state.active && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'action', action:a })); state.sent++; } };
     },
     state: function(){ return JSON.parse(JSON.stringify(state)); },
+    isActive: function(){ return !!state.active; },
+    oppName: function(){ return oppName(); },
+    // Vote to rematch (true) or decline/cancel (false). When BOTH seats vote true the server deals a fresh
+    // identically-seeded game (a new 'start') and both clients rebuild in the same room.
+    rematch: function(vote){ try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'rematch', vote: !!vote })); } catch(e){} },
     disconnect: function(){ if (ws) try { ws.close(); } catch(e){} }
   };
 

@@ -105,6 +105,38 @@ wss.on('connection', (ws, req) => {
       broadcast(room, { type: 'action', from: seat, seat, seq, action: msg.action }, ws);
       return;
     }
+
+    // Rematch is a ROOM-LIFECYCLE concern (like join/leave), NOT a game rule — the server stays
+    // game-agnostic. When EVERY current player has voted yes, deal a fresh identically-seeded game to the
+    // same seats/classes (a new 'start', exactly like the first). A 'no' (decline/cancel) clears the tally
+    // and tells the others, who then choose to wait, leave, or drop to local AI on their own client.
+    if (msg.type === 'rematch') {
+      const seat = room.seatBySocket.get(ws);
+      const name = room.nameBySocket.get(ws);
+      room.rematchVotes = room.rematchVotes || new Set();
+      if (msg.vote === false) {
+        room.rematchVotes.clear();
+        broadcast(room, { type: 'rematch-declined', seat, name }, ws);
+        console.log(`[rematch] room=${ws._room} seat=${seat} declined`);
+        return;
+      }
+      room.rematchVotes.add(ws);
+      broadcast(room, { type: 'rematch-vote', seat, name, votes: room.rematchVotes.size, need: room.sockets.size }, ws);
+      if (room.rematchVotes.size >= room.sockets.size && room.sockets.size >= 2) {
+        room.rematchVotes.clear();
+        room.seed = newSeed(); room.seq = 0; room.started = true;
+        const socks = [...room.sockets];
+        const bySeat = {}; socks.forEach(s => { bySeat[s._seatIdx] = s; });
+        const seat0Class = room.clsBySocket.get(bySeat[0]);
+        const seat1Class = room.clsBySocket.get(bySeat[1]);
+        const name0 = room.nameBySocket.get(bySeat[0]);
+        const name1 = room.nameBySocket.get(bySeat[1]);
+        const firstSeat = room.seed % 2;
+        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, name0, name1, firstSeat, mySeat: s._seatIdx, rematch: true }));
+        console.log(`[rematch] room=${ws._room} all agreed -> new game seed=${room.seed}`);
+      }
+      return;
+    }
     if (msg.type === 'ping') { send(ws, { type: 'pong', t: msg.t }); return; }
   });
 
@@ -119,6 +151,7 @@ wss.on('connection', (ws, req) => {
     // WAITING state — new seed, clear started, re-seat the remaining player(s) as 0,1,… — so a fresh
     // opponent can start a clean game (this fixes the "room stalls / start never fires" bug after reloads).
     room.started = false; room.seed = newSeed(); room.seq = 0;
+    if (room.rematchVotes) room.rematchVotes.clear();
     let i = 0; for (const s of room.sockets) { s._seatIdx = i; room.seatBySocket.set(s, SEATS[i]); i++; }
     broadcast(room, { type: 'peer', event: 'leave', seat, name, players: roomPlayers(room) });
     broadcast(room, { type: 'reset', reason: 'opponent-left' });
