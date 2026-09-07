@@ -479,11 +479,15 @@ function sideNameLabel(w){
   if(w==='player')return 'You';
   return window.sideMeta?sideMeta(w).label:(w==='ai2'?'AI 2':'AI');
 }
-function sideSubjectLabel(w){return sideNameLabel(w);}
-function sideObjectLabel(w){if(G&&G._netMode)return sideNameLabel(w);return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'you':sideNameLabel(w);}
-function sidePossessiveLabel(w){if(G&&G._netMode)return sideNameLabel(w)+"'s";return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'Your':sideNameLabel(w)+"'s";}
-function sidePossLower(w){if(G&&G._netMode)return sideNameLabel(w)+"'s";return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'your':sideNameLabel(w)+"'s";}   // lowercase (mid-sentence) form of sidePossessiveLabel
-function sideVerbLabel(w,base,third){var useThird=(G&&G._netMode)||w!=='player'||(G&&G.ruMode==='ai-vs-ai');return sideSubjectLabel(w)+' '+(useThird?(third||base+'s'):base);}
+// Online, "this seat is the LOCAL device's own human" (flag rides on the seat OBJECT so it survives the POV
+// swap). POV-relative log wording keys off it: the local player reads "You/your", everyone else reads by name.
+function isLocalHumanSeat(w){return !!(G&&G._netMode&&G[w]&&G[w]._isLocalHuman);}
+window.isLocalHumanSeat=isLocalHumanSeat;
+function sideSubjectLabel(w){if(G&&G._netMode)return isLocalHumanSeat(w)?'You':sideNameLabel(w);return sideNameLabel(w);}
+function sideObjectLabel(w){if(G&&G._netMode)return isLocalHumanSeat(w)?'you':sideNameLabel(w);return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'you':sideNameLabel(w);}
+function sidePossessiveLabel(w){if(G&&G._netMode)return isLocalHumanSeat(w)?'Your':sideNameLabel(w)+"'s";return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'Your':sideNameLabel(w)+"'s";}
+function sidePossLower(w){if(G&&G._netMode)return isLocalHumanSeat(w)?'your':sideNameLabel(w)+"'s";return (w==='player'&&!(G&&G.ruMode==='ai-vs-ai'))?'your':sideNameLabel(w)+"'s";}   // lowercase (mid-sentence) form of sidePossessiveLabel
+function sideVerbLabel(w,base,third){if(G&&G._netMode)return isLocalHumanSeat(w)?('You '+base):(sideNameLabel(w)+' '+(third||base+'s'));var useThird=w!=='player'||(G&&G.ruMode==='ai-vs-ai');return sideSubjectLabel(w)+' '+(useThird?(third||base+'s'):base);}
 window.sideNameLabel=sideNameLabel;window.sideSubjectLabel=sideSubjectLabel;window.sideObjectLabel=sideObjectLabel;window.sidePossessiveLabel=sidePossessiveLabel;window.sidePossLower=sidePossLower;window.sideVerbLabel=sideVerbLabel;
 // Shorthand for the many scattered "pl-X"/"ai-X" DOM-id ternaries throughout this file --
 // resolves to whichever side's own zone-id prefix, so a 3rd (or later) seat's elements get found
@@ -1004,20 +1008,28 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
         hasE2=false;
       }
     }
-    if(who==='player' && !(R() && G.ruMode==='ai-vs-ai')){
+    // The E2 (Death Draw) choice belongs to the card's OWNER (`who`) — which may be the DEFENDER on the
+    // opponent's turn, not the active player. Online, prompt whichever human owns the card and mark the prompt
+    // as theirs (G._promptSeat=who) so only the owner's device can act; every other client shows the mirror and
+    // resolves from the owner's relayed choice. Offline, only 'player' is human so the bot ('ai') still
+    // auto-resolves below. `_poss` is POV-correct: "your" on the owner's screen, "<name>'s" elsewhere.
+    if(isHumanSeat(who) && !(R() && G.ruMode==='ai-vs-ai')){
+      try{ if(G) G._promptSeat=who; }catch(e){}
+      var _poss=(window.sidePossLower?sidePossLower(who):'your');
+      var _clr=function(){ try{ if(G) delete G._promptSeat; }catch(e){} };
       if(hasE2){
         window.openModal('Casualty Draw: '+card.name,
-          '<div style="padding:.6rem;border:1px solid rgba(255,255,255,.1);border-radius:6px;"><div style="font-weight:600;">'+card.name+' entered your Deadzone.</div><div style="font-size:.78rem;color:var(--text-dim);margin-top:.35rem;">Death Draw (E2): '+(card.e2||'no effect')+'</div></div><p style="font-size:.78rem;color:var(--text-dim);margin-top:.4rem;">Activate its E2 effect now? It resolves fully before the next Casualty Draw is pulled.</p>',
-          [{label:'Activate E2 Effect',cls:'mb-skill',fn:function(){ window.closeModal(); setTimeout(function(){ doE2(who,card,cont); },0); }},
-           {label:'Skip Effect',fn:function(){ window.closeModal(); setTimeout(cont,0); }}]);
+          '<div style="padding:.6rem;border:1px solid rgba(255,255,255,.1);border-radius:6px;"><div style="font-weight:600;">'+card.name+' entered '+_poss+' Deadzone.</div><div style="font-size:.78rem;color:var(--text-dim);margin-top:.35rem;">Death Draw (E2): '+(card.e2||'no effect')+'</div></div><p style="font-size:.78rem;color:var(--text-dim);margin-top:.4rem;">Activate its E2 effect now? It resolves fully before the next Casualty Draw is pulled.</p>',
+          [{label:'Activate E2 Effect',cls:'mb-skill',fn:function(){ _clr(); window.closeModal(); setTimeout(function(){ doE2(who,card,cont); },0); }},
+           {label:'Skip Effect',fn:function(){ _clr(); window.closeModal(); setTimeout(cont,0); }}]);
         return;
       }
       window.openModal('Casualty Draw: '+card.name,
-        '<p style="font-size:.82rem;">'+card.name+(toDiscard?' fills your Deadzone deficit and goes to the Discard.':' is sent to your Deadzone as a casualty.')+'</p>',
-        [{label:'Continue',cls:'mb-skill',fn:function(){ window.closeModal(); setTimeout(cont,0); }}]);
+        '<p style="font-size:.82rem;">'+card.name+(toDiscard?' fills '+_poss+' Deadzone deficit and goes to the Discard.':' is sent to '+_poss+' Deadzone as a casualty.')+'</p>',
+        [{label:'Continue',cls:'mb-skill',fn:function(){ _clr(); window.closeModal(); setTimeout(cont,0); }}]);
       return;
     }
-    // AI: auto-resolve E2, no prompt.
+    // Bot seat (offline AI): auto-resolve E2, no prompt.
     if(hasE2){ doE2(who,card,cont); return; }
     cont();
   }
@@ -3266,7 +3278,7 @@ function endTurnNow(){
   cancelAll();
   // Online this runs under the foreign-apply swap for the acting seat, so G.turn is the actor → name it
   // (both clients then read the same "<name> ends turn." instead of a POV-wrong "You").
-  log((G&&G._netMode)?(sideSubjectLabel(G.turn)+' ends turn.'):'You end your turn.','info');
+  log((G&&G._netMode)?(sideVerbLabel(G.turn,'end')+' turn.'):'You end your turn.','info');
   beginPhase('end');
 }
 function endTurn(){
@@ -9372,6 +9384,19 @@ ADEFS['Seven Heaven']={
     }
     window.RU_PLAYER_DELTA_DECK=PLAYER_DELTA_DECK;
     if(G.allowEvolutions===false){(G.sideOrder||['player','ai']).forEach(function(w){if(G[w])G[w].evolutions=[];});return;}
+    // ONLINE: both players' Δ Decks are relayed by the server, so build the SAME evolutions for BOTH seats on
+    // every client (keyed by canonical seat). Using the local deck for 'player' and a random deck for the
+    // opponent — as the offline path does — desynced the Δ Deck and broke Amalgamation Rank Up across clients.
+    if(G._netMode && G._netDeltaDecks){
+      (G.sideOrder||['player','ai']).forEach(function(w){
+        if(!G[w])return;
+        var ids=G._netDeltaDecks[w]||[];
+        G[w].evolutions=ids.map(makeAmalgamation).filter(Boolean);
+      });
+      if(G.player.evolutions.length)log(`Your Δ Deck loaded: ${G.player.evolutions.map(c=>c.name).join(', ')}.`,'info');
+      renderAll();
+      return;
+    }
     const lg=legalDeltaDeck(PLAYER_DELTA_DECK);
     if(!lg.ok){(G.sideOrder||['player','ai']).forEach(function(w){if(G[w])G[w].evolutions=[];});return;}
     G.player.evolutions=PLAYER_DELTA_DECK.map(makeAmalgamation).filter(Boolean);
@@ -23052,6 +23077,14 @@ function isHumanSeat(w){
   return w==='player' && !(g && g[w] && g[w].isBot);
 }
 window.isHumanSeat=isHumanSeat;
+// ── Online prompt ownership ────────────────────────────────────────────────────────────────────────
+// A blocking prompt (modal/picker) belongs to ONE seat: the effect can name it via G._promptSeat (e.g. a
+// Deadzone-E2 belongs to the card's owner, not the active player); otherwise it belongs to the active player.
+// Only that seat's own device may interact; every other client shows the same modal as a read-only mirror and
+// resolves it from the relayed choice. (Offline there is only one human, so it's always "mine".)
+function ruPromptDeciderSeat(){ var g=(typeof G!=='undefined')?G:null; if(!g)return 'player'; return g._promptSeat||g.turn||'player'; }
+function ruPromptIsMine(){ var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode))return true; return isLocalHumanSeat(ruPromptDeciderSeat()); }
+window.ruPromptDeciderSeat=ruPromptDeciderSeat; window.ruPromptIsMine=ruPromptIsMine;
 function _ruInformedPick(arr, count, label){
   // Sacrifice/cost choices -> give up the LEAST valuable. Gain choices -> take the MOST valuable.
   var sorted = arr.slice().sort(function(a,b){ return _ruVal(a)-_ruVal(b); });
@@ -23083,7 +23116,8 @@ window.cChoose = function(chooserSide, pool, count, label, cb){
     var arr = (pool||[]).filter(Boolean);
     if(arr.length < count){ try{log(label+': not enough cards to choose.','dmg');}catch(e){} if(cb) cb([]); return; }
     if(isHumanSeat(chooserSide) && typeof openPicker==='function' && count>0){
-      openPicker(label, arr.slice(), count, count, false, function(picks){ if(cb) cb(picks||[]); });
+      try{ if(typeof G!=='undefined'&&G) G._promptSeat=chooserSide; }catch(e){}   // this pick belongs to chooserSide (online: only their device may confirm)
+      openPicker(label, arr.slice(), count, count, false, function(picks){ try{ if(typeof G!=='undefined'&&G) delete G._promptSeat; }catch(e){} if(cb) cb(picks||[]); });
     } else if(count>0 && arr.length>count){
       var picks=_ruInformedPick(arr, count, label);                 // AI self-resolves, informed
       _ruAnnounceAI(label, picks, function(){ if(cb) cb(picks); });  // then shows the player its pick
@@ -23097,11 +23131,13 @@ window.cPickHand = function(who, count, label, cb){
     count = Math.max(0, count||0);
     if(p.hand.length < count){ try{log(label+': not enough cards in hand.','dmg');}catch(e){} if(cb)cb([]); return; }
     function done(picks){
+      try{ if(typeof G!=='undefined'&&G) delete G._promptSeat; }catch(e){}
       picks.forEach(function(c){ var i=p.hand.indexOf(c); if(i>=0) p.hand.splice(i,1); });
       try{ renderAll(); }catch(e){}
       if(cb) cb(picks);
     }
     if(isHumanSeat(who) && typeof openPicker==='function' && count>0){
+      try{ if(typeof G!=='undefined'&&G) G._promptSeat=who; }catch(e){}   // this pick belongs to `who` (online: only their device may confirm)
       openPicker(label, p.hand.slice(), count, count, false, done);
     } else if(count>0 && p.hand.length>count){
       var picks=_ruInformedPick(p.hand.slice(), count, label);      // AI self-resolves, informed
@@ -24866,21 +24902,45 @@ window.ruSpecPace=function(base){
           // its own via checkWin, and rematch is negotiated over its own room message) — relaying their button
           // indexes would cross-fire the opponent's modal (e.g. an Accept click landing on their Cancel).
           var g=G_(); if(g&&(g.mode==='switchdraw'||g.gameOver)){ return f?f.call(this,ev):undefined; }
+          // A mirror modal (see below) is a read-only copy of the OTHER player's decision prompt: block real
+          // (non-replay) clicks — the choice arrives as the owner's relayed {modal,i} (which runs while
+          // _replaying, so it passes this guard).
+          var mm0=document.getElementById('modal');
+          if(g&&g._netMode&&!g._replaying&&mm0&&mm0._ruMirror){ return; }
           if(localDrivesAi()){ rec({t:'modal', i:i}); window.ruApplyForeignAction({t:'modal', i:i}); return; }
           rec({t:'modal', i:i}); return f?f.call(this,ev):undefined;
         }; });
+        // Decide ONCE, at open time, whether this modal is a MIRROR of the other player's prompt. It is a
+        // mirror only when (a) an effect marked it as another seat's choice (G._promptSeat, e.g. a Deadzone-E2
+        // owned by the defender), or (b) it opened while APPLYING a relayed action for a seat that isn't mine
+        // (a turn-based prompt like the skill menu). A modal I open locally OUTSIDE relay (my own view/info
+        // popups, my own decision prompts) is NEVER a mirror — this is what keeps local "view card" modals
+        // fully usable during the opponent's turn.
+        try{ var g2=G_(), mm=document.getElementById('modal'), box=mm&&mm.querySelector('.mbox');
+          var mirror=false, decider=null;
+          if(g2&&g2._netMode){
+            if(g2._promptSeat){ decider=g2._promptSeat; mirror=!isLocalHumanSeat(g2._promptSeat); }
+            else if(g2._replaying){ decider=g2.turn; mirror=!isLocalHumanSeat(g2.turn); }
+          }
+          if(mm){ mm._ruMirror=mirror; mm.classList.toggle('ru-mirror-modal',mirror);
+            if(box){ if(mirror){ var nm=(decider&&window.sideNameLabel)?sideNameLabel(decider):'your opponent'; box.setAttribute('data-waiting',nm+' is choosing…'); } else box.removeAttribute('data-waiting'); } }
+        }catch(e){}
       }catch(e){}
     };
   }
-  // picker confirm/skip — record chosen ids
+  // picker confirm/skip — record chosen ids. A picker also belongs to one seat online: a real (non-replay)
+  // confirm/skip on a client that doesn't own it is ignored — the owner's relayed {pick} resolves it.
+  function pickerNotMine(){ var g=G_(); return !!(g&&g._netMode&&!g._replaying&&window.ruPromptIsMine&&!ruPromptIsMine()); }
   var _cOrig=window.confirmPick;
   if(typeof _cOrig==='function') window.confirmPick=function(){
+    if(pickerNotMine()) return;
     var ids=((typeof PCK!=='undefined'&&PCK&&PCK.sel)||[]).map(function(c){return c&&c.id;});
     if(localDrivesAi()){ rec({t:'pick', ids:ids}); window.ruApplyForeignAction({t:'pick', ids:ids}); return; }
     try{ rec({t:'pick', ids:ids}); }catch(e){} return _cOrig.apply(this,arguments);
   };
   var _sOrig=window.skipPick;
   if(typeof _sOrig==='function') window.skipPick=function(){
+    if(pickerNotMine()) return;
     if(localDrivesAi()){ rec({t:'pick', ids:[]}); window.ruApplyForeignAction({t:'pick', ids:[]}); return; }
     try{ rec({t:'pick', ids:[]}); }catch(e){} return _sOrig.apply(this,arguments);
   };

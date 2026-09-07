@@ -503,3 +503,8 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
   .hcw:hover{transform:translateY(var(--ty,0px)) rotate(var(--rot,0deg));filter:none;}
   .nc:hover{transform:none;}
 }
+
+/* Online: a prompt (modal) that belongs to the OTHER player is shown as a read-only mirror — dimmed, with a
+   "<name> is choosing…" banner, and its buttons can't be clicked (the owner's relayed choice resolves it). */
+#modal.ru-mirror-modal .mbr{opacity:.45;pointer-events:none;filter:grayscale(.3);}
+#modal.ru-mirror-modal .mbox::before{content:attr(data-waiting);display:block;margin:-.2rem 0 .6rem;padding:.35rem .5rem;border-radius:6px;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.35);color:var(--gold,#c9a84c);font-family:'Cinzel',serif;font-size:.68rem;letter-spacing:.04em;text-align:center;}

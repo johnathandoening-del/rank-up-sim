@@ -63,7 +63,7 @@ wss.on('connection', (ws, req) => {
     if (msg.type === 'join') {
       const code = String(msg.room || 'default').slice(0, 32).toUpperCase();
       let room = rooms.get(code);
-      if (!room) { room = { seed: newSeed(), seq: 0, started: false, sockets: new Set(), seatBySocket: new Map(), nameBySocket: new Map(), clsBySocket: new Map() }; rooms.set(code, room); }
+      if (!room) { room = { seed: newSeed(), seq: 0, started: false, sockets: new Set(), seatBySocket: new Map(), nameBySocket: new Map(), clsBySocket: new Map(), ddBySocket: new Map() }; rooms.set(code, room); }
       if (room.sockets.size >= 2) { send(ws, { type: 'error', msg: 'Room full.' }); return; }   // 2-player for v1
       // Lowest free seat index (robust to leaves), NOT size — avoids seat collisions after a reload.
       const usedSeats = new Set([...room.sockets].map(s => s._seatIdx));
@@ -71,6 +71,9 @@ wss.on('connection', (ws, req) => {
       const seat = SEATS[seatIdx];
       room.sockets.add(ws); room.seatBySocket.set(ws, seat); room.nameBySocket.set(ws, String(msg.name || 'guest').slice(0, 24));
       room.clsBySocket.set(ws, String(msg.cls || 'light'));
+      // The Δ Deck is per-player state that must be identical on every client (like the class), or an
+      // Amalgamation Rank Up desyncs — each side would build different evolution cards. Relay it as opaque data.
+      room.ddBySocket.set(ws, Array.isArray(msg.deltaDeck) ? msg.deltaDeck.slice(0, 3).map(x => String(x).slice(0, 64)) : []);
       ws._room = code; ws._seatIdx = seatIdx;
       send(ws, { type: 'joined', room: code, seat, seatIdx, players: roomPlayers(room) });
       broadcast(room, { type: 'peer', event: 'join', seat, name: room.nameBySocket.get(ws), players: roomPlayers(room) }, ws);
@@ -87,8 +90,10 @@ wss.on('connection', (ws, req) => {
         const seat1Class = room.clsBySocket.get(bySeat[1]);
         const name0 = room.nameBySocket.get(bySeat[0]);
         const name1 = room.nameBySocket.get(bySeat[1]);
+        const seat0DeltaDeck = room.ddBySocket.get(bySeat[0]) || [];
+        const seat1DeltaDeck = room.ddBySocket.get(bySeat[1]) || [];
         const firstSeat = room.seed % 2;
-        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, name0, name1, firstSeat, mySeat: s._seatIdx }));
+        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, name0, name1, seat0DeltaDeck, seat1DeltaDeck, firstSeat, mySeat: s._seatIdx }));
         console.log(`[start] room=${code} seed=${room.seed} classes=[${seat0Class},${seat1Class}] firstSeat=${firstSeat}`);
       }
       return;
@@ -131,8 +136,10 @@ wss.on('connection', (ws, req) => {
         const seat1Class = room.clsBySocket.get(bySeat[1]);
         const name0 = room.nameBySocket.get(bySeat[0]);
         const name1 = room.nameBySocket.get(bySeat[1]);
+        const seat0DeltaDeck = room.ddBySocket.get(bySeat[0]) || [];
+        const seat1DeltaDeck = room.ddBySocket.get(bySeat[1]) || [];
         const firstSeat = room.seed % 2;
-        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, name0, name1, firstSeat, mySeat: s._seatIdx, rematch: true }));
+        socks.forEach(s => send(s, { type: 'start', seed: room.seed, seat0Class, seat1Class, name0, name1, seat0DeltaDeck, seat1DeltaDeck, firstSeat, mySeat: s._seatIdx, rematch: true }));
         console.log(`[rematch] room=${ws._room} all agreed -> new game seed=${room.seed}`);
       }
       return;
@@ -145,7 +152,7 @@ wss.on('connection', (ws, req) => {
     if (!room) return;
     const seat = room.seatBySocket.get(ws);
     const name = room.nameBySocket.get(ws);
-    room.sockets.delete(ws); room.seatBySocket.delete(ws); room.nameBySocket.delete(ws); room.clsBySocket.delete(ws);
+    room.sockets.delete(ws); room.seatBySocket.delete(ws); room.nameBySocket.delete(ws); room.clsBySocket.delete(ws); room.ddBySocket.delete(ws);
     if (room.sockets.size === 0) { rooms.delete(code); console.log(`[gc] room ${code} emptied`); return; }
     // A player left an in-progress or forming match. With no reconnect (v1), reset the room to a clean
     // WAITING state — new seed, clear started, re-seat the remaining player(s) as 0,1,… — so a fresh

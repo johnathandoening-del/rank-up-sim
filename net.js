@@ -36,14 +36,24 @@
     // only mySeat (which seat this client drives) differs. initGame reads RU_NET_CONFIG.
     try { if (typeof closeModal === 'function') closeModal(); } catch(e){}   // dismiss any game-over / rematch-waiting modal before the fresh game builds
     state.seed = cfg.seed; state.mySeat = cfg.mySeat; state.name0 = cfg.name0; state.name1 = cfg.name1; state.active = true;
-    window.RU_NET_CONFIG = { seed: cfg.seed, mySeat: cfg.mySeat, seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat };
+    window.RU_NET_CONFIG = { seed: cfg.seed, mySeat: cfg.mySeat, seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat,
+      seat0DeltaDeck: cfg.seat0DeltaDeck || [], seat1DeltaDeck: cfg.seat1DeltaDeck || [] };
     if (typeof startGame === 'function') startGame();
     window.RU_NET_CONFIG = null;
+    // Stash the two synced Δ Decks on G so installDeltaDecks (which runs ~80ms later, after RU_NET_CONFIG is
+    // cleared) builds identical evolutions for BOTH seats on every client, keyed by canonical seat index.
+    try { if (typeof G !== 'undefined' && G) G._netDeltaDecks = { player: cfg.seat0DeltaDeck || [], ai: cfg.seat1DeltaDeck || [] }; } catch(e){}
     // Attach the real player names to the seat data so the HUD shows them (and they follow the POV swap).
+    // Also flag THIS device's own seat object so logs/prompts can say "You"/"your" for the local player and
+    // the name for everyone else — the flag rides on the seat OBJECT, so it stays correct through the POV
+    // foreign-apply swap (the object moves between the 'player'/'ai' labels, the flag moves with it).
     try {
       if (typeof G !== 'undefined' && G) {
         if (G.player) G.player._netName = cfg.name0 || 'Player 1';
         if (G.ai) G.ai._netName = cfg.name1 || 'Player 2';
+        if (G.player) G.player._isLocalHuman = false;
+        if (G.ai) G.ai._isLocalHuman = false;
+        if (G._localSeat && G[G._localSeat]) G[G._localSeat]._isLocalHuman = true;
         if (typeof renderAll === 'function') renderAll();
       }
     } catch(e){}
@@ -110,7 +120,11 @@
       state.name = name || 'guest';
       var wsUrl = url || ('ws://' + (location.hostname || 'localhost') + ':8833');
       ws = new WebSocket(wsUrl);
-      ws.onopen = function(){ state.connected = true; log2('connected → ' + wsUrl + '; joining "' + room + '" as ' + myClass); setStatus('Connected. Joining room "' + room + '"…'); showLeave(true); ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass })); };
+      ws.onopen = function(){ state.connected = true; log2('connected → ' + wsUrl + '; joining "' + room + '" as ' + myClass); setStatus('Connected. Joining room "' + room + '"…'); showLeave(true);
+        // Send our Δ Deck so the server can relay both players' decks — evolutions must be identical on every
+        // client or an Amalgamation Rank Up desyncs (each side would build different evolution cards).
+        var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd })); };
       ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ state.connected = false; state.active = false; log2('disconnected'); if (!state.active) showLeave(false); };
       ws.onerror = function(){ log2('socket error'); setStatus('Could not reach the server at ' + wsUrl + '. Is it running?', 'err'); showLeave(false); };
