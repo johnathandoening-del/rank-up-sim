@@ -200,10 +200,11 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .hud-center .hc-seat.elim{opacity:.4;filter:grayscale(.7);}
 .hud-center .hc-stats{display:flex;gap:4px;justify-self:start;}
 /* Radial stats: drop the pill chrome (background/border/rounding) to plain colour-keyed text — keeps the full
-   MORALE / CASUALTY / HAND words but reclaims ~50px so the reveal band has real room in the ~480px gap. */
-.hud-center .hpill{font-size:.37rem;padding:0;gap:.12rem;background:none;border:none;border-radius:0;letter-spacing:.02em;}
-.hud-center .hpill b{font-size:.44rem;}
-.hud-center .hc-stats{gap:5px;}
+   MORALE / CASUALTY / HAND words. Sized to match the name/LOCATION text (no longer shrunk); the reveal is
+   centred on the bar and scaled to fit by renderHudCenter, so it no longer needs the stats squeezed down. */
+.hud-center .hpill{font-size:.5rem;padding:0;gap:.16rem;background:none;border:none;border-radius:0;letter-spacing:.02em;}
+.hud-center .hpill b{font-size:.56rem;}
+.hud-center .hc-stats{gap:7px;}
 .hud-center .hc-id{white-space:nowrap;}
 .hud-center .hc-nm{font-family:'Cinzel',serif;font-size:.54rem;letter-spacing:.03em;color:var(--text-main);}
 .hud-center .hc-cls{font-family:'Cinzel',serif;font-size:.42rem;letter-spacing:.06em;}

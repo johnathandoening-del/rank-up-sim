@@ -5594,10 +5594,11 @@ function renderHudCenter(){
     '</div>';
   }
   host.innerHTML=seats.map(seatRow).join('');
-  // Fit the bar to the LIVE gap between the flanking boards so it can never overlap them, and centre it on
-  // that gap — board contents (a filled deadzone, Δ elements) make the two inner edges asymmetric about the
-  // battlefield centre, so a plain centre would drift into one board. 1v1v1 only; Royale's gap is symmetric.
-  // Runs BEFORE the reveal is placed so the band's final width is known when the reveal is scaled to fit it.
+  // Centre the bar on the battlefield centre — the two AI boards sit at ±aiDx, so their masses (and axis-aligned
+  // field boxes) are symmetric about it; centring there gives EQUAL distance to P2 and P3. Then size the bar to
+  // the live inner-zone gap SYMMETRICALLY about that centre (use the tighter half so it clears both boards).
+  // 1v1v1 only — Royale's four-edge gap is already symmetric, so it keeps the CSS width and no shift.
+  // Runs BEFORE the reveal is placed so the band's final width is known when the reveal is centred/scaled.
   try{
     var bf=document.getElementById('battlefield');
     if(bf&&bf.classList.contains('three-way')){
@@ -5606,11 +5607,11 @@ function renderHudCenter(){
         ids.forEach(function(id){var e=document.getElementById(id);if(!e)return;var q=e.getBoundingClientRect();if(!q.width)return;xs.push(side==='right'?q.right:q.left);});
         return xs.length?(side==='right'?Math.max.apply(null,xs):Math.min.apply(null,xs)):null;
       };
-      var L=innerEdge('ai','right'), R=innerEdge('ai2','left'), bfR=bf.getBoundingClientRect();
+      var L=innerEdge('ai','right'), R=innerEdge('ai2','left'), bfR=bf.getBoundingClientRect(), C=(bfR.left+bfR.right)/2;
       if(L!=null&&R!=null&&R>L){
-        var pad=13, wpx=Math.max(300, (R-L)-pad*2);
-        host.style.width=Math.round(wpx)+'px';
-        bf.style.setProperty('--hud-dx', Math.round((L+R)/2 - (bfR.left+bfR.right)/2)+'px');
+        var pad=14, half=Math.max(150, Math.min(C-L, R-C)-pad);
+        host.style.width=Math.round(half*2)+'px';
+        bf.style.setProperty('--hud-dx','0px');
       }
     } else if(bf){ host.style.width=''; bf.style.setProperty('--hud-dx','0px'); }
   }catch(e){}
@@ -5630,10 +5631,29 @@ function renderHudCenter(){
         if(nameBand){var ns=document.createElement('div');ns.className='hc-rev-slot';var nm=document.createElement('div');nm.className='hc-swap-name';nm.textContent=entry.name;ns.appendChild(nm);nameBand.appendChild(ns);}
         if(cardBand){var cs=document.createElement('div');cs.className='hc-rev-slot';var cw=document.createElement('div');cw.className='hc-swap-card';try{cw.appendChild(buildCard(entry.card));}catch(e){}cs.appendChild(cw);cardBand.appendChild(cs);}
       });
-      // Many switched cards (e.g. Switchdraw All) can exceed the narrow band — scale each band down to fit its
-      // cell so nothing spills over the stats/meta. Both bands hold the same count → the same scale → the
-      // cards stay column-aligned over their names.
-      [nameBand,cardBand].forEach(function(bd){ if(!bd)return; bd.style.transform=''; var avail=bd.clientWidth, need=bd.scrollWidth; if(need>avail+1&&avail>0){var sc=avail/need; bd.style.transform='scale('+sc.toFixed(3)+')'; bd.style.transformOrigin='center center';} });
+      // Centre the reveal group on the BAR centre (image 3), not the band cell — the wide left stats push the
+      // band cell right of centre, so without this the cards hug the stats. Measure the actual card-group width
+      // from the slots (NOT scrollWidth, which equals the whole 1fr cell when the cards fit and would break the
+      // clamp), scale it down only if it overflows the cell, then translate BOTH bands by one shared amount to
+      // land the group on the bar centre — clamped so it never covers the stats/name (left) or the meta (right).
+      // Same shift+scale on both bands keeps the cards column-aligned over their names.
+      var refBand=nameBand||cardBand;
+      if(refBand){
+        if(nameBand)nameBand.style.transform=''; if(cardBand)cardBand.style.transform=''; void host.offsetWidth;
+        var groupW=function(bd){var sl=bd.querySelectorAll('.hc-rev-slot');if(!sl.length)return 0;var l=Infinity,r=-Infinity;sl.forEach(function(s){var q=s.getBoundingClientRect();if(q.left<l)l=q.left;if(q.right>r)r=q.right;});return r-l;};
+        var contentW=groupW(refBand), cellR=refBand.getBoundingClientRect(), cellW=refBand.clientWidth, cellC=(cellR.left+cellR.right)/2;
+        var sc=(contentW>cellW&&cellW>0)?cellW/contentW:1, halfShown=contentW*sc/2, gap=14;
+        var hb=host.getBoundingClientRect(), barC=(hb.left+hb.right)/2;
+        var leftLim=-Infinity, rightLim=Infinity;
+        [nameBand,cardBand].forEach(function(bd){ if(!bd)return; var row=bd.closest('.hc-seat');
+          var nmEl=row.querySelector('.hc-id'), mtEl=row.querySelector('.hc-meta'), mtR=mtEl?mtEl.getBoundingClientRect():null;
+          var ll=(nmEl?nmEl.getBoundingClientRect().right:hb.left)+gap+halfShown;
+          var rl=((mtR&&mtR.width)?mtR.left:hb.right-6)-gap-halfShown;
+          if(ll>leftLim)leftLim=ll; if(rl<rightLim)rightLim=rl;
+        });
+        var target=Math.min(Math.max(barC,leftLim),Math.max(leftLim,rightLim)), dx=Math.round(target-cellC);
+        [nameBand,cardBand].forEach(function(bd){ if(!bd)return; bd.style.transformOrigin='center center'; bd.style.transform='translateX('+dx+'px) scale('+sc.toFixed(3)+')'; });
+      }
     }
   }
 }
