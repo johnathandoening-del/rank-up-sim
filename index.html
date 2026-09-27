@@ -23018,7 +23018,13 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 
   function pulse(){
     try{
-      if(typeof G === 'undefined' || !G || G.gameOver || G.turn !== 'ai' || G.phase !== 'battle'){
+      // NEVER time out a HUMAN-controlled Battle Phase. This watchdog is only a freeze-guard for a genuinely
+      // stuck local BOT. Online the 'ai' seat is a remote human (and this global timer also runs on the
+      // opponent's client, so firing it there would desync), and isHumanSeat('ai') is true in net mode — so it
+      // is disabled entirely online, and for any human-driven 'ai' seat. Only a real bot's battle can be nudged.
+      var isNet = !!G._netMode;
+      var aiIsBot = !(window.isHumanSeat ? window.isHumanSeat('ai') : false);   // false online (human), true solo
+      if(typeof G === 'undefined' || !G || G.gameOver || G.turn !== 'ai' || G.phase !== 'battle' || isNet || !aiIsBot){
         lastSig = null;
         lastMoveAt = Date.now();
         return;
@@ -23034,10 +23040,18 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         lastMoveAt = now;
         return;
       }
+      // Must-attack: if the bot used an Advantageous Action Card this turn and still owes its attack, NEVER
+      // force-end past that obligation — keep waiting; the bot's own forced-swing (botBattle) resolves it.
+      try{
+        if(window.ru171UsedAdvE1ThisTurn && ru171UsedAdvE1ThisTurn(G.ai) && !(G.ai && G.ai._attackedThisTurn) && typeof hasLegalAttack === 'function' && hasLegalAttack('ai')){
+          lastMoveAt = now;
+          return;
+        }
+      }catch(e){}
       var key = (G.exchange || 0) + '|ai|battle|' + countLog();
       if(now - lastMoveAt > 7000 && firedKey !== key){
         firedKey = key;
-        if(typeof log === 'function') log('AI Battle Phase stalled with no pending prompt; advancing to End Phase.', 'info');
+        if(typeof log === 'function') log('Bot Battle Phase stalled with no pending prompt; advancing to End Phase.', 'info');
         if(typeof beginPhase === 'function') beginPhase('end');
       }
     }catch(e){}
@@ -24021,11 +24035,21 @@ window.ruSpecPace=function(base){
   window.zoneCard171RAtk27=zoneCard171;
 
 
+  // POV-correct wording: this can also surface on the OTHER client (a blocked action is relayed before the
+  // inner guard runs, so it re-evaluates there too) — say "You/you" for the local player, the name otherwise.
+  function advBlockMsg(where){
+    var subj=(G&&G._netMode&&window.sideSubjectLabel)?sideSubjectLabel(G.turn):'You';
+    var pron=(subj==='You')?'you':subj;
+    return subj+' used an Advantageous Action Card this turn — '+pron+' must attack before '+where+'.';
+  }
+  // The guard runs under the perspective swap too (a seat-1 human's own end/advance is applied via
+  // ruApplyForeignAction, where G.turn='player'/G.player is their seat), so checking G.turn/G.player enforces
+  // the rule for BOTH seats online, not just the canonical 'player'.
   var prevEndTurnNow171=window.endTurnNow;
   if(typeof prevEndTurnNow171==='function'){
     window.endTurnNow=endTurnNow=function(){
       if(G&&!G.gameOver&&G.turn==='player'&&usedAdvE1ThisTurn(G.player)&&!G.player._attackedThisTurn&&hasLegalAttack('player')){
-        log('You used an Advantageous Action Card this turn — you must attack before you can end your turn.','dmg');
+        log(advBlockMsg('ending the turn'),'dmg');
         return;
       }
       return prevEndTurnNow171.apply(this,arguments);
@@ -24036,7 +24060,7 @@ window.ruSpecPace=function(base){
   if(typeof prevAdvPhase171==='function'){
     window.advPhase=advPhase=function(){
       if(G&&!G.gameOver&&G.turn==='player'&&G.phase==='battle'&&usedAdvE1ThisTurn(G.player)&&!G.player._attackedThisTurn&&hasLegalAttack('player')){
-        log('You used an Advantageous Action Card this turn — you must attack before you can leave the Battle Phase.','dmg');
+        log(advBlockMsg('leaving the Battle Phase'),'dmg');
         return;
       }
       return prevAdvPhase171.apply(this,arguments);
