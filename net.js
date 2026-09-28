@@ -8,8 +8,19 @@
 (function(){
   if (window.RUNet) return;
   var ws = null;
-  var state = { connected:false, room:null, seat:null, seed:null, name:null, active:false, applied:0, sent:0 };
+  var state = { connected:false, room:null, seat:null, seed:null, name:null, active:false, applied:0, sent:0,
+                clientId:null, lastConnect:null, reconnectTimer:null, reconnectTries:0, intentionalClose:false };
   var opts = { pCls:'light', aCls:'inferno' };
+
+  // Stable per-browser id so a dropped/reloaded player reclaims their SAME seat (the server holds it during a
+  // grace window and replays the action log so they catch up to the live state).
+  function clientId(){
+    if (state.clientId) return state.clientId;
+    var id = null;
+    try { id = localStorage.getItem('ru_client_id'); } catch(e){}
+    if (!id) { id = 'c-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); try { localStorage.setItem('ru_client_id', id); } catch(e){} }
+    state.clientId = id; return id;
+  }
 
   function log2(m){ try { (window.log ? window.log : console.log)('[net] ' + m, 'info'); } catch(e){ try{ console.log('[net]', m); }catch(_){} } }
   function setStatus(text, cls){ try { var e = document.getElementById('online-status'); if (e) { e.textContent = text; e.className = 'online-status' + (cls ? ' ' + cls : ''); } } catch(_){} }
@@ -60,6 +71,27 @@
     log2('game started — seed ' + cfg.seed + ', you are seat ' + (cfg.mySeat + 1) + ' (' + (typeof G !== 'undefined' && G ? G._localSeat : '?') + '), controlling the bottom board.');
   }
 
+  // Reconnect catch-up: build the identical base game, install both Δ Decks synchronously (they normally land
+  // ~80ms later, but the replay needs evolutions in place first or an Amalgamation action would desync), then
+  // replay every logged action by tag to reproduce the exact live state.
+  function resumeNetGame(cfg){
+    startNetGame(cfg);
+    try { if (typeof installDeltaDecks === 'function') installDeltaDecks(); } catch(e){}
+    var lg = cfg.log || [];
+    try {
+      for (var i = 0; i < lg.length; i++) {
+        var e = lg[i];
+        if (e.from === 'ai') window.ruApplyForeignAction(e.action);
+        else window.ruApplyAction(e.action);
+        state.applied++;
+      }
+    } catch(err){ console.error('[net] resume replay failed', err); }
+    try { if (typeof closeModal === 'function') closeModal(); } catch(e){}      // drop any stale prompt the replay left open
+    try { if (typeof renderAll === 'function') renderAll(); } catch(e){}
+    setStatus('Reconnected — caught up to the live game.', 'ok');
+    log2('resumed: replayed ' + lg.length + ' actions.');
+  }
+
   function handle(msg){
     switch (msg.type) {
       case 'joined':
@@ -71,6 +103,13 @@
         log2('match starting…');
         setStatus('Opponent found — starting match!', 'ok');
         startNetGame(msg);
+        break;
+      case 'resume':
+        // We reconnected mid-game: rebuild the identical base game, then replay the server's action log to
+        // catch up to the exact live state (deterministic engine → same state as the opponent).
+        log2('reconnected — catching up (' + ((msg.log && msg.log.length) || 0) + ' actions)…');
+        setStatus('Reconnecting — catching up…', 'ok');
+        resumeNetGame(msg);
         break;
       case 'action':
         // apply-by-tag (shared-identity): the acting seat comes from the server (msg.from). A 'player'
@@ -84,12 +123,20 @@
         break;
       case 'peer':
         log2('peer ' + msg.event + ' (seat ' + msg.seat + ', ' + (msg.players ? msg.players.length : '?') + ' in room)');
+        if (msg.event === 'disconnect') {
+          setStatus((msg.name || 'Your opponent') + ' disconnected — waiting up to ' + Math.round((msg.graceMs||90000)/1000) + 's for them to reconnect…', 'err');
+          try { if (typeof log === 'function') log((msg.name || 'Opponent') + ' disconnected — holding the game for a reconnect…', 'imp'); } catch(e){}
+        } else if (msg.event === 'resume') {
+          setStatus((msg.name || 'Your opponent') + ' reconnected — resuming.', 'ok');
+          try { if (typeof log === 'function') log((msg.name || 'Opponent') + ' reconnected.', 'imp'); } catch(e){}
+        }
         break;
       case 'reset':
         // Opponent left (no reconnect in v1) — the room reset to a clean waiting state. Return to the
         // lobby so a fresh match can start; the seat this client will get may change, so we re-sync on the
         // next 'joined'/'start'.
         state.active = false; state.mySeat = null;
+        if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
         setStatus('Your opponent left — match ended. You are back in the room; a new opponent can join, or change the code.', 'err');
         try { var gs = document.getElementById('game-screen'), ts = document.getElementById('title-screen'); if (gs) gs.classList.remove('active'); if (ts) ts.classList.add('active'); } catch(e){}
         break;
@@ -117,6 +164,23 @@
     }
   }
 
+  // Auto-reconnect after an unexpected drop: retry the same room every few seconds until the server's grace
+  // window (~90s) — each attempt re-joins with our clientId, so the server resumes us with the action log.
+  function scheduleReconnect(){
+    if (state.reconnectTimer || !state.active || state.intentionalClose) return;
+    state.reconnectTimer = setTimeout(function attempt(){
+      state.reconnectTimer = null;
+      if (!state.active || state.intentionalClose) return;
+      if (state.connected) return;
+      state.reconnectTries++;
+      if (state.reconnectTries > 40) { setStatus('Could not reconnect — the match may have ended. Rejoin the room to try again.', 'err'); state.active = false; showLeave(false); return; }
+      log2('reconnect attempt ' + state.reconnectTries + '…');
+      setStatus('Connection lost — reconnecting (' + state.reconnectTries + ')…', 'err');
+      try { var lc = state.lastConnect || {}; window.RUNet.connect(lc.url, lc.room, lc.name, { cls: lc.cls, _resume: true }); } catch(e){}
+      state.reconnectTimer = setTimeout(attempt, 3000);
+    }, 1500);
+  }
+
   window.RUNet = {
     connect: function(url, room, name, o){
       o = o || {};
@@ -124,20 +188,30 @@
       var myClass = o.cls || (typeof pCls !== 'undefined' && pCls) || 'light';
       opts.cls = myClass;
       state.name = name || 'guest';
+      state.intentionalClose = false;
+      state.lastConnect = { url: url, room: room, name: state.name, cls: myClass };   // remembered for auto-reconnect
       var wsUrl = url || ('ws://' + (location.hostname || 'localhost') + ':8833');
       ws = new WebSocket(wsUrl);
+      var thisWs = ws;
       // Free-tier hosts sleep after ~15 min idle and take up to a minute to wake — the WS connect can look
       // dead meanwhile, so show a "waking up" status and let the socket keep trying.
-      setStatus('Connecting to the server… (a free-tier server can take up to a minute to wake up)');
-      ws.onopen = function(){ state.connected = true; log2('connected → ' + wsUrl + '; joining "' + room + '" as ' + myClass); setStatus('Connected. Joining room "' + room + '"…'); showLeave(true);
+      if (!o._resume) setStatus('Connecting to the server… (a free-tier server can take up to a minute to wake up)');
+      ws.onopen = function(){ state.connected = true; if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; } state.reconnectTries = 0;
+        log2('connected → ' + wsUrl + '; joining "' + room + '" as ' + myClass); if (!o._resume) setStatus('Connected. Joining room "' + room + '"…'); showLeave(true);
         // Send our Δ Deck so the server can relay both players' decks — evolutions must be identical on every
         // client or an Amalgamation Rank Up desyncs (each side would build different evolution cards).
         var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);
-        // Send the build we loaded under so the server can reject a stale client (would desync) — see initHealth.
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, build: state.loadedBuild || null })); };
+        // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, build: state.loadedBuild || null, clientId: clientId() })); };
       ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
-      ws.onclose = function(){ state.connected = false; state.active = false; log2('disconnected'); if (!state.active) showLeave(false); };
-      ws.onerror = function(){ log2('socket error'); setStatus('Could not reach the server at ' + wsUrl + '. If it was asleep, wait a few seconds and try again.', 'err'); showLeave(false); };
+      ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
+        state.connected = false; log2('disconnected');
+        // Unexpected drop while a match is live → try to reconnect to the same room (server holds our seat and
+        // replays the log so we resume). A deliberate leave (intentionalClose) or a non-active state just tidies up.
+        if (state.active && !state.intentionalClose) { setStatus('Connection lost — reconnecting…', 'err'); scheduleReconnect(); }
+        else { state.active = false; showLeave(false); }
+      };
+      ws.onerror = function(){ log2('socket error'); if (!state.active) { setStatus('Could not reach the server at ' + wsUrl + '. If it was asleep, wait a few seconds and try again.', 'err'); showLeave(false); } };
       // forward local player actions to the room (skipped automatically while applying a relayed action, since ruApplyAction sets G._replaying)
       window.ruOnLocalAction = function(a){ if (state.active && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'action', action:a })); state.sent++; } };
     },
@@ -147,7 +221,7 @@
     // Vote to rematch (true) or decline/cancel (false). When BOTH seats vote true the server deals a fresh
     // identically-seeded game (a new 'start') and both clients rebuild in the same room.
     rematch: function(vote){ try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'rematch', vote: !!vote })); } catch(e){} },
-    disconnect: function(){ if (ws) try { ws.close(); } catch(e){} }
+    disconnect: function(){ state.intentionalClose = true; state.active = false; if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; } if (ws) try { ws.close(); } catch(e){} }
   };
 
   // ── Lobby glue (title-screen "Play Online" panel) ──
