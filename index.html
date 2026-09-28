@@ -6353,6 +6353,7 @@ function openPicker(title,pool,max,min,opt,cb){
   el('pk-range').textContent=opt?`Select up to ${max} (optional):`:(min===max?`Select exactly ${min}:`:`Select ${min}–${max}:`);
   el('pk-skip').style.display=opt?'':'none';
   renderPick();el('picker-modal').classList.add('open');
+  if(window.ruMarkPromptMirror)ruMarkPromptMirror(el('picker-modal'));   // online: read-only "…is choosing" mirror on the non-decider
 }
 function openPickerNP(title,pool,minNP,cb){
   if(_aiOwnsSkillCost()){
@@ -6373,6 +6374,7 @@ function openPickerNP(title,pool,minNP,cb){
   PCK={cb,pool:[...pool],sel:[],max:pool.length,min:1,opt:false,npMode:true,npMin:minNP};
   el('pk-title').textContent=title;el('pk-range').textContent=`Select cards until NP total ≥ ${minNP}:`;
   el('pk-skip').style.display='none';renderPick();el('picker-modal').classList.add('open');
+  if(window.ruMarkPromptMirror)ruMarkPromptMirror(el('picker-modal'));
 }
 function renderPick(){
   const c=el('pk-cards');c.innerHTML='';
@@ -6391,6 +6393,8 @@ function renderPick(){
     npBadge.style.cssText='position:absolute;bottom:1px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:var(--gold);font-size:.5rem;font-family:Cinzel,serif;padding:1px 3px;border-radius:2px;z-index:3;white-space:nowrap;';
     npBadge.textContent=`NP:${npVal}`;w.appendChild(npBadge);
     w.onclick=()=>{
+      // Online: on the mirror (the other player's pick) selection is read-only — the owner's relayed choice drives it.
+      try{ var _pm=el('picker-modal'); if(_pm&&_pm._ruMirror&&!(G&&G._replaying))return; }catch(e){}
       if(PCK.sel.includes(card))PCK.sel=PCK.sel.filter(x=>x!==card);
       else if(PCK.sel.length<PCK.max)PCK.sel.push(card);
       renderPick();
@@ -23099,6 +23103,24 @@ window.isHumanSeat=isHumanSeat;
 function ruPromptDeciderSeat(){ var g=(typeof G!=='undefined')?G:null; if(!g)return 'player'; return g._promptSeat||g.turn||'player'; }
 function ruPromptIsMine(){ var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode))return true; return isLocalHumanSeat(ruPromptDeciderSeat()); }
 window.ruPromptDeciderSeat=ruPromptDeciderSeat; window.ruPromptIsMine=ruPromptIsMine;
+// A prompt element (#modal or #picker-modal) is a MIRROR of the other player's choice when an effect marked
+// it as another seat's (G._promptSeat) or it opened while APPLYING a relayed action for a non-local turn.
+// Decided ONCE at open time and stashed on the element so a local view/info popup never becomes a mirror.
+function ruComputeMirror(){
+  var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode)) return {mirror:false,decider:null};
+  if(g._promptSeat) return {mirror:!isLocalHumanSeat(g._promptSeat), decider:g._promptSeat};
+  if(g._replaying) return {mirror:!isLocalHumanSeat(g.turn), decider:g.turn};
+  return {mirror:false,decider:null};
+}
+function ruMarkPromptMirror(elm){
+  try{ if(!elm) return false; var r=ruComputeMirror(); elm._ruMirror=r.mirror;
+    elm.classList.toggle('ru-mirror-modal',r.mirror);
+    var box=elm.querySelector('.mbox');
+    if(box){ if(r.mirror){ var nm=(r.decider&&window.sideNameLabel)?sideNameLabel(r.decider):'your opponent'; box.setAttribute('data-waiting',nm+' is choosing…'); } else box.removeAttribute('data-waiting'); }
+    return r.mirror;
+  }catch(e){ return false; }
+}
+window.ruComputeMirror=ruComputeMirror; window.ruMarkPromptMirror=ruMarkPromptMirror;
 function _ruInformedPick(arr, count, label){
   // Sacrifice/cost choices -> give up the LEAST valuable. Gain choices -> take the MOST valuable.
   var sorted = arr.slice().sort(function(a,b){ return _ruVal(a)-_ruVal(b); });
@@ -24934,21 +24956,12 @@ window.ruSpecPace=function(base){
           if(localDrivesAi()){ rec({t:'modal', i:i}); window.ruApplyForeignAction({t:'modal', i:i}); return; }
           rec({t:'modal', i:i}); return f?f.call(this,ev):undefined;
         }; });
-        // Decide ONCE, at open time, whether this modal is a MIRROR of the other player's prompt. It is a
-        // mirror only when (a) an effect marked it as another seat's choice (G._promptSeat, e.g. a Deadzone-E2
-        // owned by the defender), or (b) it opened while APPLYING a relayed action for a seat that isn't mine
-        // (a turn-based prompt like the skill menu). A modal I open locally OUTSIDE relay (my own view/info
-        // popups, my own decision prompts) is NEVER a mirror — this is what keeps local "view card" modals
-        // fully usable during the opponent's turn.
-        try{ var g2=G_(), mm=document.getElementById('modal'), box=mm&&mm.querySelector('.mbox');
-          var mirror=false, decider=null;
-          if(g2&&g2._netMode){
-            if(g2._promptSeat){ decider=g2._promptSeat; mirror=!isLocalHumanSeat(g2._promptSeat); }
-            else if(g2._replaying){ decider=g2.turn; mirror=!isLocalHumanSeat(g2.turn); }
-          }
-          if(mm){ mm._ruMirror=mirror; mm.classList.toggle('ru-mirror-modal',mirror);
-            if(box){ if(mirror){ var nm=(decider&&window.sideNameLabel)?sideNameLabel(decider):'your opponent'; box.setAttribute('data-waiting',nm+' is choosing…'); } else box.removeAttribute('data-waiting'); } }
-        }catch(e){}
+        // Decide ONCE, at open time, whether this modal is a MIRROR of the other player's prompt (shared helper
+        // ruMarkPromptMirror): mirror only when an effect marked it as another seat's choice (G._promptSeat,
+        // e.g. a Deadzone-E2 owned by the defender) or it opened while APPLYING a relayed action for a non-local
+        // turn (a turn-based prompt like the skill menu). A modal opened locally OUTSIDE relay (my own view/info
+        // popups, my own decision prompts) is NEVER a mirror — keeps local "view card" modals usable any turn.
+        try{ if(window.ruMarkPromptMirror) ruMarkPromptMirror(document.getElementById('modal')); }catch(e){}
       }catch(e){}
     };
   }

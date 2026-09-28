@@ -26,6 +26,23 @@ const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf
 const SEATS = ['player', 'ai', 'ai2'];           // seat assignment by join order (matches the client engine's seat ids)
 const rooms = new Map();                          // code -> { seed, seq, sockets:Set, seatBySocket:Map, nameBySocket:Map }
 
+// Build id = fingerprint of the served client files, computed at startup. A Render deploy restarts the process
+// and recomputes it, so it changes on every deploy WITHOUT any manual version bump. Clients capture it at page
+// load (via /health) and send it back on join; a mismatch means that client is running stale code (loaded
+// before a deploy) and would desync — so the server tells it to refresh instead of starting a broken match.
+const SERVER_BUILD = (function(){
+  try {
+    var parts = [];
+    ['index.html', 'net.js', 'styles.css'].forEach(function(f){
+      try { var st = fs.statSync(path.join(CLIENT_ROOT, f)); parts.push(f + ':' + Math.round(st.mtimeMs) + ':' + st.size); } catch(_) {}
+    });
+    var s = parts.join('|'); var h = 0;
+    for (var i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+    return 'b' + (h >>> 0).toString(36);
+  } catch(_) { return 'b0'; }
+})();
+console.log('[build] SERVER_BUILD =', SERVER_BUILD);
+
 function newSeed() { return (Math.random() * 0xFFFFFFFF) >>> 0; }
 
 function roomPlayers(room) {
@@ -35,9 +52,9 @@ function send(ws, obj) { try { if (ws.readyState === 1) ws.send(JSON.stringify(o
 function broadcast(room, obj, except) { for (const s of room.sockets) if (s !== except) send(s, obj); }
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') {   // health endpoint (used by the cloud host + a quick browser check)
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, service: 'rank-up-room-server', rooms: rooms.size }));
+  if (req.url === '/health' || (req.url || '').split('?')[0] === '/health') {   // health endpoint (cloud host ping, keep-warm, client build capture)
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify({ ok: true, service: 'rank-up-room-server', rooms: rooms.size, build: SERVER_BUILD }));
     return;
   }
   // Serve the static game files, so ONE deploy gives both the game (https://host/) and the room
@@ -61,6 +78,12 @@ wss.on('connection', (ws, req) => {
     let msg; try { msg = JSON.parse(buf.toString()); } catch (_) { return; }
 
     if (msg.type === 'join') {
+      // Stale-client guard: the client captured the build at page load; if it no longer matches the running
+      // server, that client loaded old code (a deploy happened since) and would desync — tell it to refresh.
+      if (msg.build && msg.build !== SERVER_BUILD) {
+        send(ws, { type: 'error', code: 'stale', msg: 'A new version of Rank Up! is out. Refresh the page (Ctrl+F5) to update, then rejoin.' });
+        return;
+      }
       const code = String(msg.room || 'default').slice(0, 32).toUpperCase();
       let room = rooms.get(code);
       if (!room) { room = { seed: newSeed(), seq: 0, started: false, sockets: new Set(), seatBySocket: new Map(), nameBySocket: new Map(), clsBySocket: new Map(), ddBySocket: new Map() }; rooms.set(code, room); }

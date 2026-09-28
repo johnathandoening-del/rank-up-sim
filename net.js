@@ -107,6 +107,12 @@
         log2('room error: ' + msg.msg);
         setStatus(msg.msg || 'Room error.', 'err');
         showLeave(false);
+        // Stale client (a deploy happened after this page loaded) — offer a one-click refresh.
+        if (msg.code === 'stale' && typeof openModal === 'function') {
+          try { openModal('Update available',
+            '<div class="wbanner"><p>' + (msg.msg || 'A new version is available.') + '</p></div>',
+            [{ label:'Refresh now', cls:'mb-skill', fn:function(){ try{ location.reload(true); }catch(e){ location.reload(); } }}, { label:'Later', fn:function(){ try{closeModal();}catch(e){} }}]); } catch(e){}
+        }
         break;
     }
   }
@@ -120,14 +126,18 @@
       state.name = name || 'guest';
       var wsUrl = url || ('ws://' + (location.hostname || 'localhost') + ':8833');
       ws = new WebSocket(wsUrl);
+      // Free-tier hosts sleep after ~15 min idle and take up to a minute to wake — the WS connect can look
+      // dead meanwhile, so show a "waking up" status and let the socket keep trying.
+      setStatus('Connecting to the server… (a free-tier server can take up to a minute to wake up)');
       ws.onopen = function(){ state.connected = true; log2('connected → ' + wsUrl + '; joining "' + room + '" as ' + myClass); setStatus('Connected. Joining room "' + room + '"…'); showLeave(true);
         // Send our Δ Deck so the server can relay both players' decks — evolutions must be identical on every
         // client or an Amalgamation Rank Up desyncs (each side would build different evolution cards).
         var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd })); };
+        // Send the build we loaded under so the server can reject a stale client (would desync) — see initHealth.
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, build: state.loadedBuild || null })); };
       ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ state.connected = false; state.active = false; log2('disconnected'); if (!state.active) showLeave(false); };
-      ws.onerror = function(){ log2('socket error'); setStatus('Could not reach the server at ' + wsUrl + '. Is it running?', 'err'); showLeave(false); };
+      ws.onerror = function(){ log2('socket error'); setStatus('Could not reach the server at ' + wsUrl + '. If it was asleep, wait a few seconds and try again.', 'err'); showLeave(false); };
       // forward local player actions to the room (skipped automatically while applying a relayed action, since ruApplyAction sets G._replaying)
       window.ruOnLocalAction = function(a){ if (state.active && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'action', action:a })); state.sent++; } };
     },
@@ -153,6 +163,29 @@
   // Pre-fill the server field with the right default once the DOM is ready.
   function initServerField(){ try { var s = document.getElementById('online-server'); if (s && (!s.value || s.value.indexOf('localhost') !== -1)) s.value = defaultWsUrl(); } catch(e){} }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initServerField); else initServerField();
+
+  // The http(s) origin of the room server (for /health), derived from the WS URL.
+  function httpBase(){
+    try {
+      var w = defaultWsUrl();
+      return w.replace(/^ws/, 'http').replace(/\/$/, '');
+    } catch(e){ return ''; }
+  }
+  // On load: hit /health once. This (1) captures the build we loaded under, so the server can reject us if a
+  // deploy lands before we join (else we'd desync), and (2) starts WAKING a sleeping free-tier server early,
+  // so the first Play-Online click connects fast. A keep-alive ping every 10 min stops the server sleeping
+  // mid-session while anyone has the page open. All best-effort — failures are ignored (offline/localhost).
+  function pingHealth(){
+    try {
+      var base = httpBase(); if (!base) return;
+      fetch(base + '/health?cb=' + Date.now(), { cache:'no-store' })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ if (j && j.build) state.loadedBuild = j.build; })
+        .catch(function(){});
+    } catch(e){}
+  }
+  function initHealth(){ pingHealth(); try { setInterval(pingHealth, 10*60*1000); } catch(e){} }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initHealth); else initHealth();
 
   window.ruJoinOnline = function(){
     var nameEl = document.getElementById('online-name'), roomEl = document.getElementById('online-room'), srvEl = document.getElementById('online-server');
