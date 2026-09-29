@@ -6179,6 +6179,15 @@ function doCounterAttack(npBonus,opts){
 // ═══════════════════════════════════════════
 // MODALS
 // ═══════════════════════════════════════════
+// Online: true when a PURE-VIEW modal is only firing because we're replaying the OPPONENT's relayed action
+// (not our own). Such a private browse (Evos, Δ Deck, zone contents) must never open on the other player's
+// screen. G._localActor is set when the seat-1 client applies its OWN action (which also uses the replay path),
+// so this stays false only for the opponent's actions and for spectators.
+function ruSuppressForeignView(){ return !!(typeof G!=='undefined'&&G&&G._netMode&&G._replaying&&!G._localActor); }
+window.ruSuppressForeignView=ruSuppressForeignView;
+// Mark the just-opened modal as a pure LOCAL view so its clicks never relay (see the modal-onclick hook).
+function ruTagViewModal(){ try{ var m=document.getElementById('modal'); if(m)m._ruViewOnly=true; }catch(e){} }
+window.ruTagViewModal=ruTagViewModal;
 function showCardModal(card,handIdx,extraBtns){
       const cls=cardCls(card).replace('nc-','');
       let body=`<div class="cdet nc-${cls}" style="padding:.85rem;border-radius:6px;border:1px solid rgba(255,255,255,.08);">`;
@@ -6249,17 +6258,19 @@ function viewZoneL3(who,zone){
 }
 function viewZoneL2(who,zone){
   if(zone==='evolutions'){
+    if(ruSuppressForeignView())return;   // a player's Evos/Δ Deck browse is private — never mirror it to the opponent
     if(G.allowEvolutions===false){openModal('Evolutions Disabled','<p>Evolution play is disabled for this match.</p>',[{label:'Close',fn:()=>closeModal()}]);return;}
     const cards=(G[who].evolutions)||[];
     let body=`<p>${cards.length} Evolution card(s) in ${sidePossLower(who)} Evos stack.</p>`;
     if(who==='ai') body+='<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">AI Evos are face-down.</p>';
     else if(!cards.length) body+='<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">No Evolution cards selected or loaded.</p>';
     else body+=cards.map(c=>`<div class="delta-list-card"><strong>${amalgDisplayName(c)}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">${c.alignment} | Rank ${c.rank} | NP ${c.numeral} | A:${ruADisp(c.A)} M:${c.M>=0?'+':''}${c.M} S:${c.S===99?'+?':c.S}</span><div style="font-size:.72rem;margin-top:.25rem;"><strong>Requirement:</strong> ${c.requirements||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Cost:</strong> ${c.skillCost||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Skill:</strong> ${c.skillText||'—'}</div></div>`).join('');
-    openModal(`${sidePossessiveLabel(who)} Evos`,body,[{label:'Close',fn:()=>closeModal()}]);return;
+    openModal(`${sidePossessiveLabel(who)} Evos`,body,[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;
   }
   return viewZoneL1(who,zone);
 }
 function viewZoneL1(who,zone){
+  if(ruSuppressForeignView())return;   // private browse — local only
   if((zone==='evolutions'||zone==='delta')&&G.allowEvolutions===false){openModal('Evolutions Disabled',`<p>Evolution play is disabled for this match. The Evos stack and Δ Zone are inactive.</p>`,[{label:'Close',fn:()=>closeModal()}]);return;}
   const p=G[who];
   const map={deck:p.deck,discard:p.discard,deadzone:p.deadzone,evolutions:p.evolutions||[],delta:p.delta||[]};
@@ -6268,18 +6279,19 @@ function viewZoneL1(who,zone){
   let body=`<p>${cards.length} card(s).</p>`;
   if(zone==='deck'||zone==='evolutions')body+=`<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">${zone==='evolutions'?'No Evolution cards are in play yet (Amalgamation, Fullmetal, Supernova, Neo).':'Deck contents are hidden.'}</p>`;
   else{const show=cards.slice(-10);body+=show.map(c=>`<div style="padding:.15rem 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.78rem;">${c.name}</div>`).join('');if(cards.length>10)body+=`<p style="font-size:.7rem;color:var(--text-dim);">...and ${cards.length-10} more.</p>`;}
-  openModal(`${sidePossessiveLabel(who)} ${label}`,body,[{label:'Close',fn:()=>closeModal()}]);
+  openModal(`${sidePossessiveLabel(who)} ${label}`,body,[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();
 }
 // Δ Zone holds Evolution cards (Amalgamation, Fullmetal, Supernova, Neo). No Evolution card data exists yet,
 // so this is a structural view that shows current contents.
 function deltaZoneClick(who){
   if(who==='player'&&G.mode==='standdown'){var dp=G.player,dc=dp.delta&&dp.delta[0];if(!dc){log('No \u0394 Zone card to Stand Down.');cancelAll();return;}dp.discard.push(dc);dp.delta=[];log('You Stand Down '+dc.name+' from the \u0394 Zone.');G.mode='normal';clearHL();hide('btn-can');renderAll();return;}
   if(G.allowEvolutions===false){openModal('Δ Zone Disabled',`<p>Evolution play is disabled for this match. Enable <strong>Allow Evolutions</strong> before starting a match to use the Δ Zone.</p>`,[{label:'Close',fn:()=>closeModal()}]);return;}
+  if(ruSuppressForeignView())return;   // \u0394 Zone browse is private \u2014 don't mirror it to the opponent
   const p=G[who];const d=p.delta||[];
   let body=`<p style="font-size:.8rem;">The \u0394 Zone is the side zone where Evolution cards are played (Amalgamation, Fullmetal, Supernova, Neo).</p>`;
   if(d.length)body+=d.map(c=>`<div style="padding:.15rem 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.78rem;">${c.name}</div>`).join('');
   else body+=`<p style="font-size:.75rem;color:var(--text-dim);font-style:italic;">No Evolution cards are in the \u0394 Zone. Evolution mechanics are not yet implemented.</p>`;
-  openModal(`${sidePossessiveLabel(who)} \u0394 Zone`,body,[{label:'Close',fn:()=>closeModal()}]);
+  openModal(`${sidePossessiveLabel(who)} \u0394 Zone`,body,[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();
 }
 let _modalQueue=[];let _modalOpen=false;
 function openModal(title,body,btns){
@@ -23122,7 +23134,7 @@ function ruComputeMirror(){
   return {mirror:false,decider:null};
 }
 function ruMarkPromptMirror(elm){
-  try{ if(!elm) return false; var r=ruComputeMirror(); elm._ruMirror=r.mirror;
+  try{ if(!elm) return false; elm._ruViewOnly=false; var r=ruComputeMirror(); elm._ruMirror=r.mirror;
     elm.classList.toggle('ru-mirror-modal',r.mirror);
     var box=elm.querySelector('.mbox');
     if(box){ if(r.mirror){ var nm=(r.decider&&window.sideNameLabel)?sideNameLabel(r.decider):'your opponent'; box.setAttribute('data-waiting',nm+' is choosing…'); } else box.removeAttribute('data-waiting'); }
@@ -24911,6 +24923,11 @@ window.ruSpecPace=function(base){
   // action (server stamps from='ai') and execute it via the perspective swap instead of the direct
   // 'player'-centric handler. Skipped while replaying a received/foreign action.
   function localDrivesAi(){ var g=G_(); return !!(g && g._netMode && g._localSeat==='ai' && !g._replaying); }
+  // Run a seat-1 client's OWN action through the foreign-apply path, but flagged G._localActor so anything it
+  // opens (e.g. a private view) knows it's MINE, not the opponent's — the seat-1 client applies its own actions
+  // via the same _replaying path the opponent's relayed actions use, so _replaying alone can't tell them apart.
+  function withLocalActor(fn){ var g=G_(); var prev=g&&g._localActor; if(g)g._localActor=true; try{ return fn(); } finally { var g2=G_(); if(g2)g2._localActor=prev; } }
+  window.withLocalActorRU=withLocalActor;
   // Turn-gate: online, only the seat whose turn it is may START one of these turn-based actions. Blocking
   // BEFORE record/relay also prevents an off-turn no-op from being sent to the opponent (which would apply
   // on their side and desync). View actions (bank/delta/dead/view/skillMenu) and modal/picker responses
@@ -24934,7 +24951,7 @@ window.ruSpecPace=function(base){
       var g0=G_(); if(g0&&g0._spectator&&!g0._replaying){ return; }   // spectators are read-only — never act
       var a; try{ a=mk.apply(null,arguments); }catch(e){}
       if(offTurnBlocked(a)){ try{ log("It's not your turn.",'info'); }catch(e){} return; }
-      if(a && localDrivesAi()){ rec(a); window.ruApplyForeignAction(a); return; }
+      if(a && localDrivesAi()){ rec(a); withLocalActor(function(){ window.ruApplyForeignAction(a); }); return; }
       try{ rec(a); }catch(e){}
       return orig.apply(this,arguments);
     };
@@ -24967,13 +24984,17 @@ window.ruSpecPace=function(base){
           // The game-over / rematch / post-game modals are LOCAL control UI (each client reaches game-over on
           // its own via checkWin, and rematch is negotiated over its own room message) — relaying their button
           // indexes would cross-fire the opponent's modal (e.g. an Accept click landing on their Cancel).
-          var g=G_(); if(g&&(g.mode==='switchdraw'||g.gameOver)){ return f?f.call(this,ev):undefined; }
+          var g=G_(); var mmv=document.getElementById('modal');
+          // Switchdraw, game-over/rematch, and pure-VIEW modals (Evos/Δ Deck/zone browses) are all LOCAL — run
+          // their clicks locally and never relay them (a view is suppressed on the opponent, so relaying its
+          // Close could cross-fire whatever modal they DO have open).
+          if(g&&(g.mode==='switchdraw'||g.gameOver||(mmv&&mmv._ruViewOnly))){ return f?f.call(this,ev):undefined; }
           // A mirror modal (see below) is a read-only copy of the OTHER player's decision prompt: block real
           // (non-replay) clicks — the choice arrives as the owner's relayed {modal,i} (which runs while
           // _replaying, so it passes this guard).
-          var mm0=document.getElementById('modal');
+          var mm0=mmv;
           if(g&&g._netMode&&!g._replaying&&mm0&&mm0._ruMirror){ return; }
-          if(localDrivesAi()){ rec({t:'modal', i:i}); window.ruApplyForeignAction({t:'modal', i:i}); return; }
+          if(localDrivesAi()){ rec({t:'modal', i:i}); withLocalActor(function(){ window.ruApplyForeignAction({t:'modal', i:i}); }); return; }
           rec({t:'modal', i:i}); return f?f.call(this,ev):undefined;
         }; });
         // Decide ONCE, at open time, whether this modal is a MIRROR of the other player's prompt (shared helper
@@ -24992,13 +25013,13 @@ window.ruSpecPace=function(base){
   if(typeof _cOrig==='function') window.confirmPick=function(){
     if(pickerNotMine()) return;
     var ids=((typeof PCK!=='undefined'&&PCK&&PCK.sel)||[]).map(function(c){return c&&c.id;});
-    if(localDrivesAi()){ rec({t:'pick', ids:ids}); window.ruApplyForeignAction({t:'pick', ids:ids}); return; }
+    if(localDrivesAi()){ rec({t:'pick', ids:ids}); withLocalActor(function(){ window.ruApplyForeignAction({t:'pick', ids:ids}); }); return; }
     try{ rec({t:'pick', ids:ids}); }catch(e){} return _cOrig.apply(this,arguments);
   };
   var _sOrig=window.skipPick;
   if(typeof _sOrig==='function') window.skipPick=function(){
     if(pickerNotMine()) return;
-    if(localDrivesAi()){ rec({t:'pick', ids:[]}); window.ruApplyForeignAction({t:'pick', ids:[]}); return; }
+    if(localDrivesAi()){ rec({t:'pick', ids:[]}); withLocalActor(function(){ window.ruApplyForeignAction({t:'pick', ids:[]}); }); return; }
     try{ rec({t:'pick', ids:[]}); }catch(e){} return _sOrig.apply(this,arguments);
   };
 
