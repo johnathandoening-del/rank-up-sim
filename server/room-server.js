@@ -51,6 +51,35 @@ console.log('[build] SERVER_BUILD =', SERVER_BUILD);
 function newSeed() { return (Math.random() * 0xFFFFFFFF) >>> 0; }
 function send(ws, obj) { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (_) {} }
 
+// ── Ratings + match history (trust-based, name-keyed; friends won't cheat — invariant #0). Persisted to a
+// JSON file next to the server (NOT under CLIENT_ROOT, so it is never served). Elo with K=24, base 1000. ──
+const STATS_PATH = path.join(__dirname, 'stats.json');
+let STATS = { players: {}, history: [] };
+try { STATS = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')) || STATS; if (!STATS.players) STATS.players = {}; if (!STATS.history) STATS.history = []; } catch (_) {}
+let statsSaveTimer = null;
+function saveStats() { if (statsSaveTimer) return; statsSaveTimer = setTimeout(function(){ statsSaveTimer = null; try { fs.writeFileSync(STATS_PATH, JSON.stringify(STATS)); } catch (_) {} }, 400); }
+function playerRec(name) { const k = String(name || 'guest').slice(0, 24); if (!STATS.players[k]) STATS.players[k] = { name: k, elo: 1000, wins: 0, losses: 0, draws: 0, games: 0 }; return STATS.players[k]; }
+function recordResult(name0, name1, winnerName) {
+  const a = playerRec(name0), b = playerRec(name1);
+  const ea = 1 / (1 + Math.pow(10, (b.elo - a.elo) / 400));
+  const eb = 1 / (1 + Math.pow(10, (a.elo - b.elo) / 400));
+  let sa, sb;
+  if (winnerName === name0) { sa = 1; sb = 0; a.wins++; b.losses++; }
+  else if (winnerName === name1) { sa = 0; sb = 1; b.wins++; a.losses++; }
+  else { sa = sb = 0.5; a.draws++; b.draws++; }
+  a.elo = Math.round(a.elo + 24 * (sa - ea)); b.elo = Math.round(b.elo + 24 * (sb - eb));
+  a.games++; b.games++;
+  STATS.history.push({ t: Date.now(), a: name0, b: name1, winner: winnerName || 'draw', ae: a.elo, be: b.elo });
+  if (STATS.history.length > 500) STATS.history.splice(0, STATS.history.length - 500);
+  saveStats();
+  return { a: a, b: b };
+}
+function leaderboard(limit) {
+  return Object.keys(STATS.players).map(k => STATS.players[k])
+    .sort((x, y) => (y.elo - x.elo) || (y.wins - x.wins))
+    .slice(0, limit || 25);
+}
+
 function newRoom() {
   return {
     seed: newSeed(), seq: 0, started: false,
@@ -89,7 +118,7 @@ function buildSetup(room, type, includeLog){
   return payload;
 }
 function startMatch(room, code){
-  room.started = true; room.seq = 0; room.log = [];
+  room.started = true; room.seq = 0; room.log = []; room.resultRecorded = false;
   room.seatSocket.forEach(function(s, idx){ if (s) send(s, Object.assign(buildSetup(room, 'start', false), { mySeat: idx })); });
   if (room.spectators) room.spectators.forEach(function(s){ send(s, Object.assign(buildSetup(room, 'resume', true), { mySeat: 0, spectator: true })); });
   console.log(`[start] room=${code} seed=${room.seed} classes=[${(room.seatMeta[0]||{}).cls},${(room.seatMeta[1]||{}).cls}] firstSeat=${room.seed%2}`);
@@ -99,6 +128,11 @@ const server = http.createServer((req, res) => {
   if ((req.url || '').split('?')[0] === '/health') {   // cloud host ping, keep-warm, client build capture
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
     res.end(JSON.stringify({ ok: true, service: 'rank-up-room-server', rooms: rooms.size, build: SERVER_BUILD }));
+    return;
+  }
+  if ((req.url || '').split('?')[0] === '/leaderboard') {   // ratings board (read-only)
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify({ ok: true, leaderboard: leaderboard(25) }));
     return;
   }
   // Serve the static game files, so ONE deploy gives both the game (https://host/) and the room
@@ -214,11 +248,28 @@ wss.on('connection', (ws) => {
       broadcast(room, { type: 'rematch-vote', seat, name }, ws);
       if (room.rematchVotes.size >= 2 && bothConnected(room)) {
         room.rematchVotes.clear();
-        room.seed = newSeed(); room.started = true; room.seq = 0; room.log = [];
+        room.seed = newSeed(); room.started = true; room.seq = 0; room.log = []; room.resultRecorded = false;
         room.seatSocket.forEach(function(s, idx){ if (s) send(s, Object.assign(buildSetup(room, 'start', false), { mySeat: idx, rematch: true })); });
         if (room.spectators) room.spectators.forEach(function(s){ send(s, Object.assign(buildSetup(room, 'resume', true), { mySeat: 0, spectator: true, rematch: true })); });
         console.log(`[rematch] room=${ws._room} all agreed -> new game seed=${room.seed}`);
       }
+      return;
+    }
+    // Match result → update ratings/history. Both clients report the same winner (identical state); record it
+    // ONCE per match (reset on each start/rematch) so Elo isn't double-counted. Spectators can't report.
+    if (msg.type === 'result') {
+      if (ws._spectator || !room.started || room.resultRecorded) return;
+      const w = msg.winner;                               // canonical seat: 'player' | 'ai' | 'draw'
+      if (w !== 'player' && w !== 'ai' && w !== 'draw') return;
+      const n0 = (room.seatMeta[0] || {}).name, n1 = (room.seatMeta[1] || {}).name;
+      if (!n0 || !n1) return;
+      room.resultRecorded = true;
+      const winnerName = w === 'player' ? n0 : (w === 'ai' ? n1 : 'draw');
+      recordResult(n0, n1, winnerName);
+      const rec = { type: 'stats', players: [playerRec(n0), playerRec(n1)] };
+      room.seatSocket.forEach(function(s){ if (s) send(s, rec); });
+      if (room.spectators) room.spectators.forEach(function(s){ send(s, rec); });
+      console.log(`[result] room=${ws._room} winner=${winnerName} | ${n0}:${playerRec(n0).elo} ${n1}:${playerRec(n1).elo}`);
       return;
     }
     if (msg.type === 'ping') { send(ws, { type: 'pong', t: msg.t }); return; }

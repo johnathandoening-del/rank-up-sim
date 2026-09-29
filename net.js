@@ -154,6 +154,12 @@
         log2((msg.name || 'Opponent') + ' declined the rematch.');
         postDeclineModal();
         break;
+      case 'stats':
+        // Updated ratings after a match — surface each player's record in the log.
+        try {
+          (msg.players || []).forEach(function(p){ log2(p.name + ': ' + p.elo + ' Elo (' + p.wins + 'W-' + p.losses + 'L' + (p.draws ? '-' + p.draws + 'D' : '') + ')'); });
+        } catch(e){}
+        break;
       case 'error':
         log2('room error: ' + msg.msg);
         setStatus(msg.msg || 'Room error.', 'err');
@@ -225,6 +231,9 @@
     // Vote to rematch (true) or decline/cancel (false). When BOTH seats vote true the server deals a fresh
     // identically-seeded game (a new 'start') and both clients rebuild in the same room.
     rematch: function(vote){ try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'rematch', vote: !!vote })); } catch(e){} },
+    // Report the finished match's winner (canonical seat 'player'|'ai'|'draw') so the server updates ratings.
+    // Both clients report the same result; the server records it once. Spectators don't call this.
+    reportResult: function(winner){ try { if (!state.spectator && ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'result', winner: winner })); } catch(e){} },
     disconnect: function(){ state.intentionalClose = true; state.active = false; if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; } if (ws) try { ws.close(); } catch(e){} }
   };
 
@@ -287,4 +296,25 @@
     catch(e){ setStatus('Connection failed: ' + (e && e.message ? e.message : e), 'err'); }
   };
   window.ruLeaveOnline = function(){ try { window.RUNet.disconnect(); } catch(e){} showLeave(false); setStatus('Left the room.'); };
+
+  // Ratings board — fetch /leaderboard and show it in a modal.
+  window.ruLeaderboard = function(){
+    var base = httpBase(); if (!base) { setStatus('Leaderboard unavailable.', 'err'); return; }
+    setStatus('Loading leaderboard…');
+    fetch(base + '/leaderboard?cb=' + Date.now(), { cache:'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var rows = (j && j.leaderboard) || [];
+        setStatus(rows.length ? '' : 'No games recorded yet — play an online match to appear here.');
+        if (typeof openModal !== 'function') return;
+        var body = '<div class="wbanner" style="max-height:60vh;overflow:auto;"><table style="width:100%;font-size:.8rem;border-collapse:collapse;">' +
+          '<tr style="color:var(--text-dim);text-align:left;"><th style="padding:.2rem .4rem;">#</th><th>Player</th><th>Elo</th><th>W</th><th>L</th><th>D</th></tr>' +
+          (rows.length ? rows.map(function(p,i){ return '<tr><td style="padding:.2rem .4rem;">' + (i+1) + '</td><td>' + esc(p.name) + '</td><td><b>' + p.elo + '</b></td><td>' + p.wins + '</td><td>' + p.losses + '</td><td>' + (p.draws||0) + '</td></tr>'; }).join('')
+                        : '<tr><td colspan="6" style="padding:.6rem;color:var(--text-dim);">No games recorded yet.</td></tr>') +
+          '</table></div>';
+        openModal('🏆 Leaderboard', body, [{ label:'Close', cls:'mb-skill', fn:function(){ try{closeModal();}catch(e){} }}]);
+      })
+      .catch(function(){ setStatus('Could not load the leaderboard (is the server awake?).', 'err'); });
+  };
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
 })();

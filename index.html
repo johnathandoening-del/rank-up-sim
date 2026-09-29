@@ -33,6 +33,7 @@
     <div class="online-row online-row-sub">
       <input id="online-server" placeholder="ws://localhost:8833" value="ws://localhost:8833" autocomplete="off">
       <button class="start-btn online-btn" id="online-spectate-btn" onclick="ruSpectateOnline()" title="Watch a match in progress in this room (read-only)">SPECTATE</button>
+      <button class="start-btn online-btn" id="online-leaderboard-btn" onclick="ruLeaderboard()" title="Online ratings">🏆</button>
       <button class="online-leave" id="online-leave-btn" onclick="ruLeaveOnline()" style="display:none">Leave</button>
     </div>
     <div class="online-status" id="online-status">Pick your class above, enter a room code, and share it. Two players in the same room start a match.</div>
@@ -5187,6 +5188,8 @@ function endGameImmediate(winner,reason){
   const buttons=[];
   const netLive=!!(G&&G._netMode);
   if(netLive){
+    // Report the result for ratings (server records it once; both clients report the same canonical winner).
+    try{ if(!G._spectator && window.RUNet && RUNet.reportResult) RUNet.reportResult(winner==='draw'?'draw':(winner||'draw')); }catch(e){}
     // ONLINE: never silently drop the player onto a local bot. Keep BOTH players in the room and let each
     // opt in to a rematch; the game only restarts once every seat has agreed (server deals a fresh 'start').
     // Declining is an explicit choice to leave the room or play on against a local AI instead.
