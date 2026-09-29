@@ -1016,9 +1016,12 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
     // resolves from the owner's relayed choice. Offline, only 'player' is human so the bot ('ai') still
     // auto-resolves below. `_poss` is POV-correct: "your" on the owner's screen, "<name>'s" elsewhere.
     if(isHumanSeat(who) && !(R() && G.ruMode==='ai-vs-ai')){
-      try{ if(G) G._promptSeat=who; }catch(e){}
+      // Own the prompt by OBJECT (swap-invariant): p is this casualty's recipient side, captured now — its
+      // _isLocalHuman is correct on every client no matter how the perspective is swapped when the deferred
+      // prompt actually opens. (A seat-id here would be reinterpreted after the swap unwinds and deadlock.)
+      try{ if(G){ G._promptOwner=p; G._promptSeat=who; } }catch(e){}
       var _poss=(window.sidePossLower?sidePossLower(who):'your');
-      var _clr=function(){ try{ if(G) delete G._promptSeat; }catch(e){} };
+      var _clr=function(){ try{ if(G){ delete G._promptOwner; delete G._promptSeat; } }catch(e){} };
       if(hasE2){
         window.openModal('Casualty Draw: '+card.name,
           '<div style="padding:.6rem;border:1px solid rgba(255,255,255,.1);border-radius:6px;"><div style="font-weight:600;">'+card.name+' entered '+_poss+' Deadzone.</div><div style="font-size:.78rem;color:var(--text-dim);margin-top:.35rem;">Death Draw (E2): '+(card.e2||'no effect')+'</div></div><p style="font-size:.78rem;color:var(--text-dim);margin-top:.4rem;">Activate its E2 effect now? It resolves fully before the next Casualty Draw is pulled.</p>',
@@ -6189,6 +6192,11 @@ window.ruSuppressForeignView=ruSuppressForeignView;
 function ruTagViewModal(){ try{ var m=document.getElementById('modal'); if(m)m._ruViewOnly=true; }catch(e){} }
 window.ruTagViewModal=ruTagViewModal;
 function showCardModal(card,handIdx,extraBtns){
+      // Online: a pure card INSPECT (no hand-action, no effect buttons) is local browsing — never mirror it to
+      // the opponent, and critically never let it open on their screen and COVER a real decision prompt (that
+      // was stalling matches). Hand-card modals (handIdx set, they carry Use/Skill) and effect modals
+      // (extraBtns) still open so their actions relay.
+      if(handIdx===undefined && (!extraBtns||!extraBtns.length) && ruSuppressForeignView()) return;
       const cls=cardCls(card).replace('nc-','');
       let body=`<div class="cdet nc-${cls}" style="padding:.85rem;border-radius:6px;border:1px solid rgba(255,255,255,.08);">`;
       body+=`<div class="cdn">${card.name}</div>`;
@@ -10058,7 +10066,7 @@ ADEFS['Seven Heaven']={
 // V11.4.4 RULES / Δ FIX PASS
 // ═══════════════════════════════════════════
 (function(){
-  function sideName(w){return window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':(w==='ai2'?'AI 2':'AI'));}
+  function sideName(w){return (window.sideNameLabel?window.sideNameLabel(w):(window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':(w==='ai2'?'AI 2':'AI'))));}
   window.sideNameRA3=sideName;
   function oppOfLocal(w){return window.oppOf(w);}
   function zCard(p,z){if(!p)return null;if(z==='rank')return p.rankZone;if(z==='left-flank')return p.leftFlank;if(z==='right-flank')return p.rightFlank;if(z==='rear-flank')return p.rearFlank;if(z==='delta')return p.delta&&p.delta[0];return null;}
@@ -10099,7 +10107,7 @@ ADEFS['Seven Heaven']={
   if(!window.RU_TEST) window.RU_TEST={};
   window.RU_TEST.areaAuditVersion=V;
   const AREA_NAMES=['Shining Justice','Wildfire','Frozen Tundra','Dark Domain','Higher Ground','Drawbridge','The Lowlands','Halcyon Highlands','The Library','Seven Heaven','Dreadnaught Airship','Fast Track','Morbid Cemetery'];
-  function sideName(w){return window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':(w==='ai2'?'AI 2':'AI'));}
+  function sideName(w){return (window.sideNameLabel?window.sideNameLabel(w):(window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':(w==='ai2'?'AI 2':'AI'))));}
   function oppOf(w){return window.oppOf(w);}
   function ownerLabel(w){return sidePossLower(w);}
   function areaIn(w,name){return G&&G[w]&&G[w].deadzone&&G[w].deadzone.some(c=>c&&c.type==='area'&&c.name===name);}
@@ -14696,7 +14704,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 
   function safeLog(msg,cls){try{log(msg,cls||'info');}catch(e){}}
   window.safeLogRAE10=safeLog;
-  function sideName(w){return window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':(w==='ai2'?'AI 2':'AI'));}
+  function sideName(w){return (window.sideNameLabel?window.sideNameLabel(w):(window.sideMeta?window.sideMeta(w).label:(w==='player'?'You':(w==='ai2'?'AI 2':'AI'))));}
   function opp(w){return window.oppOf(w);}
   function clsName(k){return CM&&CM[k]?CM[k].name:k;}
   window.clsNameRU135=clsName;
@@ -23120,24 +23128,30 @@ window.isHumanSeat=isHumanSeat;
 // Deadzone-E2 belongs to the card's owner, not the active player); otherwise it belongs to the active player.
 // Only that seat's own device may interact; every other client shows the same modal as a read-only mirror and
 // resolves it from the relayed choice. (Offline there is only one human, so it's always "mine".)
-function ruPromptDeciderSeat(){ var g=(typeof G!=='undefined')?G:null; if(!g)return 'player'; return g._promptSeat||g.turn||'player'; }
-function ruPromptIsMine(){ var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode))return true; if(g._spectator)return false; return isLocalHumanSeat(ruPromptDeciderSeat()); }
-window.ruPromptDeciderSeat=ruPromptDeciderSeat; window.ruPromptIsMine=ruPromptIsMine;
-// A prompt element (#modal or #picker-modal) is a MIRROR of the other player's choice when an effect marked
-// it as another seat's (G._promptSeat) or it opened while APPLYING a relayed action for a non-local turn.
+// Prompt ownership is stored as the owner's SEAT OBJECT (G._promptOwner), NOT a seat-id string. During combat
+// the effect fires under the perspective swap, and the prompt is deferred — a seat-id ('ai') captured then and
+// read after the swap unwinds points at the WRONG seat, so BOTH clients mis-attribute the choice and deadlock.
+// The seat OBJECT is swap-invariant, and _isLocalHuman rides on it, so "is this mine?" is always correct.
+function ruPromptOwnerObj(){ var g=(typeof G!=='undefined')?G:null; if(!g)return null; if(g._promptOwner)return g._promptOwner; var s=g._promptSeat||g.turn; return s?g[s]:null; }
+function ruPromptIsMine(){ var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode))return true; if(g._spectator)return false; var o=ruPromptOwnerObj(); return o?!!o._isLocalHuman:true; }
+function ruPromptDeciderName(){ var o=ruPromptOwnerObj(); if(o&&o._netName)return o._netName; return 'your opponent'; }
+window.ruPromptOwnerObj=ruPromptOwnerObj; window.ruPromptIsMine=ruPromptIsMine; window.ruPromptDeciderName=ruPromptDeciderName;
+// A prompt element (#modal / #picker-modal) is a MIRROR of the other player's choice when its owner object is
+// not the local human, or (no explicit owner) it opened while APPLYING a relayed action for a non-local turn.
 // Decided ONCE at open time and stashed on the element so a local view/info popup never becomes a mirror.
 function ruComputeMirror(){
-  var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode)) return {mirror:false,decider:null};
-  if(g._spectator) return {mirror:true, decider:(g._promptSeat||g.turn)};   // watchers can't act on any prompt
-  if(g._promptSeat) return {mirror:!isLocalHumanSeat(g._promptSeat), decider:g._promptSeat};
-  if(g._replaying) return {mirror:!isLocalHumanSeat(g.turn), decider:g.turn};
-  return {mirror:false,decider:null};
+  var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode)) return {mirror:false,name:null};
+  if(g._spectator) return {mirror:true, name:ruPromptDeciderName()};   // watchers can't act on any prompt
+  if(g._promptOwner) return {mirror:!g._promptOwner._isLocalHuman, name:(g._promptOwner._netName||'your opponent')};
+  if(g._promptSeat) return {mirror:!isLocalHumanSeat(g._promptSeat), name:(window.sideNameLabel?sideNameLabel(g._promptSeat):'your opponent')};
+  if(g._replaying) return {mirror:!isLocalHumanSeat(g.turn), name:(window.sideNameLabel?sideNameLabel(g.turn):'your opponent')};
+  return {mirror:false,name:null};
 }
 function ruMarkPromptMirror(elm){
   try{ if(!elm) return false; elm._ruViewOnly=false; var r=ruComputeMirror(); elm._ruMirror=r.mirror;
     elm.classList.toggle('ru-mirror-modal',r.mirror);
     var box=elm.querySelector('.mbox');
-    if(box){ if(r.mirror){ var nm=(r.decider&&window.sideNameLabel)?sideNameLabel(r.decider):'your opponent'; box.setAttribute('data-waiting',nm+' is choosing…'); } else box.removeAttribute('data-waiting'); }
+    if(box){ if(r.mirror){ box.setAttribute('data-waiting',(r.name||'your opponent')+' is choosing…'); } else box.removeAttribute('data-waiting'); }
     return r.mirror;
   }catch(e){ return false; }
 }
@@ -23173,8 +23187,8 @@ window.cChoose = function(chooserSide, pool, count, label, cb){
     var arr = (pool||[]).filter(Boolean);
     if(arr.length < count){ try{log(label+': not enough cards to choose.','dmg');}catch(e){} if(cb) cb([]); return; }
     if(isHumanSeat(chooserSide) && typeof openPicker==='function' && count>0){
-      try{ if(typeof G!=='undefined'&&G) G._promptSeat=chooserSide; }catch(e){}   // this pick belongs to chooserSide (online: only their device may confirm)
-      openPicker(label, arr.slice(), count, count, false, function(picks){ try{ if(typeof G!=='undefined'&&G) delete G._promptSeat; }catch(e){} if(cb) cb(picks||[]); });
+      try{ if(typeof G!=='undefined'&&G){ G._promptOwner=G[chooserSide]; G._promptSeat=chooserSide; } }catch(e){}   // own by OBJECT (swap-invariant): only chooserSide's own device may confirm
+      openPicker(label, arr.slice(), count, count, false, function(picks){ try{ if(typeof G!=='undefined'&&G){ delete G._promptOwner; delete G._promptSeat; } }catch(e){} if(cb) cb(picks||[]); });
     } else if(count>0 && arr.length>count){
       var picks=_ruInformedPick(arr, count, label);                 // AI self-resolves, informed
       _ruAnnounceAI(label, picks, function(){ if(cb) cb(picks); });  // then shows the player its pick
@@ -23188,13 +23202,13 @@ window.cPickHand = function(who, count, label, cb){
     count = Math.max(0, count||0);
     if(p.hand.length < count){ try{log(label+': not enough cards in hand.','dmg');}catch(e){} if(cb)cb([]); return; }
     function done(picks){
-      try{ if(typeof G!=='undefined'&&G) delete G._promptSeat; }catch(e){}
+      try{ if(typeof G!=='undefined'&&G){ delete G._promptOwner; delete G._promptSeat; } }catch(e){}
       picks.forEach(function(c){ var i=p.hand.indexOf(c); if(i>=0) p.hand.splice(i,1); });
       try{ renderAll(); }catch(e){}
       if(cb) cb(picks);
     }
     if(isHumanSeat(who) && typeof openPicker==='function' && count>0){
-      try{ if(typeof G!=='undefined'&&G) G._promptSeat=who; }catch(e){}   // this pick belongs to `who` (online: only their device may confirm)
+      try{ if(typeof G!=='undefined'&&G){ G._promptOwner=G[who]; G._promptSeat=who; } }catch(e){}   // own by OBJECT (swap-invariant)
       openPicker(label, p.hand.slice(), count, count, false, done);
     } else if(count>0 && p.hand.length>count){
       var picks=_ruInformedPick(p.hand.slice(), count, label);      // AI self-resolves, informed
