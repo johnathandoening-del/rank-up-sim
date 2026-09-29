@@ -32,6 +32,7 @@
     </div>
     <div class="online-row online-row-sub">
       <input id="online-server" placeholder="ws://localhost:8833" value="ws://localhost:8833" autocomplete="off">
+      <button class="start-btn online-btn" id="online-spectate-btn" onclick="ruSpectateOnline()" title="Watch a match in progress in this room (read-only)">SPECTATE</button>
       <button class="online-leave" id="online-leave-btn" onclick="ruLeaveOnline()" style="display:none">Leave</button>
     </div>
     <div class="online-status" id="online-status">Pick your class above, enter a room code, and share it. Two players in the same room start a match.</div>
@@ -23105,13 +23106,14 @@ window.isHumanSeat=isHumanSeat;
 // Only that seat's own device may interact; every other client shows the same modal as a read-only mirror and
 // resolves it from the relayed choice. (Offline there is only one human, so it's always "mine".)
 function ruPromptDeciderSeat(){ var g=(typeof G!=='undefined')?G:null; if(!g)return 'player'; return g._promptSeat||g.turn||'player'; }
-function ruPromptIsMine(){ var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode))return true; return isLocalHumanSeat(ruPromptDeciderSeat()); }
+function ruPromptIsMine(){ var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode))return true; if(g._spectator)return false; return isLocalHumanSeat(ruPromptDeciderSeat()); }
 window.ruPromptDeciderSeat=ruPromptDeciderSeat; window.ruPromptIsMine=ruPromptIsMine;
 // A prompt element (#modal or #picker-modal) is a MIRROR of the other player's choice when an effect marked
 // it as another seat's (G._promptSeat) or it opened while APPLYING a relayed action for a non-local turn.
 // Decided ONCE at open time and stashed on the element so a local view/info popup never becomes a mirror.
 function ruComputeMirror(){
   var g=(typeof G!=='undefined')?G:null; if(!(g&&g._netMode)) return {mirror:false,decider:null};
+  if(g._spectator) return {mirror:true, decider:(g._promptSeat||g.turn)};   // watchers can't act on any prompt
   if(g._promptSeat) return {mirror:!isLocalHumanSeat(g._promptSeat), decider:g._promptSeat};
   if(g._replaying) return {mirror:!isLocalHumanSeat(g.turn), decider:g.turn};
   return {mirror:false,decider:null};
@@ -24926,6 +24928,7 @@ window.ruSpecPace=function(base){
     var orig=window[name];
     if(typeof orig!=='function') return;
     var w=function(){
+      var g0=G_(); if(g0&&g0._spectator&&!g0._replaying){ return; }   // spectators are read-only — never act
       var a; try{ a=mk.apply(null,arguments); }catch(e){}
       if(offTurnBlocked(a)){ try{ log("It's not your turn.",'info'); }catch(e){} return; }
       if(a && localDrivesAi()){ rec(a); window.ruApplyForeignAction(a); return; }

@@ -58,11 +58,15 @@ function newRoom() {
     seatSocket: [null, null],                  // live ws per seat index (null = empty or disconnected)
     seatMeta:   [null, null],                  // {clientId,name,cls,dd} per seat index (persists across a drop)
     seatGrace:  [null, null],                  // reconnect grace timer per seat index
-    rematchVotes: new Set()                    // seat indexes that voted yes
+    rematchVotes: new Set(),                   // seat indexes that voted yes
+    spectators: new Set()                      // read-only watchers (no seat) — get the setup + live action stream
   };
 }
 function liveSockets(room){ return room.seatSocket.filter(function(s){ return s && s.readyState === 1; }); }
-function broadcast(room, obj, exceptWs){ room.seatSocket.forEach(function(s){ if (s && s !== exceptWs) send(s, obj); }); }
+function broadcast(room, obj, exceptWs){
+  room.seatSocket.forEach(function(s){ if (s && s !== exceptWs) send(s, obj); });
+  if (room.spectators) room.spectators.forEach(function(s){ if (s !== exceptWs) send(s, obj); });   // watchers get peer events + the live action stream
+}
 function roomPlayers(room){
   var out = [];
   for (var i=0;i<2;i++){ if (room.seatMeta[i]) out.push({ seat: SEATS[i], name: room.seatMeta[i].name, connected: !!(room.seatSocket[i] && room.seatSocket[i].readyState===1) }); }
@@ -87,6 +91,7 @@ function buildSetup(room, type, includeLog){
 function startMatch(room, code){
   room.started = true; room.seq = 0; room.log = [];
   room.seatSocket.forEach(function(s, idx){ if (s) send(s, Object.assign(buildSetup(room, 'start', false), { mySeat: idx })); });
+  if (room.spectators) room.spectators.forEach(function(s){ send(s, Object.assign(buildSetup(room, 'resume', true), { mySeat: 0, spectator: true })); });
   console.log(`[start] room=${code} seed=${room.seed} classes=[${(room.seatMeta[0]||{}).cls},${(room.seatMeta[1]||{}).cls}] firstSeat=${room.seed%2}`);
 }
 
@@ -128,6 +133,17 @@ wss.on('connection', (ws) => {
       const clientId = String(msg.clientId || ('anon-' + Math.random().toString(36).slice(2))).slice(0, 64);
       let room = rooms.get(code);
       if (!room) { room = newRoom(); rooms.set(code, room); }
+
+      // ── SPECTATOR: no seat, read-only. Gets the current setup + full action log to build the live state, and
+      // then the live action stream. Never counts toward seats / start / rematch. ──
+      if (msg.spectator) {
+        ws._room = code; ws._seatIdx = null; ws._spectator = true;
+        room.spectators.add(ws);
+        send(ws, { type: 'joined', room: code, seat: 'spectator', seatIdx: null, spectator: true, players: roomPlayers(room) });
+        if (room.started) send(ws, Object.assign(buildSetup(room, 'resume', true), { mySeat: 0, spectator: true }));
+        console.log(`[spectate] room=${code} (${room.spectators.size} watching, started=${room.started})`);
+        return;
+      }
 
       const meta = { clientId: clientId, name: String(msg.name || 'guest').slice(0, 24), cls: String(msg.cls || 'light'),
                      dd: Array.isArray(msg.deltaDeck) ? msg.deltaDeck.slice(0, 3).map(x => String(x).slice(0, 64)) : [] };
@@ -198,9 +214,9 @@ wss.on('connection', (ws) => {
       broadcast(room, { type: 'rematch-vote', seat, name }, ws);
       if (room.rematchVotes.size >= 2 && bothConnected(room)) {
         room.rematchVotes.clear();
-        room.seed = newSeed();
+        room.seed = newSeed(); room.started = true; room.seq = 0; room.log = [];
         room.seatSocket.forEach(function(s, idx){ if (s) send(s, Object.assign(buildSetup(room, 'start', false), { mySeat: idx, rematch: true })); });
-        room.started = true; room.seq = 0; room.log = [];
+        if (room.spectators) room.spectators.forEach(function(s){ send(s, Object.assign(buildSetup(room, 'resume', true), { mySeat: 0, spectator: true, rematch: true })); });
         console.log(`[rematch] room=${ws._room} all agreed -> new game seed=${room.seed}`);
       }
       return;
@@ -211,6 +227,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     const code = ws._room; const room = code && rooms.get(code);
     if (!room) return;
+    if (ws._spectator) { room.spectators.delete(ws); if (!liveSockets(room).length && !room.spectators.size && !room.seatMeta[0] && !room.seatMeta[1]) { rooms.delete(code); } return; }
     const idx = ws._seatIdx;
     if (idx == null || room.seatSocket[idx] !== ws) return;   // already replaced by a reconnect
     room.seatSocket[idx] = null;

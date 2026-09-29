@@ -64,7 +64,11 @@
         if (G.ai) G.ai._netName = cfg.name1 || 'Player 2';
         if (G.player) G.player._isLocalHuman = false;
         if (G.ai) G.ai._isLocalHuman = false;
-        if (G._localSeat && G[G._localSeat]) G[G._localSeat]._isLocalHuman = true;
+        // Spectator: read-only, owns no seat — leave both _isLocalHuman false so every prompt is a mirror and
+        // all input is blocked (see the action-model + ruPromptIsMine spectator guards). Players own their seat.
+        if (cfg.spectator) { G._spectator = true; }
+        else if (G._localSeat && G[G._localSeat]) { G[G._localSeat]._isLocalHuman = true; }
+        if (cfg.spectator) setStatus('Spectating room "' + (state.room||'') + '" — read-only.', 'ok');
         if (typeof renderAll === 'function') renderAll();
       }
     } catch(e){}
@@ -202,7 +206,7 @@
         // client or an Amalgamation Rank Up desyncs (each side would build different evolution cards).
         var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);
         // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, build: state.loadedBuild || null, clientId: clientId() })); };
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
       ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
         state.connected = false; log2('disconnected');
@@ -271,6 +275,15 @@
     if (!room) { setStatus('Enter a room code (any word) and share it with your friend.', 'err'); return; }
     setStatus('Connecting…');
     try { window.RUNet.connect(url, room.toUpperCase(), name, { cls: cls }); }
+    catch(e){ setStatus('Connection failed: ' + (e && e.message ? e.message : e), 'err'); }
+  };
+  window.ruSpectateOnline = function(){
+    var roomEl = document.getElementById('online-room'), srvEl = document.getElementById('online-server');
+    var room = (roomEl && roomEl.value.trim()) || '';
+    var url  = (srvEl && srvEl.value.trim()) || defaultWsUrl();
+    if (!room) { setStatus('Enter the room code you want to watch.', 'err'); return; }
+    setStatus('Connecting to watch room "' + room.toUpperCase() + '"…');
+    try { window.RUNet.connect(url, room.toUpperCase(), (document.getElementById('online-name')||{}).value || 'Spectator', { cls: (typeof pCls!=='undefined'&&pCls)||'light', spectator: true }); }
     catch(e){ setStatus('Connection failed: ' + (e && e.message ? e.message : e), 'err'); }
   };
   window.ruLeaveOnline = function(){ try { window.RUNet.disconnect(); } catch(e){} showLeave(false); setStatus('Left the room.'); };
