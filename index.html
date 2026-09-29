@@ -2640,11 +2640,15 @@ function beginPhaseBase(ph){
   }
   else if(ph==='battle'){
     p.attacksUsed={};
-    if(!isP)G.player.actUsed=0; // fresh Action slots for the human's Safeguard/Retaliatory responses
+    // The DEFENDER gets fresh Action slots so they can play Safeguard/Retaliatory reactions. Online, the
+    // defender is the non-active seat (either 'player' or 'ai'); solo, it's the human 'player' vs the AI.
+    if(netLive){ var _defB=other(G.turn); if(G[_defB])G[_defB].actUsed=0; }
+    else if(!isP)G.player.actUsed=0;
     G._defState={};G._sgUsedThisAttack=false;
     log(`${turnPossessive} Battle Phase!`);
     if(myTurn){show('btn-atk');show('btn-sd');setHint('\u2694 Declare Attack. You may use Safeguard/Retaliatory cards from hand now.');}
-    else if(!netLive)setTimeout(()=>aiDo('battle'),900);renderAll();
+    else { if(netLive)setHint('Opponent\u2019s Battle Phase \u2014 play Safeguard / Retaliatory cards from your hand to react.'); else setTimeout(()=>aiDo('battle'),900); }
+    renderAll();
   }
   else if(ph==='end'){
     // Reset temp buffs — currentNP/RP revert to base at end of turn
@@ -24907,7 +24911,17 @@ window.ruSpecPace=function(base){
   // on their side and desync). View actions (bank/delta/dead/view/skillMenu) and modal/picker responses
   // stay ungated so reactions and browsing work during the opponent's turn.
   var TURN_GATED={adv:1,end:1,hand:1,sdMode:1,atkMode:1,rvMode:1,sd:1};
-  function offTurnBlocked(a){ var g=G_(); return !!(g && g._netMode && !g._replaying && a && TURN_GATED[a.t] && g.turn!==g._localSeat); }
+  function offTurnBlocked(a){ var g=G_();
+    if(!(g && g._netMode && !g._replaying && a && TURN_GATED[a.t] && g.turn!==g._localSeat)) return false;
+    // Reactive-defense exception: during the opponent's Battle Phase the DEFENDER may play a Safeguard or
+    // Retaliatory Action Card from hand (relayed like any action). Everything else stays off-turn-blocked.
+    if(a.t==='hand' && g.phase==='battle'){
+      try{ var p=g[g._localSeat], c=null; if(p&&p.hand){ for(var i=0;i<p.hand.length;i++){ if(p.hand[i]&&p.hand[i].id===a.id){ c=p.hand[i]; break; } } }
+        if(c && c.type==='action' && (c.sub==='Safeguard' || c.sub==='Retaliatory')) return false;
+      }catch(e){}
+    }
+    return true;
+  }
   function wrap(name, mk){
     var orig=window[name];
     if(typeof orig!=='function') return;
