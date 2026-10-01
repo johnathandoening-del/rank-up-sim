@@ -6189,7 +6189,7 @@ function doCounterAttack(npBonus,opts){
 function ruSuppressForeignView(){ return !!(typeof G!=='undefined'&&G&&G._netMode&&G._replaying&&!G._localActor); }
 window.ruSuppressForeignView=ruSuppressForeignView;
 // Mark the just-opened modal as a pure LOCAL view so its clicks never relay (see the modal-onclick hook).
-function ruTagViewModal(){ try{ var m=document.getElementById('modal'); if(m)m._ruViewOnly=true; }catch(e){} }
+function ruTagViewModal(){ try{ if(typeof _modalQueue!=='undefined'&&_modalQueue&&_modalQueue.length){_modalQueue[_modalQueue.length-1]._ruViewOnly=true;return;} var m=document.getElementById('modal'); if(m)m._ruViewOnly=true; }catch(e){} }
 window.ruTagViewModal=ruTagViewModal;
 function showCardModal(card,handIdx,extraBtns){
       // Online: a pure card INSPECT (no hand-action, no effect buttons) is local browsing — never mirror it to
@@ -6231,6 +6231,7 @@ function showCardModal(card,handIdx,extraBtns){
       }
       btns.push({label:'Close',fn:()=>closeModal()});
       openModal(card.name,body,btns);
+      if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
 }
 function viewZone(who,zone){
   if(who==='player'&&zone==='discard'&&G&&G.player){
@@ -6241,6 +6242,7 @@ function viewZone(who,zone){
         {label:'View Full Drop',fn:()=>{closeModal();viewZoneL3(who,zone);}},
         {label:'Close',fn:()=>closeModal()}
       ]);
+      if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
       return;
     }
   }
@@ -6260,6 +6262,7 @@ function viewZoneL3(who,zone){
     if(cards.length>18)body+='<p style="font-size:.7rem;color:var(--text-dim);">...and '+(cards.length-18)+' more.</p>';
     btns.push({label:'Close',fn:()=>closeModal()});
     openModal('Your '+(zone==='discard'?'Drop':'Deadzone'),body,btns);
+    if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
     return;
   }
   return viewZoneL2(who,zone);
@@ -6309,18 +6312,18 @@ function openModal(title,body,btns){
     return;
   }
   // Queue prompts so a later one (e.g. Retaliation) never overwrites an unanswered one (e.g. a Casualty Draw).
-  if(_modalOpen){_modalQueue.push({title,body,btns});return;}
-  _modalOpen=true;_showModalNow(title,body,btns);
+  if(_modalOpen){_modalQueue.push({title,body,btns,_ruViewOnly:false});return;}
+  _modalOpen=true;_showModalNow(title,body,btns,false);
 }
-function _showModalNow(title,body,btns){
+function _showModalNow(title,body,btns,viewOnly){
   el('m-title').textContent=title;el('m-body').innerHTML=body;
   const r=el('m-btns');r.innerHTML='';
   (btns||[]).forEach(b=>{const e=document.createElement('button');e.className='mb'+(b.cls?' '+b.cls:'');e.textContent=b.label;e.onclick=b.fn;r.appendChild(e);});
-  el('modal').classList.add('open');
+  const m=el('modal');m._ruViewOnly=!!viewOnly;m.classList.add('open');
 }
 function closeModal(){
   el('modal').classList.remove('open');_modalOpen=false;
-  if(_modalQueue.length){const m=_modalQueue.shift();_modalOpen=true;_showModalNow(m.title,m.body,m.btns);}
+  if(_modalQueue.length){const m=_modalQueue.shift();_modalOpen=true;_showModalNow(m.title,m.body,m.btns,!!m._ruViewOnly);}
 }
 // Run fn only once all queued prompts (and any open picker) are cleared — keeps the AI from racing ahead of the player's choices.
 // Must not wait forever because an internal flag can stay true after the modal DOM closed.
@@ -6346,7 +6349,25 @@ function afterModals(fn){
 // UTILS
 // ═══════════════════════════════════════════
 function el(id){return document.getElementById(id);}
-function log(msg,type){const p=el('log');const d=document.createElement('div');d.className='li'+(type?' '+type:'');d.textContent=msg;p.appendChild(d);p.scrollTop=p.scrollHeight;}
+function onlineActorNameForLog(){
+  try{
+    if(!(G&&G._netMode&&G._replaying&&!G._localActor))return null;
+    const p=G.player;
+    return (p&&p._netName)||(window.sideNameLabel?sideNameLabel('player'):'Opponent')||'Opponent';
+  }catch(e){return null;}
+}
+function normalizeOnlineLogText(msg){
+  let s=String(msg==null?'':msg);
+  const name=onlineActorNameForLog();
+  if(!name)return s;
+  const poss=name+"'s";
+  return s
+    .replace(/\bYour\b/g,poss)
+    .replace(/\byour\b/g,poss)
+    .replace(/\bYou\b/g,name)
+    .replace(/\byou\b/g,name);
+}
+function log(msg,type){const p=el('log');if(!p)return;const d=document.createElement('div');d.className='li'+(type?' '+type:'');d.textContent=normalizeOnlineLogText(msg);p.appendChild(d);p.scrollTop=p.scrollHeight;}
 function setHint(t){const e=el('hint');if(e)e.textContent=t;}
 function show(id){const e=el(id);if(e)e.style.display='';}
 function hide(id){const e=el(id);if(e)e.style.display='none';}
@@ -6899,6 +6920,7 @@ function openBankView(who){
   });
   body+=`</div>`;
   openModal('Your Bank Zone',body,[{label:'Close',fn:()=>closeModal()}]);
+  if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
 }
 
 
@@ -8662,9 +8684,23 @@ function deadzoneClick(who){
     // Seven Heaven's first 3 effects share one "once per turn" pick -- a bare ✕ reads as broken,
     // so spell out that another Seven Heaven option was already chosen this turn.
     const sharedHint=(!ok&&card.name==='Seven Heaven'&&/^(Gain 2 MP per Numeral 7|Non-7 cards lose 2 MP each)$/.test(e.label))?' (already chose a Seven Heaven option this turn)':'';
-    btns.push({label:`${card.name}: ${e.label}${ok?'':' ✕'+sharedHint}`,cls:'mb-skill',fn:()=>{if(!ok){log(`${card.name}: effect conditions are not met.${sharedHint}`, 'dmg');return;}closeModal();log(`${card.name}: activating ${e.label}. Cost: ${e.cost}`,'info');try{window.ruAreaFX&&window.ruAreaFX('player',G.player&&G.player.class);}catch(_){}e.fn('player',G.player,G.ai);}});});});
-  btns.push({label:'View full Deadzone',fn:()=>{closeModal();viewZone('player','deadzone');}});btns.push({label:'Close',fn:()=>closeModal()});openModal('Your Deadzone — Area Effects',body,btns);
+    btns.push({label:`${card.name}: ${e.label}${ok?'':' ✕'+sharedHint}`,cls:'mb-skill',fn:()=>{window.runDeadzoneAreaEffect&&window.runDeadzoneAreaEffect('player',card.id,i);}});});});
+  btns.push({label:'View full Deadzone',fn:()=>{closeModal();viewZone('player','deadzone');}});btns.push({label:'Close',fn:()=>closeModal()});openModal('Your Deadzone — Area Effects',body,btns);if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
 }
+function runDeadzoneAreaEffect(who,cardId,effectIdx){
+  const p=G&&G[who];if(!p)return;
+  const card=(p.deadzone||[]).find(c=>c&&c.id===cardId);
+  const def=card&&ADEFS[card.name];
+  const e=def&&def.effects&&def.effects[effectIdx];
+  if(!card||!e){log('That Area effect is no longer available.','dmg');return;}
+  const ok=!e.check||e.check(who);
+  if(!ok){log(`${card.name}: effect conditions are not met.`,'dmg');return;}
+  closeModal();
+  log(`${card.name}: activating ${e.label}. Cost: ${e.cost}`,'info');
+  try{window.ruAreaFX&&window.ruAreaFX(who,G[who]&&G[who].class);}catch(_){}
+  e.fn(who,p,G[who==='player'?'ai':'player']);
+}
+window.runDeadzoneAreaEffect=runDeadzoneAreaEffect;
 function activateAreaEffect(who,card,handIdx){
   if(handIdx!==undefined&&G[who].hand.includes(card)){activateAreaToDeadzone(who,handIdx,card);return;}
   const def=ADEFS[card.name];
@@ -9193,6 +9229,7 @@ ADEFS['Seven Heaven']={
     const btns=skills.map((s,i)=>({label:`Use ${s.card.name} — ${s.label}`,cls:'mb-skill',fn:()=>{closeModal();startSkill('player',s.zone,s.card,s.idx);}}));
     btns.push({label:'Close',fn:()=>closeModal()});
     openModal('Use Numeral Skill',body,btns);
+    if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
   };
   function refreshV10Buttons(){
     const sk=el('btn-skill'); if(sk){ if(usableSkillEntries().length)show('btn-skill'); else hide('btn-skill'); }
@@ -10051,7 +10088,7 @@ ADEFS['Seven Heaven']={
   const _openSkillMenuV114=window.openSkillMenuV10;
   window.openSkillMenuV10=function(){
     const c=G&&G.player&&G.player.delta&&G.player.delta[0];
-    if(c&&['main','standby','battle','draw'].includes(G.phase)&&!c.usedSkill){openModal('Use Skill',`<p>Your active Amalgamation has a usable skill.</p><div class="delta-list-card"><strong>${c.name}</strong><br><span style="font-size:.72rem;">${c.skillText}</span></div>`,[{label:`Use ${c.name}`,cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill('player',c);}},{label:'Other Numeral Skills',fn:()=>{closeModal();_openSkillMenuV114();}},{label:'Close',fn:()=>closeModal()}]);return;}
+    if(c&&['main','standby','battle','draw'].includes(G.phase)&&!c.usedSkill){openModal('Use Skill',`<p>Your active Amalgamation has a usable skill.</p><div class="delta-list-card"><strong>${c.name}</strong><br><span style="font-size:.72rem;">${c.skillText}</span></div>`,[{label:`Use ${c.name}`,cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill('player',c);}},{label:'Other Numeral Skills',fn:()=>{closeModal();_openSkillMenuV114();}},{label:'Close',fn:()=>closeModal()}]);if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();return;}
     _openSkillMenuV114();
   };
 
@@ -23148,7 +23185,7 @@ function ruComputeMirror(){
   return {mirror:false,name:null};
 }
 function ruMarkPromptMirror(elm){
-  try{ if(!elm) return false; elm._ruViewOnly=false; var r=ruComputeMirror(); elm._ruMirror=r.mirror;
+  try{ if(!elm) return false; var viewOnly=!!elm._ruViewOnly; var r=ruComputeMirror(); elm._ruViewOnly=viewOnly; elm._ruMirror=r.mirror;
     elm.classList.toggle('ru-mirror-modal',r.mirror);
     var box=elm.querySelector('.mbox');
     if(box){ if(r.mirror){ box.setAttribute('data-waiting',(r.name||'your opponent')+' is choosing…'); } else box.removeAttribute('data-waiting'); }
@@ -24942,13 +24979,61 @@ window.ruSpecPace=function(base){
   // via the same _replaying path the opponent's relayed actions use, so _replaying alone can't tell them apart.
   function withLocalActor(fn){ var g=G_(); var prev=g&&g._localActor; if(g)g._localActor=true; try{ return fn(); } finally { var g2=G_(); if(g2)g2._localActor=prev; } }
   window.withLocalActorRU=withLocalActor;
+  function handCardById(g,id){ var p=g&&g.player; if(!p||!p.hand)return null; for(var i=0;i<p.hand.length;i++){ if(p.hand[i]&&p.hand[i].id===id)return {idx:i,card:p.hand[i]}; } return null; }
+  function playerCardById(g,id,preferred){
+    var p=g&&g.player;if(!p||!id)return null;
+    function one(source,card,idx){ return card&&card.id===id?{source:source,card:card,idx:idx}:null; }
+    var order=preferred?[preferred]:[];
+    ['hand','bank','rank','left-flank','right-flank','rear-flank','delta','discard','deadzone'].forEach(function(s){ if(order.indexOf(s)<0)order.push(s); });
+    for(var oi=0;oi<order.length;oi++){
+      var s=order[oi],r=null;
+      if(s==='hand'){ for(var h=0;h<(p.hand||[]).length;h++){ r=one('hand',p.hand[h],h); if(r)return r; } }
+      else if(s==='bank'){ for(var b=0;b<(p.bank||[]).length;b++){ r=one('bank',p.bank[b],b); if(r)return r; } }
+      else if(s==='discard'||s==='drop'){ for(var d=0;d<(p.discard||[]).length;d++){ r=one('discard',p.discard[d],d); if(r)return r; } }
+      else if(s==='deadzone'||s==='grave'){ for(var z=0;z<(p.deadzone||[]).length;z++){ r=one('deadzone',p.deadzone[z],z); if(r)return r; } }
+      else if(s==='rank'){ r=one('rank',p.rankZone,0); if(r)return r; }
+      else if(s==='left-flank'){ r=one('left-flank',p.leftFlank,0); if(r)return r; }
+      else if(s==='right-flank'){ r=one('right-flank',p.rightFlank,0); if(r)return r; }
+      else if(s==='rear-flank'){ r=one('rear-flank',p.rearFlank,0); if(r)return r; }
+      else if(s==='delta'){ r=one('delta',p.delta&&p.delta[0],0); if(r)return r; }
+    }
+    return null;
+  }
+  function shouldRelayExtensionRearChoice(card){
+    var g=G_(),p=g&&g.player;if(!g||!p||!card)return false;
+    if(!(card.class==='extension'&&card.type==='numeral'&&['rally','main','standby'].indexOf(g.phase)!==-1))return false;
+    return p.class==='extension'&&!p.rearFlank&&p.rankZone&&p.leftFlank&&p.rightFlank&&[p.rankZone,p.leftFlank,p.rightFlank].every(function(c){return c&&c.class==='extension';})&&(card.rank||0)<3&&card.numeral!==8&&(card.numeral||0)<=(p.rankZone.currentNP||p.rankZone.numeral||0);
+  }
+  function actorCanRearExtension(card){
+    var g=G_(),p=g&&g[g._localSeat];if(!g||!p||!card)return false;
+    if(!(card.class==='extension'&&card.type==='numeral'&&['rally','main','standby'].indexOf(g.phase)!==-1))return false;
+    return p.class==='extension'&&!p.rearFlank&&p.rankZone&&p.leftFlank&&p.rightFlank&&[p.rankZone,p.leftFlank,p.rightFlank].every(function(c){return c&&c.class==='extension';})&&(card.rank||0)<3&&card.numeral!==8&&(card.numeral||0)<=(p.rankZone.currentNP||p.rankZone.numeral||0);
+  }
+  function seatHandClickAction(card){
+    var g=G_(),p=g&&g[g._localSeat];if(!g||!p||!card)return null;
+    if(g.mode==='relievewait'&&card.type==='numeral')return {t:'hand',id:card.id};
+    if(g.phase==='promotion'&&card.type==='numeral')return {t:'hand',id:card.id};
+    if(['rally','main','standby'].indexOf(g.phase)!==-1&&card.type==='numeral'){
+      if(actorCanRearExtension(card))return {t:'hand',id:card.id};
+      if((card.rank||0)>=3)return {t:'hand',id:card.id};
+      if(!p.leftFlank||!p.rightFlank)return {t:'hand',id:card.id};
+    }
+    if(card.type==='area'&&['main','standby'].indexOf(g.phase)!==-1)return {t:'activateArea',id:card.id};
+    return {t:'handView',id:card.id,_localOnly:true};
+  }
+  function shouldRelayZoneClick(owner,zone){
+    var g=G_(); if(!g)return false;
+    return ['atk','addon','standdown','chiefpick','oppzonepick'].indexOf(g.mode)!==-1;
+  }
+  function shouldRelayDeltaClick(who){ var g=G_(); return !!(g&&g.mode==='standdown'&&who==='player'); }
   // Turn-gate: online, only the seat whose turn it is may START one of these turn-based actions. Blocking
   // BEFORE record/relay also prevents an off-turn no-op from being sent to the opponent (which would apply
   // on their side and desync). View actions (bank/delta/dead/view/skillMenu) and modal/picker responses
   // stay ungated so reactions and browsing work during the opponent's turn.
-  var TURN_GATED={adv:1,end:1,hand:1,sdMode:1,atkMode:1,rvMode:1,sd:1};
+  var TURN_GATED={adv:1,end:1,hand:1,promote:1,maxPromote:1,flank:1,relieveHand:1,activateArea:1,playAction:1,sdMode:1,atkMode:1,rvMode:1,sd:1};
   function offTurnBlocked(a){ var g=G_();
     if(!(g && g._netMode && !g._replaying && a && TURN_GATED[a.t] && g.turn!==g._localSeat)) return false;
+    if(a.t==='atkMode' && g._counterattackDuringAI && g.phase==='battle') return false;
     // Reactive-defense exception: during the opponent's Battle Phase the DEFENDER may play a Safeguard or
     // Retaliatory Action Card from hand (relayed like any action). Everything else stays off-turn-blocked.
     if(a.t==='hand' && g.phase==='battle'){
@@ -24965,7 +25050,8 @@ window.ruSpecPace=function(base){
       var g0=G_(); if(g0&&g0._spectator&&!g0._replaying){ return; }   // spectators are read-only — never act
       var a; try{ a=mk.apply(null,arguments); }catch(e){}
       if(offTurnBlocked(a)){ try{ log("It's not your turn.",'info'); }catch(e){} return; }
-      if(a && localDrivesAi()){ rec(a); withLocalActor(function(){ window.ruApplyForeignAction(a); }); return; }
+      if(a&&a._localOnly){ var lo={}; for(var k in a){ if(k!=='_localOnly')lo[k]=a[k]; } if(localDrivesAi())return withLocalActor(function(){ return window.ruApplyForeignAction(lo); }); return orig.apply(this,arguments); }
+      if(a && localDrivesAi()){ rec(a); return withLocalActor(function(){ return window.ruApplyForeignAction(a); }); }
       try{ rec(a); }catch(e){}
       return orig.apply(this,arguments);
     };
@@ -24977,20 +25063,31 @@ window.ruSpecPace=function(base){
   wrap('standDownMode',  function(){ return {t:'sdMode'}; });
   wrap('startAttackMode',function(){ return {t:'atkMode'}; });
   wrap('relieveMode',    function(){ return {t:'rvMode'}; });
-  wrap('bankZoneClick',  function(who){ return {t:'bank', w:who}; });
-  wrap('deltaZoneClick', function(who){ return {t:'delta', w:who}; });
-  wrap('handClick',      function(idx,card){ return {t:'hand', id:card&&card.id}; });
+  wrap('bankZoneClick',  function(who){ return null; });
+  wrap('deltaZoneClick', function(who){ return shouldRelayDeltaClick(who)?{t:'delta', w:who}:null; });
+  wrap('handClick',      function(idx,card){ if(localDrivesAi())return seatHandClickAction(card); return shouldRelayExtensionRearChoice(card)?{t:'hand', id:card&&card.id}:null; });
+  wrap('tryPromote',     function(card){ return (card&&card.id&&(card.rank||0)<4)?{t:'promote', id:card.id}:null; });
+  wrap('tryMaximumRankUp',function(card){ return (card&&card.id)?{t:'maxPromote', id:card.id}:null; });
+  wrap('tryFlank',       function(card,slot){ return (card&&card.id)?{t:'flank', id:card.id, slot:slot}:null; });
+  wrap('tryRelieveFromHand',function(idx,card){ return (card&&card.id)?{t:'relieveHand', id:card.id}:null; });
+  wrap('activateArea',   function(idx,card){ return (card&&card.id)?{t:'activateArea', id:card.id}:null; });
+  wrap('playAction',     function(idx,card){ return (card&&card.id)?{t:'playAction', id:card.id}:null; });
+  wrap('startSkill',     function(who,source,card,idx){ return (who==='player'&&card&&card.id)?{t:'startSkill', source:source, id:card.id}:null; });
+  wrap('startAmalgamationSkill',function(who,card){ return (who==='player'&&card&&card.id)?{t:'amalgSkill', id:card.id}:null; });
+  wrap('runDeadzoneAreaEffect',function(who,cardId,effectIdx){ return who==='player'?{t:'areaFx', id:cardId, i:effectIdx}:null; });
+  wrap('activateAreaFromDrop',function(who,card){ return (who==='player'&&card&&card.id)?{t:'areaDrop', id:card.id}:null; });
+  wrap('useRestorative3',function(who,p,card){ return (who==='player'&&card&&card.id)?{t:'rest3', id:card.id}:null; });
   wrap('doSD',           function(id,first){ return {t:'sd', id:id, first:!!first}; });   // switchdraw one card
-  wrap('zoneClick',      function(owner,zone){ return {t:'zone', o:owner, z:zone}; });
-  wrap('openSkillMenuV10',function(){ return {t:'skillMenu'}; });
-  wrap('deadzoneClick',  function(who){ return {t:'dead', w:who}; });
-  wrap('viewZone',       function(who,which){ return {t:'view', w:who, k:which}; });
+  wrap('zoneClick',      function(owner,zone){ return shouldRelayZoneClick(owner,zone)?{t:'zone', o:owner, z:zone}:null; });
+  wrap('openSkillMenuV10',function(){ return null; });
+  wrap('deadzoneClick',  function(who){ return null; });
+  wrap('viewZone',       function(who,which){ return null; });
 
   // modal button clicks — record the index, hooked at the DOM onclick (real click only)
   var _showOrig=window._showModalNow;
   if(typeof _showOrig==='function'){
-    window._showModalNow=function(title,body,btns){
-      _showOrig.call(this,title,body,btns);
+    window._showModalNow=function(title,body,btns,viewOnly){
+      _showOrig.call(this,title,body,btns,viewOnly);
       try{ var r=document.getElementById('m-btns'); if(!r)return;
         [].forEach.call(r.children,function(el,i){ var f=el.onclick; el.onclick=function(ev){
           // Switchdraw Done/Skip relay their own seat-agnostic 'sdDone' (via finishSwitchdraw) and must run
@@ -25049,6 +25146,57 @@ window.ruSpecPace=function(base){
         case 'sdMode': window.standDownMode(); break;
         case 'atkMode': window.startAttackMode(); break;
         case 'rvMode': window.relieveMode(); break;
+        case 'promote': {
+          var hp=handCardById(g,a.id);
+          if(hp&&window.tryPromote) window.tryPromote(hp.card);
+          break;
+        }
+        case 'maxPromote': {
+          var hm=handCardById(g,a.id);
+          if(hm&&window.tryMaximumRankUp) window.tryMaximumRankUp(hm.card);
+          break;
+        }
+        case 'flank': {
+          var hf=handCardById(g,a.id);
+          if(hf&&window.tryFlank) window.tryFlank(hf.card,a.slot);
+          break;
+        }
+        case 'relieveHand': {
+          var hr=handCardById(g,a.id);
+          if(hr&&window.tryRelieveFromHand) window.tryRelieveFromHand(hr.idx,hr.card);
+          break;
+        }
+        case 'activateArea': {
+          var ha=handCardById(g,a.id);
+          if(ha&&window.activateArea) window.activateArea(ha.idx,ha.card);
+          break;
+        }
+        case 'playAction': {
+          var hpa=handCardById(g,a.id);
+          if(hpa&&window.playAction) window.playAction(hpa.idx,hpa.card);
+          break;
+        }
+        case 'startSkill': {
+          var fs=playerCardById(g,a.id,a.source);
+          if(fs&&window.startSkill) window.startSkill('player',a.source||fs.source,fs.card,fs.idx);
+          break;
+        }
+        case 'amalgSkill': {
+          var fa=playerCardById(g,a.id,'delta');
+          if(fa&&window.startAmalgamationSkill) window.startAmalgamationSkill('player',fa.card);
+          break;
+        }
+        case 'areaFx': if(window.runDeadzoneAreaEffect) window.runDeadzoneAreaEffect('player',a.id,a.i); break;
+        case 'areaDrop': {
+          var fd=playerCardById(g,a.id,'discard');
+          if(fd&&window.activateAreaFromDrop) window.activateAreaFromDrop('player',fd.card);
+          break;
+        }
+        case 'rest3': {
+          var fr=playerCardById(g,a.id,'discard')||playerCardById(g,a.id,'deadzone');
+          if(fr&&window.useRestorative3) window.useRestorative3('player',g.player,fr.card);
+          break;
+        }
         case 'bank': window.bankZoneClick(a.w); break;
         case 'delta': window.deltaZoneClick(a.w); break;
         case 'dead': window.deadzoneClick&&window.deadzoneClick(a.w); break;
@@ -25059,6 +25207,12 @@ window.ruSpecPace=function(base){
           var p=g.player, idx=-1, card=null;
           for(var i=0;i<p.hand.length;i++){ if(p.hand[i].id===a.id){ idx=i; card=p.hand[i]; break; } }
           if(card) window.handClick(idx,card);
+          break;
+        }
+        case 'handView': {
+          var pv=g.player, idxv=-1, cardv=null;
+          for(var iv=0;iv<pv.hand.length;iv++){ if(pv.hand[iv].id===a.id){ idxv=iv; cardv=pv.hand[iv]; break; } }
+          if(cardv) window.handClick(idxv,cardv);
           break;
         }
         case 'sd': if(window.doSD) window.doSD(a.id, a.first); break;         // switchdraw one card (acting seat via apply-by-tag)

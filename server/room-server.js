@@ -112,9 +112,10 @@ function buildSetup(room, type, includeLog){
     seat0Class: m0.cls || 'light', seat1Class: m1.cls || 'light',
     name0: m0.name || 'Player 1', name1: m1.name || 'Player 2',
     seat0DeltaDeck: m0.dd || [], seat1DeltaDeck: m1.dd || [],
-    firstSeat: room.seed % 2
+    firstSeat: room.seed % 2,
+    seq: room.seq || 0
   };
-  if (includeLog) payload.log = room.log.map(function(e){ return { from: e.from, action: e.action }; });
+  if (includeLog) payload.log = room.log.map(function(e){ return { seq: e.seq || 0, from: e.from, action: e.action }; });
   return payload;
 }
 function startMatch(room, code){
@@ -224,10 +225,13 @@ wss.on('connection', (ws) => {
     if (!room) { send(ws, { type: 'error', msg: 'Join a room first.' }); return; }
 
     if (msg.type === 'action') {
+      if (ws._spectator || ws._seatIdx == null || !room.started) return;
+      if (room.seatSocket[ws._seatIdx] !== ws) return;
+      if (!SEATS[ws._seatIdx] || !msg.action || typeof msg.action !== 'object') return;
       // Total order: stamp a monotonic seq, STORE for reconnect catch-up, and relay to the other clients.
       const seq = ++room.seq;
       const seat = SEATS[ws._seatIdx];
-      room.log.push({ from: seat, action: msg.action });
+      room.log.push({ seq, from: seat, action: msg.action });
       if (room.log.length > 20000) room.log.splice(0, room.log.length - 20000);   // safety cap
       broadcast(room, { type: 'action', from: seat, seat, seq, action: msg.action }, ws);
       return;

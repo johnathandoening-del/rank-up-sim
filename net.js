@@ -8,7 +8,7 @@
 (function(){
   if (window.RUNet) return;
   var ws = null;
-  var state = { connected:false, room:null, seat:null, seed:null, name:null, active:false, applied:0, sent:0,
+  var state = { connected:false, room:null, seat:null, seed:null, name:null, active:false, applied:0, sent:0, lastSeq:0,
                 clientId:null, lastConnect:null, reconnectTimer:null, reconnectTries:0, intentionalClose:false };
   var opts = { pCls:'light', aCls:'inferno' };
 
@@ -46,7 +46,7 @@
     // SHARED-IDENTITY: every client builds the byte-identical game from the same seed + both classes;
     // only mySeat (which seat this client drives) differs. initGame reads RU_NET_CONFIG.
     try { if (typeof closeModal === 'function') closeModal(); } catch(e){}   // dismiss any game-over / rematch-waiting modal before the fresh game builds
-    state.seed = cfg.seed; state.mySeat = cfg.mySeat; state.name0 = cfg.name0; state.name1 = cfg.name1; state.active = true;
+    state.seed = cfg.seed; state.mySeat = cfg.mySeat; state.name0 = cfg.name0; state.name1 = cfg.name1; state.active = true; state.spectator = !!cfg.spectator; state.applied = 0; state.lastSeq = 0;
     window.RU_NET_CONFIG = { seed: cfg.seed, mySeat: cfg.mySeat, seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat,
       seat0DeltaDeck: cfg.seat0DeltaDeck || [], seat1DeltaDeck: cfg.seat1DeltaDeck || [] };
     if (typeof startGame === 'function') startGame();
@@ -85,8 +85,11 @@
     try {
       for (var i = 0; i < lg.length; i++) {
         var e = lg[i];
+        var seq = Number(e.seq || (i + 1));
+        if (seq && seq <= state.lastSeq) continue;
         if (e.from === 'ai') window.ruApplyForeignAction(e.action);
         else window.ruApplyAction(e.action);
+        if (seq) state.lastSeq = seq;
         state.applied++;
       }
     } catch(err){ console.error('[net] resume replay failed', err); }
@@ -120,8 +123,11 @@
         // action applies normally; an 'ai' action applies via the perspective swap. Same rule on every
         // client → identical result → lockstep.
         try {
+          var seq = Number(msg.seq || 0);
+          if (seq && seq <= state.lastSeq) return;
           if (msg.from === 'ai') window.ruApplyForeignAction(msg.action);
           else window.ruApplyAction(msg.action);
+          if (seq) state.lastSeq = seq;
           state.applied++;
         } catch(e){ console.error('[net] apply failed', e, msg); }
         break;
@@ -139,7 +145,7 @@
         // Opponent left (no reconnect in v1) — the room reset to a clean waiting state. Return to the
         // lobby so a fresh match can start; the seat this client will get may change, so we re-sync on the
         // next 'joined'/'start'.
-        state.active = false; state.mySeat = null;
+        state.active = false; state.mySeat = null; state.lastSeq = 0; state.applied = 0;
         if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
         setStatus('Your opponent left — match ended. You are back in the room; a new opponent can join, or change the code.', 'err');
         try { var gs = document.getElementById('game-screen'), ts = document.getElementById('title-screen'); if (gs) gs.classList.remove('active'); if (ts) ts.classList.add('active'); } catch(e){}
