@@ -36,6 +36,8 @@
   function log2(m){ try { (window.log ? window.log : console.log)('[net] ' + m, 'info'); } catch(e){ try{ console.log('[net]', m); }catch(_){} } }
   function setStatus(text, cls){ try { var e = document.getElementById('online-status'); if (e) { e.textContent = text; e.className = 'online-status' + (cls ? ' ' + cls : ''); } } catch(_){} }
   function showLeave(on){ try { var b = document.getElementById('online-leave-btn'); if (b) b.style.display = on ? '' : 'none'; var j = document.getElementById('online-join-btn'); if (j) j.disabled = !!on; } catch(_){} }
+  function engineSeatFromOnline(seat){ return (seat === 'player2' || seat === 'ai') ? 'ai' : 'player'; }
+  function onlineSeatFromEngine(seat){ return seat === 'ai' ? 'player2' : (seat === 'player' ? 'player1' : seat); }
 
   function oppName(){
     // The name of the OTHER seat (for rematch prompts). mySeat 0 → seat1's name, else seat0's.
@@ -63,12 +65,12 @@
     if (typeof startGame === 'function') startGame();
     window.RU_NET_CONFIG = null;
     // Stash the two synced Δ Decks on G so installDeltaDecks (which runs ~80ms later, after RU_NET_CONFIG is
-    // cleared) builds identical evolutions for BOTH seats on every client, keyed by canonical seat index.
+    // cleared) builds identical evolutions for BOTH players on every client, keyed by engine-side board id.
     try { if (typeof G !== 'undefined' && G) G._netDeltaDecks = { player: cfg.seat0DeltaDeck || [], ai: cfg.seat1DeltaDeck || [] }; } catch(e){}
     // Attach the real player names to the seat data so the HUD shows them (and they follow the POV swap).
     // Also flag THIS device's own seat object so logs/prompts can say "You"/"your" for the local player and
     // the name for everyone else — the flag rides on the seat OBJECT, so it stays correct through the POV
-    // foreign-apply swap (the object moves between the 'player'/'ai' labels, the flag moves with it).
+    // foreign-apply swap (the object moves between the two engine board slots, the flag moves with it).
     try {
       if (typeof G !== 'undefined' && G) {
         if (G.player) {
@@ -110,7 +112,7 @@
         var e = lg[i];
         var seq = Number(e.seq || (i + 1));
         if (seq && seq <= state.lastSeq) continue;
-        if (e.from === 'ai') window.ruApplyForeignAction(e.action);
+        if (engineSeatFromOnline(e.from) === 'ai') window.ruApplyForeignAction(e.action);
         else window.ruApplyAction(e.action);
         if (seq) state.lastSeq = seq;
         state.applied++;
@@ -142,13 +144,13 @@
         resumeNetGame(msg);
         break;
       case 'action':
-        // apply-by-tag (shared-identity): the acting seat comes from the server (msg.from). A 'player'
-        // action applies normally; an 'ai' action applies via the perspective swap. Same rule on every
+        // apply-by-tag (shared-identity): the acting player comes from the server (msg.from). A Player 1
+        // action applies normally; a Player 2 action applies via the perspective swap. Same rule on every
         // client → identical result → lockstep.
         try {
           var seq = Number(msg.seq || 0);
           if (seq && seq <= state.lastSeq) return;
-          if (msg.from === 'ai') window.ruApplyForeignAction(msg.action);
+          if (engineSeatFromOnline(msg.from) === 'ai') window.ruApplyForeignAction(msg.action);
           else window.ruApplyAction(msg.action);
           if (seq) state.lastSeq = seq;
           state.applied++;
@@ -260,9 +262,9 @@
     // Vote to rematch (true) or decline/cancel (false). When BOTH seats vote true the server deals a fresh
     // identically-seeded game (a new 'start') and both clients rebuild in the same room.
     rematch: function(vote){ try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'rematch', vote: !!vote })); } catch(e){} },
-    // Report the finished match's winner (canonical seat 'player'|'ai'|'draw') so the server updates ratings.
+    // Report the finished match's winner as online identity ('player1'|'player2'|'draw') so the server updates ratings.
     // Both clients report the same result; the server records it once. Spectators don't call this.
-    reportResult: function(winner){ try { if (!state.spectator && ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'result', winner: winner })); } catch(e){} },
+    reportResult: function(winner){ try { if (!state.spectator && ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'result', winner: winner === 'draw' ? 'draw' : onlineSeatFromEngine(winner) })); } catch(e){} },
     disconnect: function(){ state.intentionalClose = true; state.active = false; if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; } if (ws) try { ws.close(); } catch(e){} }
   };
 

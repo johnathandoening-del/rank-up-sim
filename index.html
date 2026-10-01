@@ -5547,7 +5547,7 @@ function renderAll(){
     window._ruReconcilingRear = false;
   }
   window.applyHigherGroundPassiveRA16();
-  // POINT-OF-VIEW: the seat-1 client (it controls the 'ai' seat) renders its OWN seat at the bottom.
+  // POINT-OF-VIEW: the Player 2 client renders its OWN seat at the bottom.
   // We swap the two seat objects + the turn label ONLY around the paint, then restore — so every render
   // function (fields, hand, HUD, delta, opp-hand) shows the local seat at the bottom with no per-function
   // change, while the game STATE stays canonical (shared-identity → lockstep preserved).
@@ -5617,7 +5617,7 @@ function updPhase(){
   const tlEl=el('tlabel'); if(tlEl)tlEl.textContent=`${sidePossessiveLabel(G.turn)} Turn \u00b7 Exchange ${G.exchange}`;
   const phHint=el('phase-hint');
   if(phHint){const lb={promotion:'[Promote]',rally:'[Flank/Stand Down/Relieve]',main:'[Skills/Actions/Area]',standby:'[Actions/Skills]',battle:'[Attack! Safeguard/Retaliatory in hand]',end:''};
-    // "mine" = it's THIS client's seat that's active (online uses the canonical _myTurn, so the seat-1 human
+    // "mine" = it's THIS client's seat that's active (online uses the canonical _myTurn, so the Player 2 human
     // sees the phase hints on their own turn); otherwise show the ACTIVE player's name, not a bare "AI".
     var mine=(G&&G._netMode)?!!G._myTurn:(G.turn==='player');
     phHint.textContent=mine?(lb[G.phase]||''):('['+(G&&G._netMode?sideNameLabel(G.turn)+'’s Turn':'AI Turn')+']');}
@@ -5629,7 +5629,7 @@ function renderPhaseRail(){
   if(typeof G==='undefined'||!G||!G.phase){rail.innerHTML='';return;}
   var labels={draw:'DRAW',promotion:'PROMOTION',rally:'RALLY',main:'MAIN',standby:'STANDBY',battle:'BATTLE',end:'END'};
   var steps=PH.map(function(p){return '<div class="rail-step'+(p===G.phase?' active':'')+'">'+(labels[p]||String(p).toUpperCase())+'</div>';}).join('');
-  // Online: "yours" is the CANONICAL _myTurn (so the seat-1 human sees YOUR TURN on their own turn); the
+  // Online: "yours" is the CANONICAL _myTurn (so the Player 2 human sees YOUR TURN on their own turn); the
   // off-turn label is the ACTIVE player's name, never a bare "AI".
   var yours=(G&&G._netMode)?!!G._myTurn:(G.turn==='player');
   var turnLabel=yours?'YOUR TURN':(String(sidePossessiveLabel(G.turn)).toUpperCase()+' TURN');
@@ -6267,7 +6267,7 @@ function doCounterAttack(npBonus,opts){
 // ═══════════════════════════════════════════
 // Online: true when a PURE-VIEW modal is only firing because we're replaying the OPPONENT's relayed action
 // (not our own). Such a private browse (Evos, Δ Deck, zone contents) must never open on the other player's
-// screen. G._localActor is set when the seat-1 client applies its OWN action (which also uses the replay path),
+// screen. G._localActor is set when the Player 2 client applies its OWN action (which also uses the replay path),
 // so this stays false only for the opponent's actions and for spectators.
 function ruSuppressForeignView(){ return !!(typeof G!=='undefined'&&G&&G._netMode&&G._replaying&&!G._localActor); }
 window.ruSuppressForeignView=ruSuppressForeignView;
@@ -25117,12 +25117,12 @@ window.ruSpecPace=function(base){
   window.ruIsReplaying   = function(){ var g=G_(); return !!(g&&g._replaying); };
 
   // wrap a global fn so a real call records mk(args); suppressed during replay
-  // The seat-1 client controls the 'ai' seat: its local inputs must drive 'ai', so we record+relay the
-  // action (server stamps from='ai') and execute it via the perspective swap instead of the direct
+  // The Player 2 client controls the second board: its local inputs must drive Player 2, so we record+relay the
+  // action (server stamps from='player2') and execute it via the perspective swap instead of the direct
   // 'player'-centric handler. Skipped while replaying a received/foreign action.
-  function localDrivesAi(){ var g=G_(); return !!(g && g._netMode && g._localSeat==='ai' && !g._replaying); }
-  // Run a seat-1 client's OWN action through the foreign-apply path, but flagged G._localActor so anything it
-  // opens (e.g. a private view) knows it's MINE, not the opponent's — the seat-1 client applies its own actions
+  function localDrivesPlayer2(){ var g=G_(); return !!(g && g._netMode && g._localSeat==='ai' && !g._replaying); }
+  // Run a Player 2 client's OWN action through the foreign-apply path, but flagged G._localActor so anything it
+  // opens (e.g. a private view) knows it's MINE, not the opponent's — the Player 2 client applies its own actions
   // via the same _replaying path the opponent's relayed actions use, so _replaying alone can't tell them apart.
   function withLocalActor(fn){ var g=G_(); var prev=g&&g._localActor; if(g)g._localActor=true; try{ return fn(); } finally { var g2=G_(); if(g2)g2._localActor=prev; } }
   window.withLocalActorRU=withLocalActor;
@@ -25197,8 +25197,8 @@ window.ruSpecPace=function(base){
       var g0=G_(); if(g0&&g0._spectator&&!g0._replaying){ return; }   // spectators are read-only — never act
       var a; try{ a=mk.apply(null,arguments); }catch(e){}
       if(offTurnBlocked(a)){ try{ log("It's not your turn.",'info'); }catch(e){} return; }
-      if(a&&a._localOnly){ var lo={}; for(var k in a){ if(k!=='_localOnly')lo[k]=a[k]; } if(localDrivesAi())return withLocalActor(function(){ return window.ruApplyForeignAction(lo); }); return orig.apply(this,arguments); }
-      if(a && localDrivesAi()){ rec(a); return withLocalActor(function(){ return window.ruApplyForeignAction(a); }); }
+      if(a&&a._localOnly){ var lo={}; for(var k in a){ if(k!=='_localOnly')lo[k]=a[k]; } if(localDrivesPlayer2())return withLocalActor(function(){ return window.ruApplyForeignAction(lo); }); return orig.apply(this,arguments); }
+      if(a && localDrivesPlayer2()){ rec(a); return withLocalActor(function(){ return window.ruApplyForeignAction(a); }); }
       try{ rec(a); }catch(e){}
       return orig.apply(this,arguments);
     };
@@ -25212,7 +25212,7 @@ window.ruSpecPace=function(base){
   wrap('relieveMode',    function(){ return {t:'rvMode'}; });
   wrap('bankZoneClick',  function(who){ return null; });
   wrap('deltaZoneClick', function(who){ return shouldRelayDeltaClick(who)?{t:'delta', w:who}:null; });
-  wrap('handClick',      function(idx,card){ if(localDrivesAi())return seatHandClickAction(card); return shouldRelayExtensionRearChoice(card)?{t:'hand', id:card&&card.id}:null; });
+  wrap('handClick',      function(idx,card){ if(localDrivesPlayer2())return seatHandClickAction(card); return shouldRelayExtensionRearChoice(card)?{t:'hand', id:card&&card.id}:null; });
   wrap('tryPromote',     function(card){ return (card&&card.id&&(card.rank||0)<4)?{t:'promote', id:card.id}:null; });
   wrap('tryMaximumRankUp',function(card){ return (card&&card.id)?{t:'maxPromote', id:card.id}:null; });
   wrap('tryFlank',       function(card,slot){ return (card&&card.id)?{t:'flank', id:card.id, slot:slot}:null; });
@@ -25252,7 +25252,7 @@ window.ruSpecPace=function(base){
           // _replaying, so it passes this guard).
           var mm0=mmv;
           if(g&&g._netMode&&!g._replaying&&mm0&&mm0._ruMirror){ return; }
-          if(localDrivesAi()){ rec({t:'modal', i:i}); withLocalActor(function(){ window.ruApplyForeignAction({t:'modal', i:i}); }); return; }
+          if(localDrivesPlayer2()){ rec({t:'modal', i:i}); withLocalActor(function(){ window.ruApplyForeignAction({t:'modal', i:i}); }); return; }
           rec({t:'modal', i:i}); return f?f.call(this,ev):undefined;
         }; });
         // Decide ONCE, at open time, whether this modal is a MIRROR of the other player's prompt (shared helper
@@ -25271,13 +25271,13 @@ window.ruSpecPace=function(base){
   if(typeof _cOrig==='function') window.confirmPick=function(){
     if(pickerNotMine()) return;
     var ids=((typeof PCK!=='undefined'&&PCK&&PCK.sel)||[]).map(function(c){return c&&c.id;});
-    if(localDrivesAi()){ rec({t:'pick', ids:ids}); withLocalActor(function(){ window.ruApplyForeignAction({t:'pick', ids:ids}); }); return; }
+    if(localDrivesPlayer2()){ rec({t:'pick', ids:ids}); withLocalActor(function(){ window.ruApplyForeignAction({t:'pick', ids:ids}); }); return; }
     try{ rec({t:'pick', ids:ids}); }catch(e){} return _cOrig.apply(this,arguments);
   };
   var _sOrig=window.skipPick;
   if(typeof _sOrig==='function') window.skipPick=function(){
     if(pickerNotMine()) return;
-    if(localDrivesAi()){ rec({t:'pick', ids:[]}); withLocalActor(function(){ window.ruApplyForeignAction({t:'pick', ids:[]}); }); return; }
+    if(localDrivesPlayer2()){ rec({t:'pick', ids:[]}); withLocalActor(function(){ window.ruApplyForeignAction({t:'pick', ids:[]}); }); return; }
     try{ rec({t:'pick', ids:[]}); }catch(e){} return _sOrig.apply(this,arguments);
   };
 
@@ -25389,8 +25389,8 @@ window.ruSpecPace=function(base){
   window.ruReplayActions=function(log){ (log||[]).forEach(function(a){ window.ruApplyAction(a); }); };
 
   /* MIRRORED-LOCAL perspective: each client runs the engine with ITSELF as 'player'. An action the
-     opponent made (their 'player' action) is applied here to OUR 'ai' seat by temporarily swapping the
-     player/ai seat objects + turn label, running the normal 'player'-centric handler, then swapping back
+     Player 2 made is applied here by temporarily swapping the two engine board objects + turn label,
+     running the normal Player-1-centric handler, then swapping back
      and re-rendering. This lets the deeply 'player'-hardcoded engine drive the opponent seat with zero
      gameplay-code changes. (Synchronous actions — phase/promote/flank/attack/end — are exact; timer-based
      skill flows are validated per-skill during Phase 1 hardening.) */

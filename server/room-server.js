@@ -27,7 +27,7 @@ const { WebSocketServer } = require('ws');
 const PORT = process.env.PORT || 8833;
 const CLIENT_ROOT = path.join(__dirname, '..');        // this server also serves the game files (single deploy)
 const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.ttf':'font/ttf', '.png':'image/png', '.jpg':'image/jpeg', '.svg':'image/svg+xml', '.ico':'image/x-icon', '.md':'text/markdown; charset=utf-8' };
-const SEATS = ['player', 'ai', 'ai2'];           // seat id by index (matches the client engine's seat ids)
+const SEATS = ['player1', 'player2'];            // online room identities; the client maps these onto its engine slots
 const GRACE_MS = 90 * 1000;                      // how long a seat is held for a dropped player to reconnect
 const rooms = new Map();                          // code -> room
 
@@ -263,12 +263,12 @@ wss.on('connection', (ws) => {
     // ONCE per match (reset on each start/rematch) so Elo isn't double-counted. Spectators can't report.
     if (msg.type === 'result') {
       if (ws._spectator || !room.started || room.resultRecorded) return;
-      const w = msg.winner;                               // canonical seat: 'player' | 'ai' | 'draw'
-      if (w !== 'player' && w !== 'ai' && w !== 'draw') return;
+      const w = msg.winner;                               // online seat: 'player1' | 'player2' | 'draw' (legacy 'player'/'ai' accepted)
+      if (w !== 'player1' && w !== 'player2' && w !== 'player' && w !== 'ai' && w !== 'draw') return;
       const n0 = (room.seatMeta[0] || {}).name, n1 = (room.seatMeta[1] || {}).name;
       if (!n0 || !n1) return;
       room.resultRecorded = true;
-      const winnerName = w === 'player' ? n0 : (w === 'ai' ? n1 : 'draw');
+      const winnerName = (w === 'player1' || w === 'player') ? n0 : ((w === 'player2' || w === 'ai') ? n1 : 'draw');
       recordResult(n0, n1, winnerName);
       const rec = { type: 'stats', players: [playerRec(n0), playerRec(n1)] };
       room.seatSocket.forEach(function(s){ if (s) send(s, rec); });
