@@ -71,8 +71,20 @@
     // foreign-apply swap (the object moves between the 'player'/'ai' labels, the flag moves with it).
     try {
       if (typeof G !== 'undefined' && G) {
-        if (G.player) G.player._netName = cfg.name0 || 'Player 1';
-        if (G.ai) G.ai._netName = cfg.name1 || 'Player 2';
+        if (G.player) {
+          G.player._netName = cfg.name0 || 'Player 1';
+          G.player._seatNo = 1;
+          G.player._seatLabel = 'Player 1';
+          G.player._isHumanSeat = true;
+          G.player.isBot = false;
+        }
+        if (G.ai) {
+          G.ai._netName = cfg.name1 || 'Player 2';
+          G.ai._seatNo = 2;
+          G.ai._seatLabel = 'Player 2';
+          G.ai._isHumanSeat = true;
+          G.ai.isBot = false;
+        }
         if (G.player) G.player._isLocalHuman = false;
         if (G.ai) G.ai._isLocalHuman = false;
         // Spectator: read-only, owns no seat — leave both _isLocalHuman false so every prompt is a mirror and
@@ -83,7 +95,7 @@
         if (typeof renderAll === 'function') renderAll();
       }
     } catch(e){}
-    log2('game started — seed ' + cfg.seed + ', you are seat ' + (cfg.mySeat + 1) + ' (' + (typeof G !== 'undefined' && G ? G._localSeat : '?') + '), controlling the bottom board.');
+    log2('game started — seed ' + cfg.seed + ', you are Player ' + (cfg.mySeat + 1) + ', controlling the bottom board.');
   }
 
   // Reconnect catch-up: build the identical base game, install both Δ Decks synchronously (they normally land
@@ -114,7 +126,7 @@
     switch (msg.type) {
       case 'joined':
         state.room = msg.room; state.seat = msg.seat; state.mySeat = msg.seatIdx;
-        log2('joined room ' + msg.room + ' as seat ' + (msg.seatIdx + 1) + ' — waiting for opponent…');
+        log2('joined room ' + msg.room + ' as Player ' + (msg.seatIdx + 1) + ' — waiting for opponent…');
         setStatus('In room "' + msg.room + '" as Player ' + (msg.seatIdx + 1) + '. Waiting for an opponent to join…', 'ok');
         break;
       case 'start':
