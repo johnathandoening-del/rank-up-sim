@@ -496,6 +496,25 @@ window.sideNameLabel=sideNameLabel;window.sideSubjectLabel=sideSubjectLabel;wind
 // instead of silently falling back to 'ai-X'.
 function sideZoneId(who,suffix){return ((window.sideMeta?sideMeta(who).zonePrefix:null)||(who==='player'?'pl':'ai'))+'-'+suffix;}
 window.sideZoneId=sideZoneId;
+function ruVisibleOwnerToCanonical(who){
+  if(!(G&&G._netMode))return who;
+  if(G._localActor&&G._localSeat&&who==='player')return G._localSeat;
+  if(G._localSeat==='ai'&&!G._foreignSwapped){
+    if(who==='player')return 'ai';
+    if(who==='ai')return 'player';
+  }
+  return who;
+}
+window.ruVisibleOwnerToCanonical=ruVisibleOwnerToCanonical;
+function ruLocalSeatId(){return (G&&G._netMode&&G._localSeat)?G._localSeat:'player';}
+window.ruLocalSeatId=ruLocalSeatId;
+function ruLocalSeatActive(who){
+  if(!(G&&G._netMode))return who==='player'&&G.turn==='player';
+  return !!(G._localSeat&&G._localSeat===who&&G.turn===who);
+}
+window.ruLocalSeatActive=ruLocalSeatActive;
+function ruIsLocalViewOwner(who){return (G&&G._netMode)?isLocalHumanSeat(who):who==='player';}
+window.ruIsLocalViewOwner=ruIsLocalViewOwner;
 // ── 3-WAY LAYOUT FITTER ──────────────────────────────────────────────────────
 // Sizes the three rotated boards to fill the LIVE battlefield instead of shrinking
 // them to fit a fixed strip. Reads the battlefield's actual width/height and picks
@@ -6235,7 +6254,9 @@ function showCardModal(card,handIdx,extraBtns){
         const maxA=ruEffectiveA(G.player);
         if(G.player.actUsed<maxA)btns.unshift({label:`Use ${card.name}`,cls:'mb-skill',fn:()=>{closeModal();playAction(handIdx,card);}});
       }
-      if(card.type==='evolution'&&G.turn==='player'&&G.player.delta&&G.player.delta[0]===card&&['main','standby','battle'].includes(G.phase)&&!card.usedSkill){
+      const localDeltaOwner=(window.ruLocalSeatId?ruLocalSeatId():'player');
+      const localDeltaSide=G&&G[localDeltaOwner];
+      if(card.type==='evolution'&&localDeltaSide&&G.turn===localDeltaOwner&&localDeltaSide.delta&&localDeltaSide.delta[0]===card&&['main','standby','battle'].includes(G.phase)&&!card.usedSkill){
         btns.unshift({label:'Use Amalgamation Skill',cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill('player',card);}});
       }
       btns.push({label:'Close',fn:()=>closeModal()});
@@ -6243,10 +6264,12 @@ function showCardModal(card,handIdx,extraBtns){
       if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();
 }
 function viewZone(who,zone){
-  if(who==='player'&&zone==='discard'&&G&&G.player){
-    const h=G.player.discard.find(c=>c&&c.name==='Halcyon Highlands');
+  who=window.ruVisibleOwnerToCanonical?ruVisibleOwnerToCanonical(who):who;
+  if((window.ruIsLocalViewOwner?ruIsLocalViewOwner(who):who==='player')&&zone==='discard'&&G&&G[who]){
+    const side=G[who];
+    const h=side.discard.find(c=>c&&c.name==='Halcyon Highlands');
     if(h){
-      openModal('Your Drop', '<p>'+G.player.discard.length+' card(s).</p><p><strong>Halcyon Highlands</strong> can be sent from Drop to Deadzone by its profile text.</p>', [
+      openModal('Your Drop', '<p>'+side.discard.length+' card(s).</p><p><strong>Halcyon Highlands</strong> can be sent from Drop to Deadzone by its profile text.</p>', [
         {label:'Send Halcyon Highlands to Deadzone',cls:'mb-skill',fn:()=>{closeModal();window.activateAreaFromDrop('player',h);}},
         {label:'View Full Drop',fn:()=>{closeModal();viewZoneL3(who,zone);}},
         {label:'Close',fn:()=>closeModal()}
@@ -6258,13 +6281,13 @@ function viewZone(who,zone){
   return viewZoneL3(who,zone);
 }
 function viewZoneL3(who,zone){
-  if(who==='player'&&(zone==='discard'||zone==='deadzone')){
-    const p=G.player,cards=zone==='discard'?p.discard:p.deadzone;
+  if((window.ruIsLocalViewOwner?ruIsLocalViewOwner(who):who==='player')&&(zone==='discard'||zone==='deadzone')){
+    const p=G[who],cards=zone==='discard'?p.discard:p.deadzone;
     let body='<p>'+cards.length+' card(s). Click useful cards below when a zone skill is available.</p>';
     const btns=[];
     cards.slice(-18).forEach(c=>{
       body+='<div style="padding:.18rem 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.78rem;">'+c.name+'</div>';
-      if(c.name==='Restorative 3'&&['main','standby'].includes(G.phase)&&G.turn==='player'){
+      if(c.name==='Restorative 3'&&['main','standby'].includes(G.phase)&&G.turn===who){
         btns.push({label:'Use Restorative 3 from '+(zone==='discard'?'Drop':'Deadzone'),cls:'mb-skill',fn:()=>{closeModal();window.useRestorative3('player',p,c);}});
       }
     });
@@ -6282,7 +6305,7 @@ function viewZoneL2(who,zone){
     if(G.allowEvolutions===false){openModal('Evolutions Disabled','<p>Evolution play is disabled for this match.</p>',[{label:'Close',fn:()=>closeModal()}]);return;}
     const cards=(G[who].evolutions)||[];
     let body=`<p>${cards.length} Evolution card(s) in ${sidePossLower(who)} Evos stack.</p>`;
-    if(who==='ai') body+='<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">AI Evos are face-down.</p>';
+    if(!(window.ruIsLocalViewOwner?ruIsLocalViewOwner(who):who==='player')) body+=`<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">${sidePossessiveLabel(who)} Evos are face-down.</p>`;
     else if(!cards.length) body+='<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">No Evolution cards selected or loaded.</p>';
     else body+=cards.map(c=>`<div class="delta-list-card"><strong>${amalgDisplayName(c)}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">${c.alignment} | Rank ${c.rank} | NP ${c.numeral} | A:${ruADisp(c.A)} M:${c.M>=0?'+':''}${c.M} S:${c.S===99?'+?':c.S}</span><div style="font-size:.72rem;margin-top:.25rem;"><strong>Requirement:</strong> ${c.requirements||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Cost:</strong> ${c.skillCost||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Skill:</strong> ${c.skillText||'—'}</div></div>`).join('');
     openModal(`${sidePossessiveLabel(who)} Evos`,body,[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;
@@ -9529,16 +9552,10 @@ ADEFS['Seven Heaven']={
   window.findAmalgamationOptionsAI1=findAmalgamationOptions;
   function restoreRankAfterMaterial(p){if(p.rankZone)return;if(p.bank.length)p.rankZone=p.bank.shift();else p.rankZone=makeStart('amalg-rz-'+uid());}
   function canonicalOnlineOwner(who){
-    if(G&&G._netMode&&G._localActor&&G._localSeat&&who==='player')return G._localSeat;
-    if(G&&G._netMode&&G._localSeat==='ai'&&!G._foreignSwapped){
-      if(who==='player')return 'ai';
-      if(who==='ai')return 'player';
-    }
-    return who;
+    return window.ruVisibleOwnerToCanonical?ruVisibleOwnerToCanonical(who):who;
   }
   function localOwnsAmalgSeat(who){
-    if(!(G&&G._netMode))return who==='player'&&G.turn==='player';
-    return !!(G._localSeat&&G._localSeat===who&&G.turn===who);
+    return window.ruLocalSeatActive?ruLocalSeatActive(who):(!(G&&G._netMode)?who==='player'&&G.turn==='player':!!(G._localSeat&&G._localSeat===who&&G.turn===who));
   }
   function findAmalgamationMaterialById(p,id){
     if(!p||!id)return null;
@@ -10155,8 +10172,11 @@ ADEFS['Seven Heaven']={
 
   const _openSkillMenuV114=window.openSkillMenuV10;
   window.openSkillMenuV10=function(){
-    const c=G&&G.player&&G.player.delta&&G.player.delta[0];
-    if(c&&['main','standby','battle','draw'].includes(G.phase)&&!c.usedSkill){openModal('Use Skill',`<p>Your active Amalgamation has a usable skill.</p><div class="delta-list-card"><strong>${c.name}</strong><br><span style="font-size:.72rem;">${c.skillText}</span></div>`,[{label:`Use ${c.name}`,cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill('player',c);}},{label:'Other Numeral Skills',fn:()=>{closeModal();_openSkillMenuV114();}},{label:'Close',fn:()=>closeModal()}]);if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();return;}
+    const localOwner=window.ruLocalSeatId?ruLocalSeatId():'player';
+    const localSide=G&&G[localOwner];
+    const c=localSide&&localSide.delta&&localSide.delta[0];
+    if(c&&G.turn===localOwner&&['main','standby','battle','draw'].includes(G.phase)&&!c.usedSkill){openModal('Use Skill',`<p>Your active Amalgamation has a usable skill.</p><div class="delta-list-card"><strong>${c.name}</strong><br><span style="font-size:.72rem;">${c.skillText}</span></div>`,[{label:`Use ${c.name}`,cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill('player',c);}},{label:'Other Numeral Skills',fn:()=>{closeModal();if(G&&G._netMode&&G._localSeat==='ai'&&typeof ruWithLocalPOV==='function')ruWithLocalPOV(()=>_openSkillMenuV114());else _openSkillMenuV114();}},{label:'Close',fn:()=>closeModal()}]);if(G&&G._netMode&&window.ruTagViewModal)ruTagViewModal();return;}
+    if(G&&G._netMode&&G._localSeat==='ai'&&typeof ruWithLocalPOV==='function')return ruWithLocalPOV(()=>_openSkillMenuV114());
     _openSkillMenuV114();
   };
 
@@ -12195,7 +12215,9 @@ function useRetL2(idx,card){
   if(typeof openSkillMenuV10==='function'){
     const _ruOpenSkillMenu=openSkillMenuV10;
     window.openSkillMenuV10=function(){
-      if(G&&G.turn&&G.turn!=='player')return openOpponentTurnSkillWindow(G.phase);
+      const localOwner=window.ruLocalSeatId?ruLocalSeatId():'player';
+      const localTurn=window.ruLocalSeatActive?ruLocalSeatActive(localOwner):(G&&G.turn==='player');
+      if(G&&G.turn&&!localTurn)return openOpponentTurnSkillWindow(G.phase);
       return _ruOpenSkillMenu();
     };
   }
