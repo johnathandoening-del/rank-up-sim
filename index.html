@@ -3267,7 +3267,16 @@ function beginPhase(ph){
 // Next Phase advances the player's own phases only, and STOPS at 'battle'. It can never step into 'end'
 // (which is what hands off to the AI). The ONLY way to end your turn / start the AI's turn is the End Turn
 // button (endTurnNow → beginPhase('end')). This is the hard "no AI turn until I press End Turn" rule.
-function advPhase(){if(G.gameOver||G.turn!=='player')return;const i=PH.indexOf(G.phase);const lastPlayable=PH.indexOf('battle');if(i<lastPlayable)beginPhase(PH[i+1]);}
+function localMayDriveTurnAction(){
+  if(!G||G.gameOver)return false;
+  if(G._netMode){
+    if(G._replaying)return true;
+    return G._localSeat===G.turn;
+  }
+  return G.turn==='player';
+}
+window.localMayDriveTurnAction=localMayDriveTurnAction;
+function advPhase(){if(!localMayDriveTurnAction())return;const i=PH.indexOf(G.phase);const lastPlayable=PH.indexOf('battle');if(i<lastPlayable)beginPhase(PH[i+1]);}
 // Deferred phase transition that re-validates the turn AT FIRE TIME. Captures which side scheduled it; if a
 // hand-off happens during the delay, the stale timer aborts instead of firing beginPhase on the OTHER
 // player's turn. This is the root cause of turns being skipped (a stale AI beginPhase('end') landing on the
@@ -3278,7 +3287,7 @@ function phaseAfter(ph, delay){
 }
 // End Turn — skip the rest of the player's phases. Goes through the End Phase so end-of-turn effects still run.
 function endTurnNow(){
-  if(G.gameOver||G.turn!=='player')return;
+  if(!localMayDriveTurnAction())return;
   if(_modalOpen||_modalQueue.length){log('Resolve the current prompt before ending your turn.','info');return;}
   if(SF){log('Finish your current skill before ending your turn.','info');return;}
   // Must-attack enforcement (Task #71) lives in the ru171 wrap around this function: it only
@@ -24196,13 +24205,13 @@ window.ruSpecPace=function(base){
     var pron=(subj==='You')?'you':subj;
     return subj+' used an Advantageous Action Card this turn — '+pron+' must attack before '+where+'.';
   }
-  // The guard runs under the perspective swap too (a seat-1 human's own end/advance is applied via
-  // ruApplyForeignAction, where G.turn='player'/G.player is their seat), so checking G.turn/G.player enforces
-  // the rule for BOTH seats online, not just the canonical 'player'.
+  function activeTurnSide171(){return (G&&G._netMode)?G.turn:'player';}
+  function activeTurnPlayer171(){var w=activeTurnSide171();return G&&G[w];}
   var prevEndTurnNow171=window.endTurnNow;
   if(typeof prevEndTurnNow171==='function'){
     window.endTurnNow=endTurnNow=function(){
-      if(G&&!G.gameOver&&G.turn==='player'&&usedAdvE1ThisTurn(G.player)&&!G.player._attackedThisTurn&&hasLegalAttack('player')){
+      var w=activeTurnSide171(),p=activeTurnPlayer171();
+      if(G&&!G.gameOver&&p&&usedAdvE1ThisTurn(p)&&!p._attackedThisTurn&&hasLegalAttack(w)){
         log(advBlockMsg('ending the turn'),'dmg');
         return;
       }
@@ -24213,7 +24222,8 @@ window.ruSpecPace=function(base){
   var prevAdvPhase171=window.advPhase;
   if(typeof prevAdvPhase171==='function'){
     window.advPhase=advPhase=function(){
-      if(G&&!G.gameOver&&G.turn==='player'&&G.phase==='battle'&&usedAdvE1ThisTurn(G.player)&&!G.player._attackedThisTurn&&hasLegalAttack('player')){
+      var w=activeTurnSide171(),p=activeTurnPlayer171();
+      if(G&&!G.gameOver&&p&&G.phase==='battle'&&usedAdvE1ThisTurn(p)&&!p._attackedThisTurn&&hasLegalAttack(w)){
         log(advBlockMsg('leaving the Battle Phase'),'dmg');
         return;
       }
@@ -25311,7 +25321,7 @@ window.ruSpecPace=function(base){
   // Actions whose effect is seat-agnostic (a phase transition keyed on the canonical G.turn, not on which
   // seat object is G.player) must NOT be perspective-swapped — beginPhase would then set turn controls from
   // the wrong seat. Apply them canonically; each client derives its own controls via myTurn.
-  var SEAT_AGNOSTIC={sdDone:1};
+  var SEAT_AGNOSTIC={adv:1,end:1,sdDone:1};
   window.ruApplyForeignAction=function(a){ var g=G_(); if(!g||!a) return false;
     if(SEAT_AGNOSTIC[a.t]){ try{ window.ruApplyAction(a); }catch(e){ console.error('[net] foreign apply (canonical)',e,a); } if(window.renderAll){ try{ renderAll(); }catch(e){} } return true; }
     swapSeats(g); try{ window.ruApplyAction(a); }catch(e){ console.error('[net] foreign apply',e,a); } swapSeats(g); if(window.renderAll){ try{ renderAll(); }catch(e){} } return true; };

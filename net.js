@@ -12,14 +12,25 @@
                 clientId:null, lastConnect:null, reconnectTimer:null, reconnectTries:0, intentionalClose:false };
   var opts = { pCls:'light', aCls:'inferno' };
 
-  // Stable per-browser id so a dropped/reloaded player reclaims their SAME seat (the server holds it during a
-  // grace window and replays the action log so they catch up to the live state).
+  // Stable per-tab id so a dropped/reloaded tab reclaims its SAME seat, while a second live tab from the same
+  // browser profile can still join as the other player instead of stealing the first seat.
   function clientId(){
     if (state.clientId) return state.clientId;
-    var id = null;
-    try { id = localStorage.getItem('ru_client_id'); } catch(e){}
-    if (!id) { id = 'c-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); try { localStorage.setItem('ru_client_id', id); } catch(e){} }
-    state.clientId = id; return id;
+    var browserId = null, tabId = null;
+    try { browserId = localStorage.getItem('ru_browser_id') || localStorage.getItem('ru_client_id'); } catch(e){}
+    if (!browserId) {
+      browserId = 'b-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      try { localStorage.setItem('ru_browser_id', browserId); } catch(e){}
+    } else {
+      try { localStorage.setItem('ru_browser_id', browserId); } catch(e){}
+    }
+    try { tabId = sessionStorage.getItem('ru_tab_client_id'); } catch(e){}
+    if (!tabId) {
+      tabId = 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      try { sessionStorage.setItem('ru_tab_client_id', tabId); } catch(e){}
+    }
+    state.clientId = String(browserId + '|' + tabId).slice(0, 64);
+    return state.clientId;
   }
 
   function log2(m){ try { (window.log ? window.log : console.log)('[net] ' + m, 'info'); } catch(e){ try{ console.log('[net]', m); }catch(_){} } }
