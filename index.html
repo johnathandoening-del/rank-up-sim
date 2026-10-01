@@ -456,9 +456,8 @@ function mkSide(pfx,cls){
   return guardRankZone(side);
 }
 // Side-id -> {controller, deckLabel, nameLabel} for whichever sides exist in the current match.
-// Offline keeps the original single-human setup. Online uses canonical seats: player = Player 1,
-// ai = Player 2. The old "ai" key is still the DOM/engine slot name, but occupied online seats are
-// human-controlled unless they are explicitly marked as bots.
+// Offline keeps the original single-human setup. Online labels occupied seats as Player 1 / Player 2
+// and derives human/bot control from seat metadata, not from the engine storage key.
 function sideChrome(sideId){
   if(sideId==='player')return {elId:'pl-name',fieldId:'pl-field',zonePrefix:'pl'};
   if(sideId==='ai2')return {elId:'ai2-name',fieldId:'ai2-field',zonePrefix:'ai2'};
@@ -692,11 +691,11 @@ function initGame(){
   window.ruSeedGame(_gameSeed);
   var sideOrder, firstTurn, clsFor, buildOrder=null;
   if(netCfg){
-    // SHARED-IDENTITY: every client builds the IDENTICAL game \u2014 'player'=seat0, 'ai'=seat1, both classes
-    // from the room, canonical turn order. This is byte-for-byte the same on every client (no mirror), so
-    // the engine's player/ai asymmetries are identical everywhere and the clients can never desync. Only
-    // G._localSeat (which seat THIS client drives) differs per client \u2014 used for POV + input routing, not
-    // for state. Actions are tagged by acting seat and applied by tag (player\u2192ruApplyAction, ai\u2192foreign).
+    // SHARED-IDENTITY: every client builds the IDENTICAL game from room-provided Player 1 / Player 2 classes
+    // and canonical turn order. This is byte-for-byte the same on every client (no mirror), so the engine's
+    // two-seat asymmetries are identical everywhere and the clients can never desync. Only G._localSeat
+    // (which seat THIS client drives) differs per client \u2014 used for POV + input routing, not for state.
+    // Actions are tagged by online seat and applied by tag.
     var myIdx=netCfg.mySeat|0;
     try{ pCls=netCfg.seat0Class; }catch(e){} try{ aCls=netCfg.seat1Class; }catch(e){}
     sideOrder=['player','ai'];
@@ -2608,10 +2607,10 @@ function beginPhaseBase(ph){
   const isP=G.turn==='player';
   // ONLINE: either seat can be the local human. "myTurn" = it is THIS client's seat that is active, so
   // this client shows the interactive controls/prompts; the other client shows nothing and waits, staying
-  // in lockstep via relayed actions (its AI auto-play is suppressed by aiDo's net guard). Solo/vs-bot keeps
-  // the original behaviour (myTurn === isP), where the 'player' seat is the human and 'ai' auto-plays.
+  // in lockstep via relayed actions. Solo/vs-bot keeps the original behaviour (myTurn === isP), where the
+  // first seat is the human and the opponent auto-plays.
   const netLive=!!(typeof G!=='undefined'&&G&&G._netMode);
-  // "myTurn" must reflect the CANONICAL turn, not G.turn as-seen: a seat-1 action reaches beginPhase inside
+  // "myTurn" must reflect the CANONICAL turn, not G.turn as-seen: a Player 2 action reaches beginPhase inside
   // the foreign-apply swap, where G.turn is toggled. Undo that toggle when _foreignSwapped so G._localSeat
   // (a fixed per-client id that never swaps) is compared to the real active seat.
   const _canonTurn=(netLive&&G._foreignSwapped)?(G.turn==='player'?'ai':(G.turn==='ai'?'player':G.turn)):G.turn;
@@ -3435,7 +3434,7 @@ function doSD(cardId,isFirstTurn){
   // Solo: switching the last card auto-advances. Online: never auto-advance here (doSD runs under the
   // foreign-apply seat swap; beginPhase must stay on canonical state) — the owner clicks Done → 'sdDone'.
   if(!b.must.length&&!b.can.length&&isFirstTurn&&!(G&&G._netMode)){closeModal();G.mode='normal';beginPhase('promotion');return;}
-  // Refresh the modal list. When this doSD is running INSIDE a foreign-apply seat swap (the seat-1 owner
+  // Refresh the modal list. When this doSD is running INSIDE a foreign-apply seat swap (the Player 2 owner
   // driving their own switchdraw online), defer to a canonical tick so the POV-aware rebuild targets the
   // right seat and nothing from the swap-unwind stomps it. Otherwise rebuild in place.
   if(G&&G._netMode&&G._foreignSwapped) setTimeout(()=>ruRefreshSwitchdrawList(isFirstTurn),0);
@@ -4695,14 +4694,14 @@ window.resolveAtk=resolveAtk;
 // [Issue 3] Flattened the aiDo -> aiDoL5 -> ... -> aiDoL1 -> aiDoBase wrap-chain (7 functions, each
 // called exactly once by the next, every layer a guard-then-tail-call) into this single function.
 // The guard order is preserved exactly, and aiDoL1's error-recovery + 5.2s timeout safety net is kept
-// (per the reliability-cluster decision). Only the 'ai' seat runs this legacy path; 'ai2' and 1v1v1
-// 'ai' are routed to ru135RunBotSide up top.
+// (per the reliability-cluster decision). Only the two-player bot opponent runs this legacy path; radial
+// bot seats are routed to ru135RunBotSide up top.
 function aiDo(ph){
-  // Online mirrored-local: the 'ai' seat is a REMOTE HUMAN (driven by relayed foreign actions), so the
+  // Online: the opponent seat is a REMOTE HUMAN (driven by relayed foreign actions), so the
   // local AI must never act. This single choke point stops every AI dispatch/watchdog in net mode.
   if(typeof G!=='undefined' && G && G._netMode) return;
-  // Engine selection for a bot turn. 1v1v1 (>=3 seats) sends BOTH ai and ai2 to the seat-generic
-  // ru135RunBotSide engine; anything that isn't the 'ai' seat ('ai2') always does; 2-player 'ai'
+  // Engine selection for a bot turn. 1v1v1 (>=3 seats) sends every bot opponent to the seat-generic
+  // ru135RunBotSide engine; non-primary bot seats always use it; the two-player bot opponent
   // falls through to the legacy dispatch below.
   var is3Way=!!(G&&G.sideOrder&&G.sideOrder.length>=3);
   if(G&&G.turn&&G.turn!=='player'&&!G.gameOver){
@@ -8886,7 +8885,7 @@ function finishSwitchdraw(isFirstTurn){
 }
 window.finishSwitchdraw=finishSwitchdraw;
 // Run fn with the LOCAL seat mapped to G.player, so switchdraw (which is authored around G.player) shows
-// and edits the correct hand when this client controls the 'ai' seat online. Mirrors renderAll's POV swap.
+// and edits the correct hand when this client controls Player 2 online. Mirrors renderAll's POV swap.
 function ruWithLocalPOV(fn){
   var pov=!!(typeof G!=='undefined'&&G&&G._netMode&&((G._localSeat==='ai')!==!!G._foreignSwapped));
   if(pov){var t=G.player;G.player=G.ai;G.ai=t;G.turn=(G.turn==='player')?'ai':((G.turn==='ai')?'player':G.turn);}
@@ -23233,9 +23232,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function pulse(){
     try{
       // NEVER time out a HUMAN-controlled Battle Phase. This watchdog is only a freeze-guard for a genuinely
-      // stuck local BOT. Online the 'ai' seat is a remote human (and this global timer also runs on the
+      // stuck local BOT. Online the opponent seat is a remote human (and this global timer also runs on the
       // opponent's client, so firing it there would desync), and isHumanSeat('ai') is true in net mode — so it
-      // is disabled entirely online, and for any human-driven 'ai' seat. Only a real bot's battle can be nudged.
+      // is disabled entirely online, and for any human-driven opponent seat. Only a real bot's battle can be nudged.
       var isNet = !!G._netMode;
       var aiIsBot = !(window.isHumanSeat ? window.isHumanSeat('ai') : false);   // false online (human), true solo
       if(typeof G === 'undefined' || !G || G.gameOver || G.turn !== 'ai' || G.phase !== 'battle' || isNet || !aiIsBot){
