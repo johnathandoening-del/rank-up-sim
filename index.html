@@ -9519,6 +9519,18 @@ ADEFS['Seven Heaven']={
   }
   window.findAmalgamationOptionsAI1=findAmalgamationOptions;
   function restoreRankAfterMaterial(p){if(p.rankZone)return;if(p.bank.length)p.rankZone=p.bank.shift();else p.rankZone=makeStart('amalg-rz-'+uid());}
+  function canonicalOnlineOwner(who){
+    if(G&&G._netMode&&G._localActor&&G._localSeat&&who==='player')return G._localSeat;
+    if(G&&G._netMode&&G._localSeat==='ai'&&!G._foreignSwapped){
+      if(who==='player')return 'ai';
+      if(who==='ai')return 'player';
+    }
+    return who;
+  }
+  function localOwnsAmalgSeat(who){
+    if(!(G&&G._netMode))return who==='player'&&G.turn==='player';
+    return !!(G._localSeat&&G._localSeat===who&&G.turn===who);
+  }
   function findAmalgamationMaterialById(p,id){
     if(!p||!id)return null;
     const handIdx=(p.hand||[]).findIndex(c=>c&&c.id===id);
@@ -9577,6 +9589,7 @@ ADEFS['Seven Heaven']={
   }
   window.performAmalgamationAI1=performAmalgamation;
   function openAmalgamationMenu(who){
+    who=canonicalOnlineOwner(who);
     const opts=findAmalgamationOptions(who);
     if(!opts.length){openModal('Amalgamation Rank Up',`<p>No legal Amalgamation is currently available.</p><p style="color:var(--text-dim);font-size:.78rem;">You need three face-up Battlefield Numerals with the same value that match an Evolution in your Δ Deck.</p>`,[{label:'Close',fn:()=>closeModal()}]);return;}
     let body=`<p style="font-size:.8rem;color:var(--text-dim);">Choose an Amalgamation from your Δ Deck. The selected three Battlefield Numerals become its <strong>Elements</strong>.</p><div style="max-height:330px;overflow-y:auto;">`;
@@ -9584,10 +9597,13 @@ ADEFS['Seven Heaven']={
     body+=`</div>`;
     const btns=opts.map((o,i)=>({label:`Synthesize ${o.evo.name}`,cls:'mb-skill',fn:()=>{
       closeModal();
-      if(G&&G._netMode&&!G._replaying&&who==='player'&&G.turn===who&&window.ruRec){
-        window.ruRec({t:'amalgRank',evoCardId:o.evo.id,evoId:o.evo.baseId||o.evo.id,elementIds:o.combo.map(x=>x.card&&x.card.id).filter(Boolean)});
+      const action={t:'amalgRank',evoCardId:o.evo.id,evoId:o.evo.baseId||o.evo.id,elementIds:o.combo.map(x=>x.card&&x.card.id).filter(Boolean)};
+      if(G&&G._netMode&&!G._replaying&&localOwnsAmalgSeat(who)&&window.ruRec){
+        window.ruRec(action);
       }
-      performAmalgamation(who,o.ei,o.combo);
+      if(!performAmalgamationByIds(who,action.evoId,action.elementIds,action.evoCardId)){
+        performAmalgamation(who,o.ei,o.combo);
+      }
     }}));btns.push({label:'Cancel',fn:()=>closeModal()});
     openModal('Amalgamation Rank Up',body,btns);
     const m=el('modal');if(m)m._ruNoModalRelay=true;
@@ -9604,16 +9620,19 @@ ADEFS['Seven Heaven']={
   window.renderDeltaZoneRA2=renderDeltaZone;
   const _deltaZoneClickV114=window.deltaZoneClick||deltaZoneClick;
   window.deltaZoneClick=deltaZoneClick=function(who){
+    const renderedWho=who;
+    who=canonicalOnlineOwner(who);
     if(G.allowEvolutions===false){openModal('Δ Zone Disabled',`<p>Evolution play is disabled for this match. Enable <strong>Allow Evolutions</strong> before starting a match to use the Δ Zone.</p>`,[{label:'Close',fn:()=>closeModal()}]);return;}
     const p=G[who],card=p.delta&&p.delta[0];
-    if(who==='player'&&G.mode==='standdown'){ if(!card){log('No \u0394 Zone card to Stand Down.');cancelAll();return;} p.discard.push(card);p.delta=[];log('You Stand Down '+card.name+' from the \u0394 Zone.');G.mode='normal';clearHL();hide('btn-can');renderAll();return; }
-    if(who==='player'&&G.turn==='player'){
+    const localActive=localOwnsAmalgSeat(who);
+    if(localActive&&G.mode==='standdown'){ if(!card){log('No \u0394 Zone card to Stand Down.');cancelAll();return;} p.discard.push(card);p.delta=[];log('You Stand Down '+card.name+' from the \u0394 Zone.');G.mode='normal';clearHL();hide('btn-can');renderAll();return; }
+    if(localActive){
       if(G.mode==='atk'&&card){if(card.canAttack===false||atkLeft(card)<=0||p.attacksUsed[card.id]){log(`${card.name} cannot attack right now.`,'info');return;}G.selAttacker={zone:'delta',card};G.mode='addon';G._addons=[];clearHL();hlAddon('delta');hlTgt();setHint(`${card.name} selected. Click target to attack, or blue Addon sources first.`);renderAll();return;}
-      if(G.mode==='addon'){const zid='pl-delta';if(el(zid).classList.contains('ha')){G._addons=G._addons||[];G._addons.push({zone:'delta',card});clearHL();hlAddon(G.selAttacker.zone);hlTgt();renderAll();return;}}
+      if(G.mode==='addon'){const zid=sideZoneId(renderedWho,'delta');if(el(zid).classList.contains('ha')){G._addons=G._addons||[];G._addons.push({zone:'delta',card});clearHL();hlAddon(G.selAttacker.zone);hlTgt();renderAll();return;}}
       if(card){showCardModal(card);return;}
-      openAmalgamationMenu('player');return;
+      openAmalgamationMenu(who);return;
     }
-    if(who!=='player'&&(G.mode==='addon'||G.mode==='atk')){const z=el(sideZoneId(who,'delta'));if(z&&z.classList.contains('ht')&&card){let addonNP=0;if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=(a.card.currentNP||a.card.numeral||0);G.player.attacksUsed[a.card.id]=true;a.card.attacksLeft=0;});G._addons=[];}resolveAtk('player',G.selAttacker.zone,who,'delta',addonNP);const att=zoneCard(G.player,G.selAttacker.zone);if(att){att.attacksLeft=Math.max(0,atkLeft(att)-1);if(att.attacksLeft<=0)G.player.attacksUsed[att.id]=true;}G.selAttacker=null;G.mode='atk';clearHL();hlSel();renderAll();return;}}
+    if(who!=='player'&&(G.mode==='addon'||G.mode==='atk')){const z=el(sideZoneId(renderedWho,'delta'));if(z&&z.classList.contains('ht')&&card){let addonNP=0;if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=(a.card.currentNP||a.card.numeral||0);G.player.attacksUsed[a.card.id]=true;a.card.attacksLeft=0;});G._addons=[];}resolveAtk('player',G.selAttacker.zone,who,'delta',addonNP);const att=zoneCard(G.player,G.selAttacker.zone);if(att){att.attacksLeft=Math.max(0,atkLeft(att)-1);if(att.attacksLeft<=0)G.player.attacksUsed[att.id]=true;}G.selAttacker=null;G.mode='atk';clearHL();hlSel();renderAll();return;}}
     if(card)showCardModal(card);else _deltaZoneClickV114(who);
   };
 
