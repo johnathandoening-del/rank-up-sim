@@ -23181,6 +23181,7 @@ function ruComputeMirror(){
   if(g._spectator) return {mirror:true, name:ruPromptDeciderName()};   // watchers can't act on any prompt
   if(g._promptOwner) return {mirror:!g._promptOwner._isLocalHuman, name:(g._promptOwner._netName||'your opponent')};
   if(g._promptSeat) return {mirror:!isLocalHumanSeat(g._promptSeat), name:(window.sideNameLabel?sideNameLabel(g._promptSeat):'your opponent')};
+  if(g._localActor) return {mirror:false,name:null};
   if(g._replaying) return {mirror:!isLocalHumanSeat(g.turn), name:(window.sideNameLabel?sideNameLabel(g.turn):'your opponent')};
   return {mirror:false,name:null};
 }
