@@ -9519,6 +9519,38 @@ ADEFS['Seven Heaven']={
   }
   window.findAmalgamationOptionsAI1=findAmalgamationOptions;
   function restoreRankAfterMaterial(p){if(p.rankZone)return;if(p.bank.length)p.rankZone=p.bank.shift();else p.rankZone=makeStart('amalg-rz-'+uid());}
+  function findAmalgamationMaterialById(p,id){
+    if(!p||!id)return null;
+    const handIdx=(p.hand||[]).findIndex(c=>c&&c.id===id);
+    if(handIdx!==-1)return {zone:'hand',fromHand:true,card:p.hand[handIdx]};
+    const zones=[
+      {zone:'rank',slot:'rankZone'},
+      {zone:'left-flank',slot:'leftFlank'},
+      {zone:'right-flank',slot:'rightFlank'},
+      {zone:'rear-flank',slot:'rearFlank'}
+    ];
+    for(let i=0;i<zones.length;i++){
+      const z=zones[i],card=p[z.slot];
+      if(card&&card.id===id)return {zone:z.zone,slot:z.slot,card};
+    }
+    return null;
+  }
+  function performAmalgamationByIds(who,evoId,elementIds,evoCardId){
+    const p=G&&G[who];if(!p||(!evoId&&!evoCardId)||!Array.isArray(elementIds)||elementIds.length!==3)return false;
+    if(p.delta&&p.delta.length)return false;
+    let evoIndex=(p.evolutions||[]).findIndex(e=>e&&evoCardId&&e.id===evoCardId);
+    if(evoIndex<0)evoIndex=(p.evolutions||[]).findIndex(e=>e&&(e.id===evoId||e.baseId===evoId));
+    if(evoIndex<0)return false;
+    const combo=[];
+    for(let i=0;i<elementIds.length;i++){
+      const hit=findAmalgamationMaterialById(p,elementIds[i]);
+      if(!hit)return false;
+      combo.push(hit);
+    }
+    performAmalgamation(who,evoIndex,combo);
+    return true;
+  }
+  window.performAmalgamationByIdsAI1=performAmalgamationByIds;
   function performAmalgamation(who,evoIndex,combo){
     const p=G[who];const evo=p.evolutions.splice(evoIndex,1)[0];if(!evo)return;
     // Material combos come from two sources with different key shapes: findAmalgamationOptions
@@ -9550,8 +9582,15 @@ ADEFS['Seven Heaven']={
     let body=`<p style="font-size:.8rem;color:var(--text-dim);">Choose an Amalgamation from your Δ Deck. The selected three Battlefield Numerals become its <strong>Elements</strong>.</p><div style="max-height:330px;overflow-y:auto;">`;
     opts.forEach((o,i)=>{body+=`<div class="delta-list-card"><strong>${o.evo.name}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">Requirement: ${o.evo.requirements}</span><br><span style="font-size:.72rem;">Elements: ${o.combo.map(x=>x.card.name+' ['+x.zone+']').join(', ')}</span></div>`;});
     body+=`</div>`;
-    const btns=opts.map((o,i)=>({label:`Synthesize ${o.evo.name}`,cls:'mb-skill',fn:()=>{closeModal();performAmalgamation(who,o.ei,o.combo);}}));btns.push({label:'Cancel',fn:()=>closeModal()});
+    const btns=opts.map((o,i)=>({label:`Synthesize ${o.evo.name}`,cls:'mb-skill',fn:()=>{
+      closeModal();
+      if(G&&G._netMode&&!G._replaying&&who==='player'&&G.turn===who&&window.ruRec){
+        window.ruRec({t:'amalgRank',evoCardId:o.evo.id,evoId:o.evo.baseId||o.evo.id,elementIds:o.combo.map(x=>x.card&&x.card.id).filter(Boolean)});
+      }
+      performAmalgamation(who,o.ei,o.combo);
+    }}));btns.push({label:'Cancel',fn:()=>closeModal()});
     openModal('Amalgamation Rank Up',body,btns);
+    const m=el('modal');if(m)m._ruNoModalRelay=true;
   }
 
   function playDeltaAnimation(who){const z=el(sideZoneId(who,'delta'));if(!z)return;z.classList.remove('delta-summon');void z.offsetWidth;z.classList.add('delta-summon');setTimeout(()=>z.classList.remove('delta-summon'),1100);}
@@ -25032,7 +25071,7 @@ window.ruSpecPace=function(base){
   // BEFORE record/relay also prevents an off-turn no-op from being sent to the opponent (which would apply
   // on their side and desync). View actions (bank/delta/dead/view/skillMenu) and modal/picker responses
   // stay ungated so reactions and browsing work during the opponent's turn.
-  var TURN_GATED={adv:1,end:1,hand:1,promote:1,maxPromote:1,flank:1,relieveHand:1,activateArea:1,playAction:1,sdMode:1,atkMode:1,rvMode:1,sd:1};
+  var TURN_GATED={adv:1,end:1,hand:1,promote:1,maxPromote:1,flank:1,relieveHand:1,activateArea:1,playAction:1,sdMode:1,atkMode:1,rvMode:1,sd:1,amalgRank:1};
   function offTurnBlocked(a){ var g=G_();
     if(!(g && g._netMode && !g._replaying && a && TURN_GATED[a.t] && g.turn!==g._localSeat)) return false;
     if(a.t==='atkMode' && g._counterattackDuringAI && g.phase==='battle') return false;
@@ -25101,7 +25140,7 @@ window.ruSpecPace=function(base){
           // Switchdraw, game-over/rematch, and pure-VIEW modals (Evos/Δ Deck/zone browses) are all LOCAL — run
           // their clicks locally and never relay them (a view is suppressed on the opponent, so relaying its
           // Close could cross-fire whatever modal they DO have open).
-          if(g&&(g.mode==='switchdraw'||g.gameOver||(mmv&&mmv._ruViewOnly))){ return f?f.call(this,ev):undefined; }
+          if(g&&(g.mode==='switchdraw'||g.gameOver||(mmv&&(mmv._ruViewOnly||mmv._ruNoModalRelay)))){ return f?f.call(this,ev):undefined; }
           // A mirror modal (see below) is a read-only copy of the OTHER player's decision prompt: block real
           // (non-replay) clicks — the choice arrives as the owner's relayed {modal,i} (which runs while
           // _replaying, so it passes this guard).
@@ -25186,6 +25225,10 @@ window.ruSpecPace=function(base){
         case 'amalgSkill': {
           var fa=playerCardById(g,a.id,'delta');
           if(fa&&window.startAmalgamationSkill) window.startAmalgamationSkill('player',fa.card);
+          break;
+        }
+        case 'amalgRank': {
+          if(window.performAmalgamationByIdsAI1) window.performAmalgamationByIdsAI1('player',a.evoId,a.elementIds||[],a.evoCardId);
           break;
         }
         case 'areaFx': if(window.runDeadzoneAreaEffect) window.runDeadzoneAreaEffect('player',a.id,a.i); break;
