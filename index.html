@@ -8807,6 +8807,7 @@ function ruWithLocalPOV(fn){
 }
 window.ruWithLocalPOV=ruWithLocalPOV;
 function openSwitchdrawModal(isFirstTurn){
+  if(G&&G._netMode&&G.phase!=='draw')return;
   if(G&&G.ruMode==='ai-vs-ai'&&G.turn==='player'){
     ru135BotResolveSwitchdraw('player',!!isFirstTurn,true);
     return;
