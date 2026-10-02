@@ -3356,7 +3356,10 @@ function advPhase(){if(!localMayDriveTurnAction())return;const i=PH.indexOf(G.ph
 // human's turn). Use this everywhere an AI/battle path does setTimeout(()=>beginPhase(ph),delay).
 function phaseAfter(ph, delay){
   var w = (typeof G!=='undefined' && G) ? G.turn : null;
-  return setTimeout(function(){ if(typeof G!=='undefined' && G && !G.gameOver && G.turn===w) beginPhase(ph); }, delay);
+  return setTimeout(function(){
+    if(typeof G!=='undefined' && G && G._netMode) return;
+    if(typeof G!=='undefined' && G && !G.gameOver && G.turn===w) beginPhase(ph);
+  }, delay);
 }
 // End Turn — skip the rest of the player's phases. Goes through the End Phase so end-of-turn effects still run.
 function endTurnNow(){
@@ -5122,7 +5125,7 @@ function _aiL8(ph){
 function _ai(ph){
   // Hard invariant / last line of defense: the legacy AI turn logic runs ONLY on the AI's turn. Without
   // this, a deferred or stale call would advance the AI mid-way through the human's turn.
-  if(!G||G.gameOver||G.turn!=='ai')return;
+  if(!G||G.gameOver||G._netMode||G.turn!=='ai')return;
   if(ph==='battle'&&G&&G._ru157NoAttackThisTurn){window.safeLogAI9('Blizzard 6: AI cannot attack this turn.','info');return beginPhase('end');}
   if(ph==='battle'&&attackLocked('ai')){window.safeLogAI9('Frozen Tundra: AI cannot declare attacks this turn.','info');return beginPhase('end');}
   return _aiL8.apply(this,arguments);
@@ -11570,11 +11573,11 @@ function useRetL2(idx,card){
   window.ruHumanPromptOpen=ruHumanPromptOpen;
   function ruPhaseAfter(ph){return ph==='promotion'?'rally':ph==='rally'?'main':ph==='main'?'standby':ph==='standby'?'battle':ph==='battle'?'end':ph==='draw'?'promotion':'end';}
   function ruSafeAdvanceAI(ph,why){
-    if(!G||G.gameOver||G.turn!=='ai')return;
+    if(!G||G.gameOver||G._netMode||G.turn!=='ai')return;
     if(ruHumanPromptOpen())return;
     const next=ruPhaseAfter(ph||G.phase);
     if(typeof log==='function')log(`Turn spine guard: AI ${ph||G.phase} recovered safely${why?` (${why})`:''}.`,'info');
-    setTimeout(()=>{if(G&&!G.gameOver&&G.turn==='ai'&&!ruHumanPromptOpen())beginPhase(next);},0);
+    setTimeout(()=>{if(G&&!G.gameOver&&!G._netMode&&G.turn==='ai'&&!ruHumanPromptOpen())beginPhase(next);},0);
   }
   window.ruSafeAdvanceAI=ruSafeAdvanceAI;
 
@@ -14248,7 +14251,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   window.exitMatchNoResult=exitMatchNoResult;
   function maybeBotSurrender(w){
-    if(!G||G.gameOver)return false;
+    if(!G||G.gameOver||G._netMode)return false;
     const p=side(w),o=side(opp(w));if(!p||p._ru135Conceded)return false;
     const hopeless=(p.mp<=2&&o.mp>=18&&p.cas>=9)||(p.cas>=13&&o.cas<=8&&p.mp<o.mp)||(p.deck.length<=1&&o.deck.length>8&&p.mp<8);
     if(!hopeless)return false;
@@ -14700,6 +14703,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     next();
   }
   function ru135RunBotSide(w,ph){
+    if(G&&G._netMode)return;
     // Spectator-speed throttle: delay the real dispatch when watch-mode speed is slowed down.
     if(G&&G.ruMode==='ai-vs-ai'){
       const speed=Math.max(0.01,Math.min(1,Number(window.RU_SPECTATOR_SPEED)||1));
