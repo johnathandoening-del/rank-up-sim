@@ -8847,7 +8847,7 @@ function renderSwitchdrawModal(isFirstTurn){
     {label:'Switchdraw Action',cls:'mb-skill',fn:()=>ruBulkSwitchdraw(isFirstTurn,false)},
     {label:'Switchdraw All',cls:'mb-skill',fn:()=>ruBulkSwitchdraw(isFirstTurn,true)}
   ]);
-  setTimeout(()=>ruSyncSwitchButtons(isFirstTurn),0);
+  setTimeout(()=>ruWithLocalPOV(function(){ruSyncSwitchButtons(isFirstTurn);}),0);
 }
 // Bulk switchdraw. actionsOnly (Switchdraw Action) switches every Action card (mandatory on turn 1) and
 // KEEPS Area/Rank\u00b3+; includeOptional=true (Switchdraw All) also switches the Area/Rank\u00b3+ cards. Each swap
@@ -8855,14 +8855,18 @@ function renderSwitchdrawModal(isFirstTurn){
 function ruBulkSwitchdraw(isFirstTurn, includeOptional){
   if(includeOptional){
     // switch each currently-optional card once (snapshot ids so a freshly-drawn optional isn't re-switched)
-    ruSwitchBuckets(isFirstTurn).can.slice().forEach(function(c){ if(window.doSD)doSD(c.id,isFirstTurn); });
+    ruWithLocalPOV(function(){ return ruSwitchBuckets(isFirstTurn).can.map(function(c){ return c.id; }); })
+      .forEach(function(id){ if(window.doSD)doSD(id,isFirstTurn); });
   }
   // switch all Action cards; on turn 1 they're mandatory, so loop until none remain (drawn actions included)
   var guard=0;
   while(guard++<60){
-    var m=ruSwitchBuckets(isFirstTurn).must;
-    if(!m.length) break;
-    if(window.doSD)doSD(m[0].id,isFirstTurn);
+    var id=ruWithLocalPOV(function(){
+      var m=ruSwitchBuckets(isFirstTurn).must;
+      return m.length?m[0].id:null;
+    });
+    if(!id) break;
+    if(window.doSD)doSD(id,isFirstTurn);
   }
   if(typeof ruRefreshSwitchdrawList==='function')ruRefreshSwitchdrawList(isFirstTurn);
 }
