@@ -5,13 +5,14 @@
  * never touches this file (online-plan invariant #2). Rules live only in the client engine.
  *
  * Protocol (JSON over WebSocket):
- *   client -> server: {type:'join', room, name, cls, deltaDeck, build, clientId}
+ *   client -> server: {type:'join', room, name, cls, deltaDeck, areaSupport, build, clientId}
  *                     {type:'action', action}         // opaque payload from the client
  *                     {type:'rematch', vote}
  *                     {type:'ping'}
  *   server -> client: {type:'joined', room, seat, seatIdx, players}
  *                     {type:'start'|'resume', seed, seat0Class, seat1Class, name0, name1,
- *                                    seat0DeltaDeck, seat1DeltaDeck, firstSeat, mySeat, log?}
+ *                                    seat0DeltaDeck, seat1DeltaDeck, seat0AreaSupport, seat1AreaSupport,
+ *                                    firstSeat, mySeat, log?}
  *                     {type:'peer', event:'join'|'leave'|'disconnect'|'resume', seat, name, players, graceMs?}
  *                     {type:'action', from, seat, seq, action}   // relayed in total order (also stored for catch-up)
  *                     {type:'rematch-vote'|'rematch-declined', seat, name}
@@ -85,7 +86,7 @@ function newRoom() {
     seed: newSeed(), seq: 0, started: false,
     log: [],                                   // ordered {from, action} for reconnect catch-up
     seatSocket: [null, null],                  // live ws per seat index (null = empty or disconnected)
-    seatMeta:   [null, null],                  // {clientId,name,cls,dd} per seat index (persists across a drop)
+    seatMeta:   [null, null],                  // {clientId,name,cls,dd,as} per seat index (persists across a drop)
     seatGrace:  [null, null],                  // reconnect grace timer per seat index
     rematchVotes: new Set(),                   // seat indexes that voted yes
     spectators: new Set()                      // read-only watchers (no seat) — get the setup + live action stream
@@ -112,6 +113,7 @@ function buildSetup(room, type, includeLog){
     seat0Class: m0.cls || 'light', seat1Class: m1.cls || 'light',
     name0: m0.name || 'Player 1', name1: m1.name || 'Player 2',
     seat0DeltaDeck: m0.dd || [], seat1DeltaDeck: m1.dd || [],
+    seat0AreaSupport: m0.as || null, seat1AreaSupport: m1.as || null,
     firstSeat: room.seed % 2,
     seq: room.seq || 0
   };
@@ -181,7 +183,8 @@ wss.on('connection', (ws) => {
       }
 
       const meta = { clientId: clientId, name: String(msg.name || 'guest').slice(0, 24), cls: String(msg.cls || 'light'),
-                     dd: Array.isArray(msg.deltaDeck) ? msg.deltaDeck.slice(0, 3).map(x => String(x).slice(0, 64)) : [] };
+                     dd: Array.isArray(msg.deltaDeck) ? msg.deltaDeck.slice(0, 3).map(x => String(x).slice(0, 64)) : [],
+                     as: msg.areaSupport ? String(msg.areaSupport).slice(0, 64) : null };
 
       // ── RECONNECT: this clientId already owns a seat here (held open during grace, or a live reload) ──
       let seatIdx = -1;

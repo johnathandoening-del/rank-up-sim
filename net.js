@@ -61,12 +61,14 @@
     try { if (typeof closeModal === 'function') closeModal(); } catch(e){}   // dismiss any game-over / rematch-waiting modal before the fresh game builds
     state.seed = cfg.seed; state.mySeat = cfg.mySeat; state.name0 = cfg.name0; state.name1 = cfg.name1; state.active = true; state.spectator = !!cfg.spectator; state.applied = 0; state.lastSeq = 0;
     window.RU_NET_CONFIG = { seed: cfg.seed, mySeat: cfg.mySeat, seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat,
-      seat0DeltaDeck: cfg.seat0DeltaDeck || [], seat1DeltaDeck: cfg.seat1DeltaDeck || [] };
+      seat0DeltaDeck: cfg.seat0DeltaDeck || [], seat1DeltaDeck: cfg.seat1DeltaDeck || [],
+      seat0AreaSupport: cfg.seat0AreaSupport || null, seat1AreaSupport: cfg.seat1AreaSupport || null };
     if (typeof startGame === 'function') startGame();
     window.RU_NET_CONFIG = null;
     // Stash the two synced Δ Decks on G so installDeltaDecks (which runs ~80ms later, after RU_NET_CONFIG is
     // cleared) builds identical evolutions for BOTH players on every client, keyed by engine-side board id.
     try { if (typeof G !== 'undefined' && G) G._netDeltaDecks = { player: cfg.seat0DeltaDeck || [], ai: cfg.seat1DeltaDeck || [] }; } catch(e){}
+    try { if (typeof G !== 'undefined' && G) G._netAreaSupports = { player: cfg.seat0AreaSupport || null, ai: cfg.seat1AreaSupport || null }; } catch(e){}
     // Attach the real player names to the seat data so the HUD shows them (and they follow the POV swap).
     // Also flag THIS device's own seat object so logs/prompts can say "You"/"your" for the local player and
     // the name for everyone else — the flag rides on the seat OBJECT, so it stays correct through the POV
@@ -242,8 +244,9 @@
         // Send our Δ Deck so the server can relay both players' decks — evolutions must be identical on every
         // client or an Amalgamation Rank Up desyncs (each side would build different evolution cards).
         var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);
+        var areaSupport = window.RU_PLAYER_AREA_SUPPORT || null;
         // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:myClass, deltaDeck:dd, areaSupport:areaSupport, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
       ws.onmessage = function(ev){ try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
         state.connected = false; log2('disconnected');

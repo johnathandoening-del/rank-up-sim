@@ -528,7 +528,7 @@ function sideZoneId(who,suffix){return ((window.sideMeta?sideMeta(who).zonePrefi
 window.sideZoneId=sideZoneId;
 function ruVisibleOwnerToCanonical(who){
   if(!(G&&G._netMode))return who;
-  if(G._localActor&&G._localSeat&&who==='player')return G._localSeat;
+  if(G._localActor&&G._localSeat&&who==='player'&&!G._foreignSwapped)return G._localSeat;
   if(G._localSeat==='ai'&&!G._foreignSwapped){
     if(who==='player')return 'ai';
     if(who==='ai')return 'player';
@@ -24857,7 +24857,7 @@ window.ruSpecPace=function(base){
     if(G.allowEvolutions===false)return; // Area Support is a Δ Deck feature
     (G.sideOrder||['player','ai']).forEach(function(w){
       if(!G[w])return;
-      var id=(w==='player')?window.RU_PLAYER_AREA_SUPPORT:botAreaSupportChoice(w);
+      var id=(G._netMode&&G._netAreaSupports)?(G._netAreaSupports[w]||null):((w==='player')?window.RU_PLAYER_AREA_SUPPORT:botAreaSupportChoice(w));
       // remove any prior area-support card first (so re-install/deselect reverts cleanly)
       ['deck','hand','discard','deadzone','bank'].forEach(function(z){ if(Array.isArray(G[w][z]))G[w][z]=G[w][z].filter(function(c){return !isAreaSupportCard(c);}); });
       if(id&&asById(id)){
@@ -25188,7 +25188,10 @@ window.ruSpecPace=function(base){
     var g=G_(); if(!g)return false;
     return ['atk','addon','standdown','chiefpick','oppzonepick'].indexOf(g.mode)!==-1;
   }
-  function shouldRelayDeltaClick(who){ var g=G_(); return !!(g&&g.mode==='standdown'&&who==='player'); }
+  function shouldRelayDeltaClick(who){
+    var g=G_(); if(!g)return false;
+    return who==='player'&&['standdown','atk','addon'].indexOf(g.mode)!==-1;
+  }
   // Turn-gate: online, only the seat whose turn it is may START one of these turn-based actions. Blocking
   // BEFORE record/relay also prevents an off-turn no-op from being sent to the opponent (which would apply
   // on their side and desync). View actions (bank/delta/dead/view/skillMenu) and modal/picker responses
