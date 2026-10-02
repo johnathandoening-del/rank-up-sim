@@ -9549,7 +9549,9 @@ ADEFS['Seven Heaven']={
         var ids=G._netDeltaDecks[w]||[];
         G[w].evolutions=ids.map(makeAmalgamation).filter(Boolean);
       });
-      if(G.player.evolutions.length)log(`Your Δ Deck loaded: ${G.player.evolutions.map(c=>c.name).join(', ')}.`,'info');
+      const localW=(window.ruLocalSeatId?ruLocalSeatId():'player');
+      const localSide=G[localW]||G.player;
+      if(localSide&&localSide.evolutions&&localSide.evolutions.length)log(`Your Δ Deck loaded: ${localSide.evolutions.map(c=>c.name).join(', ')}.`,'info');
       renderAll();
       return;
     }
@@ -9668,8 +9670,8 @@ ADEFS['Seven Heaven']={
     playDeltaAnimation(who);checkWin();renderAll();
   }
   window.performAmalgamationAI1=performAmalgamation;
-  function openAmalgamationMenu(who){
-    who=canonicalOnlineOwner(who);
+  function openAmalgamationMenu(who,alreadyCanonical){
+    if(!alreadyCanonical)who=canonicalOnlineOwner(who);
     const opts=findAmalgamationOptions(who);
     if(!opts.length){openModal('Amalgamation Rank Up',`<p>No legal Amalgamation is currently available.</p><p style="color:var(--text-dim);font-size:.78rem;">You need three face-up Battlefield Numerals with the same value that match an Evolution in your Δ Deck.</p>`,[{label:'Close',fn:()=>closeModal()}]);return;}
     let body=`<p style="font-size:.8rem;color:var(--text-dim);">Choose an Amalgamation from your Δ Deck. The selected three Battlefield Numerals become its <strong>Elements</strong>.</p><div style="max-height:330px;overflow-y:auto;">`;
@@ -9677,7 +9679,7 @@ ADEFS['Seven Heaven']={
     body+=`</div>`;
     const btns=opts.map((o,i)=>({label:`Synthesize ${o.evo.name}`,cls:'mb-skill',fn:()=>{
       closeModal();
-      const action={t:'amalgRank',evoCardId:o.evo.id,evoId:o.evo.baseId||o.evo.id,elementIds:o.combo.map(x=>x.card&&x.card.id).filter(Boolean)};
+      const action={t:'amalgRank',who:who,evoCardId:o.evo.id,evoId:o.evo.baseId||o.evo.id,elementIds:o.combo.map(x=>x.card&&x.card.id).filter(Boolean)};
       if(G&&G._netMode&&!G._replaying&&localOwnsAmalgSeat(who)&&window.ruRec){
         window.ruRec(action);
       }
@@ -9710,7 +9712,7 @@ ADEFS['Seven Heaven']={
       if(G.mode==='atk'&&card){if(card.canAttack===false||atkLeft(card)<=0||p.attacksUsed[card.id]){log(`${card.name} cannot attack right now.`,'info');return;}G.selAttacker={zone:'delta',card};G.mode='addon';G._addons=[];clearHL();hlAddon('delta');hlTgt();setHint(`${card.name} selected. Click target to attack, or blue Addon sources first.`);renderAll();return;}
       if(G.mode==='addon'){const zid=sideZoneId(renderedWho,'delta');if(el(zid).classList.contains('ha')){G._addons=G._addons||[];G._addons.push({zone:'delta',card});clearHL();hlAddon(G.selAttacker.zone);hlTgt();renderAll();return;}}
       if(card){showCardModal(card);return;}
-      openAmalgamationMenu(who);return;
+      openAmalgamationMenu(who,true);return;
     }
     if(who!=='player'&&(G.mode==='addon'||G.mode==='atk')){const z=el(sideZoneId(renderedWho,'delta'));if(z&&z.classList.contains('ht')&&card){let addonNP=0;if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=(a.card.currentNP||a.card.numeral||0);G.player.attacksUsed[a.card.id]=true;a.card.attacksLeft=0;});G._addons=[];}resolveAtk('player',G.selAttacker.zone,who,'delta',addonNP);const att=zoneCard(G.player,G.selAttacker.zone);if(att){att.attacksLeft=Math.max(0,atkLeft(att)-1);if(att.attacksLeft<=0)G.player.attacksUsed[att.id]=true;}G.selAttacker=null;G.mode='atk';clearHL();hlSel();renderAll();return;}}
     if(card)showCardModal(card);else _deltaZoneClickV114(who);
@@ -25126,8 +25128,8 @@ window.ruSpecPace=function(base){
   function withLocalActor(fn){ var g=G_(); var prev=g&&g._localActor; if(g)g._localActor=true; try{ return fn(); } finally { var g2=G_(); if(g2)g2._localActor=prev; } }
   window.withLocalActorRU=withLocalActor;
   function handCardById(g,id){ var p=g&&g.player; if(!p||!p.hand)return null; for(var i=0;i<p.hand.length;i++){ if(p.hand[i]&&p.hand[i].id===id)return {idx:i,card:p.hand[i]}; } return null; }
-  function playerCardById(g,id,preferred){
-    var p=g&&g.player;if(!p||!id)return null;
+  function sideCardById(g,who,id,preferred){
+    var p=g&&g[who];if(!p||!id)return null;
     function one(source,card,idx){ return card&&card.id===id?{source:source,card:card,idx:idx}:null; }
     var order=preferred?[preferred]:[];
     ['hand','bank','rank','left-flank','right-flank','rear-flank','delta','discard','deadzone'].forEach(function(s){ if(order.indexOf(s)<0)order.push(s); });
@@ -25144,6 +25146,13 @@ window.ruSpecPace=function(base){
       else if(s==='delta'){ r=one('delta',p.delta&&p.delta[0],0); if(r)return r; }
     }
     return null;
+  }
+  function playerCardById(g,id,preferred){ return sideCardById(g,'player',id,preferred); }
+  function actionOwner(a){
+    var g=G_();
+    if(g&&g._foreignSwapped)return 'player';
+    var w=a&&a.who;
+    return (w&&g&&g[w])?w:'player';
   }
   function shouldRelayExtensionRearChoice(card){
     var g=G_(),p=g&&g.player;if(!g||!p||!card)return false;
@@ -25328,12 +25337,14 @@ window.ruSpecPace=function(base){
           break;
         }
         case 'amalgSkill': {
-          var fa=playerCardById(g,a.id,'delta');
-          if(fa&&window.startAmalgamationSkill) window.startAmalgamationSkill('player',fa.card);
+          var aw=actionOwner(a);
+          var fa=sideCardById(g,aw,a.id,'delta');
+          if(fa&&window.startAmalgamationSkill) window.startAmalgamationSkill(aw,fa.card);
           break;
         }
         case 'amalgRank': {
-          if(window.performAmalgamationByIdsAI1) window.performAmalgamationByIdsAI1('player',a.evoId,a.elementIds||[],a.evoCardId);
+          var rw=actionOwner(a);
+          if(window.performAmalgamationByIdsAI1) window.performAmalgamationByIdsAI1(rw,a.evoId,a.elementIds||[],a.evoCardId);
           break;
         }
         case 'areaFx': if(window.runDeadzoneAreaEffect) window.runDeadzoneAreaEffect('player',a.id,a.i); break;
