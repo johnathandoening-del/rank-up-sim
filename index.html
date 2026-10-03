@@ -183,9 +183,14 @@
 // the random stream, so creating an id never shifts the shuffle/effect sequence. Cosmetic randomness
 // (particles/dust/rain) deliberately stays on Math.random — it's per-client and never touches state.
 (function(){
-  function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; var t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+  // mulberry32 with its state in the open (st.a), so a game's random state can be saved and restored — the AI's
+  // lookahead copies a position, plays a line, and rewinds; and it re-rolls the hidden future instead of knowing it.
+  function mulberry32(a){ var st={a:a|0}; var f=function(){ var a=st.a; a|=0; a=a+0x6D2B79F5|0; st.a=a; var t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; f.st=st; return f; }
   var gameRng=Math.random, aiRng=Math.random, curSeed=0, idCounter=0, seeded=false;
   window.ruSeedGame=function(seed){ seed=(seed>>>0)||1; curSeed=seed; gameRng=mulberry32(seed); aiRng=mulberry32((seed^0x9E3779B9)>>>0); idCounter=0; seeded=true; return seed; };
+  // The complete random state of the game (both streams, the seed, the id counter).
+  window.ruRngState=function(){ return { g:gameRng.st?gameRng.st.a:null, ai:aiRng.st?aiRng.st.a:null, seed:curSeed, id:idCounter, seeded:seeded }; };
+  window.ruRngRestore=function(s){ if(!s)return; curSeed=s.seed; idCounter=s.id; seeded=s.seeded; if(s.g!=null){ gameRng=mulberry32(0); gameRng.st.a=s.g; } if(s.ai!=null){ aiRng=mulberry32(0); aiRng.st.a=s.ai; } };
   window.ruGameSeed=function(){ return curSeed; };
   window.ruIsSeeded=function(){ return seeded; };
   window.ruRand=function(){ return gameRng(); };                                  // shared stream
@@ -5717,7 +5722,7 @@ function renderAllL8(){
   const eng=ruEngineRender();
   if(eng)window.applyZeroOneARA8();
   var r=renderAllL7();
-  if(eng)window.markShadowVersusRA8();
+  window.markShadowVersusRA8();   // paint only (a name-label style), not a rule pass
   return r;
 }
 function renderAllL9(){
@@ -25555,6 +25560,10 @@ window.ruSpecPace=function(base){
   // The common condition: no shared prompt is pending and no skill is in flight.
   window.ruTableClear=function(){ return !window.ruUiBusy()&&!(typeof SF!=='undefined'&&SF); };
   window.ruSettleNow=settleNow;
+  // For the AI's lookahead (headless simulation): how many continuations are waiting, and dropping them when a
+  // simulated line is abandoned and the position is rewound.
+  window.ruSettlePending=function(){ return waits.length; };
+  window.ruSettleReset=function(){ waits=[]; if(waitTimer){ clearTimeout(waitTimer); waitTimer=null; } };
   // Render-time engine passes online (Area passives, entry observers, …): just before an input is recorded / applied,
   // right after it, and after each settled continuation — the same points on every screen (see ruEngineRender).
   function checkpoint(){

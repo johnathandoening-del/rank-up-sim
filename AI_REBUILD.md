@@ -1,0 +1,76 @@
+# Rank Up! AI rebuild — design and progress log
+
+Goal: bots that genuinely think — they play the game forward in their head with the REAL rules, model the
+opponent's replies, re-plan after every action, and choose the line that leads to the best future position.
+No scripted text-matching, no random "mistake dice", no luck or card advantages.
+
+## Requirements (from the user, binding)
+
+**Lookahead N** (turns simulated forward: its own turn, the opponent's reply, …):
+
+| Tier | N | Occasionally |
+|---|---|---|
+| Distinguished 4 | 7 | always 7 |
+| Distinguished 3 | 5 | 6 (~1 turn in 10) |
+| Distinguished 2 | 5 | always 5 |
+| Distinguished 1 | 4 | 5 (~1 in 7) |
+| D-Candidate 3 | 4 | 5 (~1 in 10) |
+| D-Candidate 2 | 4 | always 4 |
+| D-Candidate 1 | 4 | 3 (~1 in 7) |
+| Talented 2 | 3 | 4 (~1 in 10) |
+| Talented 1 | 3 | 2 (~1 in 7) |
+| Skilled 2 | 2 | 3 (~1 in 7) |
+| Skilled 1 | 2 | 1 (~1 in 5) |
+| Basic | 1 | 2 (~1 in 7) |
+| Maladroit | 1 | 2 (~1 in 10) |
+| Inept | 1 | 2 (~1 in 15) |
+
+**Win-rate matrix** (1v1, with AND without Evolutions): same tier 50/50 · 1 sub-tier apart 85/15 · 2 apart 90/10 ·
+3 apart 95/5 · 4 apart 99.5/0.5 · 5+ apart 100/0. Bottom is steeper: Maladroit beats Inept 90/10, Basic beats
+Inept 95/5, Skilled 1 beats Inept 99.5/0.5.
+
+**100/0** means literally never: every loss in such a pairing is a defect, investigated from its replay and fixed.
+A genuinely unwinnable deal is shown to the user, never hidden or faked.
+
+**Same luck for everyone**: no peeking at hidden information (opponent hand, deck orders, future random rolls),
+no better deals. **Δ**: none below Talented 2, increasing from there; Δ cards (every Δ type, not just
+Amalgamations) chosen to serve the bot's plan.
+
+**Think time**: up to ~10–20 s per phase for top tiers is fine; bots must not rush through turns.
+
+**1v1v1 / Royale**: win rates follow pairwise strength (Plackett–Luce fitted to the matrix; e.g. D4 vs D3 vs D3 ≈ 74% D4).
+
+**All modes**: AI vs player, AI vs AI, 1v1v1, Royale, Tournament (random brackets, real escalation), Gauntlet.
+Verified finally by playing as a human in the real UI.
+
+## Architecture
+
+1. **Headless real engine** (`tools/headless/`): the game's own scripts run in Node with a small fake DOM
+   (`fakedom.js`), a virtual clock (timers fire instantly, in order) and seeded randomness (`engine.js`).
+   No second copy of the rules.
+2. **Inputs = moves**: matches run as a "virtual online" game watched by nobody — both seats are driven purely by
+   the same inputs a human makes (`{t:'adv'}`, `{t:'hand',id}`, `{t:'zone',o,z}`, `{t:'modal',i}`,
+   `{t:'pick',ix}`, …), applied through the battle-tested online receiver path (`match.js`). No built-in bot code
+   runs; whoever drives the inputs plays.
+3. **No-paint mode** (`nopaint.js`): drawing functions become no-ops; every rule pass still runs in order.
+4. **Save / rewind** (`state.js`): complete position snapshots at quiet points (G + both RNG streams + queues);
+   restoring drops the abandoned line's prompts, timers and continuations.
+5. Next: move generation (macro-moves from quiet point to quiet point), hidden-information sampling, evaluation
+   learned from self-play, search (ISMCTS over macro-moves to depth N), calibration, integration (Web Worker),
+   cleanup of the old bot code.
+
+## Verification tools
+
+- `parity.js` — same inputs with and without painting → identical fingerprints after every input.
+- `reftrace.js record|check` — proves an engine change didn't alter any game (fingerprint traces).
+- `leaktest.js` — snapshot, play K inputs, rewind, replay → identical fingerprints and identical game object.
+- `smoke.js` — whole games on random inputs; determinism check.
+
+## Progress log
+
+- **2026-10-03** — Diagnosis of the old bot (text-regex scoring, combat-only toy search, mistake dice, bots
+  auto-passing prompts in AI-vs-AI, cheapest-first picks in skill prompts, deterministic tournaments, Gauntlet
+  D-Candidate round falling back to Basic). Headless engine built: loads in ~125 ms with zero errors; full games
+  run through the input layer; deterministic. No-paint mode: parity OK (identical fingerprints), ~4,000
+  inputs/s per core. RNG state exposed (`ruRngState` / `ruRngRestore`) — 10 reference games / 25,000
+  fingerprints unchanged. Snapshot/restore: 48/48 leak checks identical; ~0.9 ms each.
