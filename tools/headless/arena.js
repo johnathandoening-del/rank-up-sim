@@ -35,7 +35,7 @@ function play(job) {
       const adv = L.find((x) => x.t === 'adv' || x.t === 'sdDone'); if (adv && rnd() < 0.3) move = adv;
     } else {
       // a tier policy turns into this turn's thinking settings (N with its occasional bump, worlds, width, time, temp)
-      const opts = pol.kind === 'tier' ? require('./tiers').planOpts(pol.key, eng.run('G._turnNo||0'), job.seed * 7 + (who === 'A' ? 1 : 2), pol.scale || 1) : pol;
+      const opts = pol.kind === 'tier' ? require('./tiers').planOpts(pol.key, eng.run('G._turnNo||0'), job.seed * 7 + (who === 'A' ? 1 : 2), pol.scale || 1, d) : pol;
       // each side thinks with its own evaluation weights (null = the built-in starting weights)
       eng.run('__B.setWeights(' + JSON.stringify(pol.weightsFile ? (job.wcache[pol.weightsFile] || (job.wcache[pol.weightsFile] = JSON.parse(require('fs').readFileSync(pol.weightsFile, 'utf8')))) : null) + ')');
       const r = eng.run('__B.plan(' + JSON.stringify(d.seat) + ',' + JSON.stringify(Object.assign({ seed: job.seed * 31 + steps }, opts)) + ')');

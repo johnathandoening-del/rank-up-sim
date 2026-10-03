@@ -68,9 +68,10 @@
       track.anchor = snap(); track.path = []; track.game = gameId;
     }
     var id = ++seq, sig = window.ruStateSig();
-    var opts = window.RUAI && RUAI.tiers ? RUAI.tiers.planOpts(tier, G._turnNo || 0, (G._seed >>> 0) ^ (d.seat === 'player' ? 0x51 : 0xA7)) : { fixed: true, evals: 1000 };
+    var opts = window.RUAI && RUAI.tiers ? RUAI.tiers.planOpts(tier, G._turnNo || 0, (G._seed >>> 0) ^ (d.seat === 'player' ? 0x51 : 0xA7), 1, d) : { fixed: true, evals: 1000 };
     opts.seed = ((G._seed >>> 0) ^ Math.imul(id, 2654435761)) >>> 0;
     pending = { id: id, seat: d.seat, sig: sig, t0: performance.now(), game: gameId };
+    shown();
     ensureWorker().postMessage({ type: 'think', id: id, seat: d.seat, opts: opts, anchor: track.anchor, path: track.path, sig: sig, base: base() });
   }
 
@@ -89,6 +90,8 @@
   // Play the bot's input once this page's game is exactly where the bot planned it: the worker settles every input
   // at once, while here an effect can still be on its way (a timer) — the same catch-up wait an online screen makes
   // for the other player's input. A game that never gets there differs from the bot's copy: think again.
+  // the turn hint says when a bot is thinking
+  function shown() { try { if (window.ruSyncTurnControls) window.ruSyncTurnControls(); } catch (e) {} }
   function play(p, m, tries) {
     if (!soloGame() || p.game !== gameId || G.gameOver) { pending = null; return; }
     if (window.ruStateSig() !== m.sig) {
@@ -99,7 +102,7 @@
       if (failures > 3) { say('The bot lost track of this game.', 'dmg'); stop(); }
       return;
     }
-    pending = null;
+    pending = null; shown();
     if (!m.move) { failures++; console.warn('[bots] no move:', m.why); if (failures > 3) say('The bot found no move here (' + m.why + ').', 'dmg'); return; }
     var a = copy(m.move); a.s = p.seat; a.sig = m.moveSig || m.sig;
     // the order every screen applies an input in: settle, (the host's copy), the pre-input checkpoint, the input
@@ -144,5 +147,6 @@
     });
   }
 
-  window.RUBots = { available: available, attach: attach, stop: stop, noteInput: noteInput, ready: function () { return ready; }, debugDiff: debugDiff };
+  window.RUBots = { available: available, attach: attach, stop: stop, noteInput: noteInput, ready: function () { return ready; }, debugDiff: debugDiff,
+    thinking: function () { return pending ? pending.seat : null; } };
 })();

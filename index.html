@@ -6854,6 +6854,8 @@ function ruSyncTurnControls(){
   ['btn-adv','btn-end','btn-atk','btn-sd','btn-rv','btn-can'].forEach(function(id){const e=el(id);if(e)e.style.display='none';});
   const h=el('hint');if(!h)return;
   if(G.gameOver){h.textContent='';return;}
+  // a thinking bot's turn: say when it is thinking (it takes its time: a strong tier can think for seconds)
+  if(G._botSeats&&G._botSeats[G.turn]){h.textContent=(window.RUBots&&RUBots.thinking&&RUBots.thinking()===G.turn)?(sideNameLabel(G.turn)+' is thinking\u2026'):(sidePossessiveLabel(G.turn)+' turn.');return;}
   if(G._spectator){h.textContent='Spectating \u2014 '+sidePossessiveLabel(G.turn)+' turn.';return;}
   const me=ruLocalSeatId();
   h.textContent=(G.phase==='battle'&&me&&livingOpponentsOf(G.turn).indexOf(me)!==-1)

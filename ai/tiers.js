@@ -35,11 +35,15 @@ function nForTurn(key, turnNo, botSeed) {
   return (x % t.every) === 0 ? t.occ : t.N;
 }
 // plan() options for a tier at a given turn. scale (0..1] shrinks the effort (fast batch testing only).
-function planOpts(key, turnNo, botSeed, scale) {
+// d (the decision: __M.decider()) sets how much of the tier's effort it gets — a whole turn the full effort, choosing
+// which card to switchdraw a third, a prompt's answer two fifths — and how long a slow device may take at most.
+function planOpts(key, turnNo, botSeed, scale, d) {
   var t = TIERS[key] || TIERS['basic-1']; scale = scale || 1;
   var N = nForTurn(key, turnNo, botSeed);
+  var part = !d ? 1 : (d.kind === 'modal' || d.kind === 'pick') ? 0.4 : d.mode === 'switchdraw' ? 0.33 : 1;
   return { kind: 'brain', fixed: true, N: N, worlds: t.worlds, maxWorlds: t.maxWorlds, width: t.width,
-    evals: Math.max(150, Math.round(t.evals * scale)), temp: t.temp, topK: N >= 5 ? 4 : 6, safetyMs: 45000 };
+    evals: Math.max(150, Math.round(t.evals * scale * part)), temp: t.temp, noise: t.noise || 0, topK: N >= 5 ? 4 : 6,
+    safetyMs: Math.round(25000 * part) + 5000 };
 }
 
 // Loadable as a Node module (the headless tools) and as a classic script (the page, the bot worker).

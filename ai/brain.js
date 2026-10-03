@@ -533,6 +533,18 @@ var BRAIN_CODE = `
     // 1) follow the current plan while what it expected is what the bot sees
     var follow = followPlan(w); if (follow) return { move: follow, why: 'plan', evals: 0 };
 
+    // 2) a forced decision takes no thought: the only legal input; or, while switchdraws are mandatory (the first
+    //    turn's Action Cards — "Done" is refused), the next switch (every one of them must go, so order is no choice)
+    var d = dec();
+    if (__S.quiet() || d.kind === 'modal' || d.kind === 'pick') {
+      var LG =__S.quiet() ? __M.legal(w) : __M.candidates(w);
+      if (LG.length === 1) return { move: LG[0], why: 'only', evals: 0 };
+      if (d.kind === 'turn' && d.mode === 'switchdraw' && LG.length && !LG.some(function(a){ return a.t === 'sdDone'; })) {
+        var sw = LG.filter(function(a){ return a.t === 'sd'; });
+        if (sw.length) return { move: sw[0], why: 'forced', evals: 0 };
+      }
+    }
+
     var quietNow = __S.quiet();
     if (!quietNow && !live.quiet) return { move: fallback(w), why: 'no anchor' };
     var anchor = quietNow ? __S.snap() : live.quiet, path = quietNow ? [] : live.path.slice();
