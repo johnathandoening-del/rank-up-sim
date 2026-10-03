@@ -2,6 +2,7 @@
 /* Arena: many headless matches between two policies, in parallel worker threads. Every deal is played twice with the
  * seats swapped (same seed, same classes), so the luck of the deal cancels out of the comparison.
  *   node tools/headless/arena.js <deals> '<policyA json>' '<policyB json>' [workers=14] [classA] [classB]
+ * ARENA_OUT=<file> also writes every game's result (and the summary) there as JSON.
  * Policies: {"kind":"random"} | {"kind":"brain", N, worlds, width, maxEvals, ms, ...}. Prints A's score. */
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const os = require('os');
@@ -48,7 +49,7 @@ function play(job) {
     const sg = eng.run('ruStateSig()'); if (sg === last) { if (++stale > 200) break; } else { stale = 0; last = sg; }
   }
   const w = eng.run('G.__winner || null'), over = eng.run('!!G.gameOver');
-  return { winner: !over ? 'unfinished' : w === job.aSeat ? 'A' : (w && w !== 'draw' ? 'B' : 'draw'), turns: eng.run('G._turnNo||0'), cls: [job.cls0, job.cls1], aSeat: job.aSeat, firstSeat: job.firstSeat, steps, stat, sec: Math.round((Date.now() - t0) / 1000), errors: eng.errors.slice(0, 2) };
+  return { reason: eng.run('G.__reason || null'), mp: eng.run('[G.player.mp, G.ai.mp, G.player.cas, G.ai.cas, G.player.deck.length, G.ai.deck.length]'), winner: !over ? 'unfinished' : w === job.aSeat ? 'A' : (w && w !== 'draw' ? 'B' : 'draw'), turns: eng.run('G._turnNo||0'), cls: [job.cls0, job.cls1], aSeat: job.aSeat, firstSeat: job.firstSeat, steps, stat, sec: Math.round((Date.now() - t0) / 1000), errors: eng.errors.slice(0, 2) };
 }
 
 if (isMainThread) {
@@ -72,6 +73,7 @@ if (isMainThread) {
     const errs = results.flatMap((r) => r.errors); if (errs.length) console.log('errors:', errs.slice(0, 3).map((e) => e.slice(0, 160)));
     const bad = results.filter((r) => r.winner === 'B' || r.winner === 'unfinished').slice(0, 6);
     if (bad.length) console.log('A did not win:', bad.map((r) => `${r.cls.join('/')} A=${r.aSeat} ${r.winner} t${r.turns}`).join(' | '));
+    if (process.env.ARENA_OUT) require('fs').writeFileSync(process.env.ARENA_OUT, JSON.stringify({ polA, polB, counts: c, aShare: dec ? c.A / dec : null, results }, null, 1));
   };
   const spawn = () => {
     if (next >= jobs.length) { if (live === 0) report(); return; }

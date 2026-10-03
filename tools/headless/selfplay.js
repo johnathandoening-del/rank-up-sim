@@ -1,6 +1,6 @@
 'use strict';
 /* Self-play data for learning the evaluation: brain-vs-brain games in parallel workers. At the start of every turn the
- * position's evaluation terms are recorded from BOTH seats' points of view; when the game ends each record is labelled
+ * position's raw features are recorded from BOTH seats' points of view; when the game ends each record is labelled
  * 1 (that seat won) / 0 (lost). Output: JSON lines appended to <out>.
  *   node tools/headless/selfplay.js <games> <out.jsonl> '<policy json>' [workers=14] [weights.json] */
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
@@ -20,7 +20,7 @@ function game(job) {
     const tn = eng.run('G._turnNo||0');
     if (tn !== lastTurn && eng.run('__S.quiet()')) {
       lastTurn = tn;
-      ['player', 'ai'].forEach((w) => recs.push({ w, t: eng.run('__B.terms(__B.features(' + JSON.stringify(w) + '))'), turn: tn, cls: w === 'player' ? job.cls0 : job.cls1 }));
+      ['player', 'ai'].forEach((w) => recs.push({ g: job.seed, w, f: eng.run('__B.features(' + JSON.stringify(w) + ')'), turn: tn, cls: w === 'player' ? job.cls0 : job.cls1 }));
     }
     const r = eng.run('__B.plan(' + JSON.stringify(d.seat) + ',' + JSON.stringify(Object.assign({ seed: job.seed * 31 + steps }, job.pol)) + ')');
     if (!r || !r.move) break;
@@ -30,7 +30,8 @@ function game(job) {
   const w = eng.run('G.__winner || null'), over = eng.run('!!G.gameOver');
   if (!over || !w || w === 'draw') return { over, w, recs: [] };
   recs.forEach((r) => { r.y = r.w === w ? 1 : 0; });
-  return { over, w, turns: eng.run('G._turnNo||0'), recs };
+  const reason = eng.run('G.__reason || null'); recs.forEach((r) => { r.why = reason; });
+  return { over, w, reason, turns: eng.run('G._turnNo||0'), recs };
 }
 
 if (isMainThread) {

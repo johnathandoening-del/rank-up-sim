@@ -1084,6 +1084,19 @@ function dzAdd(p,c){
 }
 function dzDrop(p){ var c=null; if(p.deadzone&&p.deadzone.length){ c=p.deadzone.pop(); if(c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { p.discard.push(c); } } p.cas=Math.max(-7,(p.cas||0)-1); return c; }
 try{window.dzAdd=dzAdd;window.dzDrop=dzDrop;}catch(e){}
+// A card is only ever in ONE place. Every move helper takes the card out of its own side's zones first; a card can
+// also move to the OTHER side (Deckstroy / Discard E2 send themselves to the opponent's Deadzone), so it must leave
+// every other side's zones too (a Deadzone removal lowers that side's Casualty count, as every Deadzone removal does).
+function ruLeaveOtherSides(p,c){
+  if(!c||typeof c!=='object'||typeof G==='undefined'||!G)return;
+  ['player','ai','ai2','ai3'].forEach(function(w){
+    var q=G[w]; if(!q||q===p)return;
+    ['hand','deck','discard','deadzone','bank'].forEach(function(z){ var a=q[z],i; if(!Array.isArray(a))return; while((i=a.indexOf(c))!==-1){ a.splice(i,1); if(z==='deadzone')q.cas=Math.max(-7,(q.cas||0)-1); } });
+    ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(function(k){ if(q[k]===c)q[k]=null; });
+    if(q.delta&&q.delta[0]===c)q.delta=[];
+  });
+}
+window.ruLeaveOtherSides=ruLeaveOtherSides;
 // "Shell" cards: classless, blank placeholders that stand in for cards the Deadzone doesn't
 // physically have when a generic-wording effect needs to remove more than actually exist.
 // Up to 7 can be "out" at once (matching the -7 Deadzone floor / win condition).
@@ -4310,7 +4323,7 @@ function zoneClickL1(owner,zone){
       if(card&&mine)showCardModal(card);return;
     }
     if(G.mode==='standdown'){
-      if(!card){ruNotice(me,'No card to Stand Down.');cancelAll();return;}const slot=zone==='rank'?'rankZone':zone==='left-flank'?'leftFlank':zone==='right-flank'?'rightFlank':zone==='delta'?'delta':null;if(card.isDigit){ruNotice(me,'Digits cannot be Stood Down by the player that placed them until their protection expires.');return;}if(card._enteredTurnNo!=null&&card._enteredTurnNo===(G._turnNo||0)){log(`${card.name} cannot be Stood Down the same turn it entered the Battlefield.`,'dmg');return;}p.discard.push(card);window.zSet(p,zone,null);if(zone==='rank'){if(p.bank.length){p.rankZone=p.bank.shift();log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. ${p.rankZone.name} restored from Bank.`);}else{p.rankZone=makeStart('p-sd');log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. Rank Zone is now empty.`);}}else log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name} from ${zone.replace('-',' ')}.`);G.mode='normal';clearHL();hide('btn-can');renderAll();return;
+      if(!card){ruNotice(me,'No card to Stand Down.');cancelAll();return;}const slot=zone==='rank'?'rankZone':zone==='left-flank'?'leftFlank':zone==='right-flank'?'rightFlank':zone==='delta'?'delta':null;if(card.isDigit){ruNotice(me,'Digits cannot be Stood Down by the player that placed them until their protection expires.');return;}if(card._enteredTurnNo!=null&&card._enteredTurnNo===(G._turnNo||0)){log(`${card.name} cannot be Stood Down the same turn it entered the Battlefield.`,'dmg');return;}p.discard.push(card);window.zSet(p,zone,null);if(zone==='rank'){if(p.bank.length){p.rankZone=p.bank.shift();log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. ${p.rankZone.name} restored from Bank.`);}else{p.rankZone=makeStart('p-sd-'+uid());log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. Rank Zone is now empty.`);}}else log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name} from ${zone.replace('-',' ')}.`);G.mode='normal';clearHL();hide('btn-can');renderAll();return;
     }
     if(G.mode==='chiefpick'){
       const pick=G._chiefFlankPick;
@@ -6471,7 +6484,7 @@ function useRetL3(idx,card){
   }
   if(nm==='Subtract'){
     if(!la[me+'WasAttacked']){ruNotice(me,'Subtract can only be used after an opponent attacks you.','dmg');return;}
-    chooseHandCost(1,'Subtract — choose 1 card from hand to Drop.',(ok)=>{
+    window.chooseHandCostRAE4(1,'Subtract — choose 1 card from hand to Drop.',(ok)=>{
       if(!ok)return; if(!commitFromHand(card))return; millN(me,1,'discard');
       const refund=la[me+'MoraleLost']||0; p.mp+=refund; ruSetLastMoraleTo(me,Math.max(0,ruLastMoraleTo(me)-refund));
       const _subFoe=(G._lastAtkInfo&&G._lastAtkInfo.aWho&&G._lastAtkInfo.aWho!==me&&G[G._lastAtkInfo.aWho])?G[G._lastAtkInfo.aWho]:G[oppOf(me)];
@@ -7086,12 +7099,19 @@ function execStepBase(step){
       // Check the card's ACTUAL location first (an Amalgamation resolving a copied skill always
       // lives in the Delta Zone, regardless of which fieldZone string satisfied the copied skill's
       // own zone-gate check) -- falls back to the fieldZone-string branches for normal, non-copied use.
+      // ('any'-source skills can also be used from the Drop or the Deadzone: the card leaves THAT zone, so it is never
+      // in two places at once; leaving the Deadzone lowers the Casualty count with it, as every Deadzone removal does.)
+      const _msAt=(a)=>a?a.indexOf(card):-1;
       if(p.delta&&p.delta[0]===card){p.delta=[];}
+      else if(p.rankZone===card){if(p.bank.length)p.rankZone=p.bank.shift();else p.rankZone=makeStart(`temp-${uid()}`);}
+      else if(p.leftFlank===card)p.leftFlank=null;else if(p.rightFlank===card)p.rightFlank=null;else if(p.rearFlank===card)p.rearFlank=null;
+      else if(_msAt(p.bank)!==-1)p.bank.splice(_msAt(p.bank),1);
+      else if(_msAt(p.hand)!==-1)p.hand.splice(_msAt(p.hand),1);
+      else if(_msAt(p.discard)!==-1)p.discard.splice(_msAt(p.discard),1);
+      else if(_msAt(p.deadzone)!==-1){p.deadzone.splice(_msAt(p.deadzone),1);p.cas=Math.max(-7,(p.cas||0)-1);}
       else if(fieldZone==='rank'){if(p.bank.length)p.rankZone=p.bank.shift();else p.rankZone=makeStart(`temp-${uid()}`);}
       else if(fieldZone==='left-flank')p.leftFlank=null;else if(fieldZone==='right-flank')p.rightFlank=null;
       else if(fieldZone==='rear-flank')p.rearFlank=null;
-      else if(fieldZone==='bank'){const i=p.bank.indexOf(card);if(i!==-1)p.bank.splice(i,1);}
-      else if(fieldZone==='hand'){const i=p.hand.indexOf(card);if(i!==-1)p.hand.splice(i,1);}
       if(dest==='deadzone'){dzAdd(p,card);}else if(dest==='discard')p.discard.push(card);
       else if(dest==='deck_bottom')p.deck.push(card);else if(dest==='hand')p.hand.push(card);
       log(`${card.name} → ${dest}.`,'info');renderAll();runStep();break;}
@@ -8666,9 +8686,11 @@ function resolveSafeguardL6(idx,card,atkInfo,onDone){
     window.safeLogSG6(card.name+': cannot pay hand discard cost.','dmg');
     onDone&&onDone();return;
   }
-  const cardIdx=p.hand.indexOf(card);
-  if(cardIdx===-1){onDone&&onDone();return;}
+  if(p.hand.indexOf(card)===-1){onDone&&onDone();return;}
   const finish=function(){
+    // (found again now: paying the hand cost has shifted the hand since)
+    const cardIdx=p.hand.indexOf(card);
+    if(cardIdx===-1){window.renderSafeSG6();onDone&&onDone();return;}
     p.hand.splice(cardIdx,1);
     p.discard.push(card);
     p.actUsed=(p.actUsed||0)+1;
@@ -8685,7 +8707,7 @@ function resolveSafeguardL6(idx,card,atkInfo,onDone){
     }
     window.renderSafeSG6();window.checkSafeSG6();onDone&&onDone();
   };
-  window.handCostSG6(dw,1,card.name+' - discard 1 hand card as cost.',function(ok){if(ok)finish();else{window.renderSafeSG6();onDone&&onDone();}});
+  window.handCostSG6(dw,1,card.name+' - discard 1 hand card as cost.',function(ok){if(ok)finish();else{window.renderSafeSG6();onDone&&onDone();}},function(c){return c===card;});
 }
 function resolveSafeguardL7(idx,card,atkInfo,onDone){
   const dw=ruActor();
@@ -10841,7 +10863,7 @@ ADEFS['Seven Heaven']={
   }
   function destinationArray(p,to){return to==='hand'?p.hand:to==='bank'?p.bank:to==='deadzone'?p.deadzone:to==='deck'?p.deck:p.discard;}
   function moveCard(p,card,to){
-    removeCardEverywhere(p,card);
+    removeCardEverywhere(p,card);ruLeaveOtherSides(p,card);
     if(to==='deadzone'){window.dzAdd(p,card);}
     else destinationArray(p,to).push(card);
   }
@@ -11411,7 +11433,7 @@ function useRetL2(idx,card){
   function rem(arr,c){const i=arr.indexOf(c);if(i!==-1){arr.splice(i,1);return true;}return false;}
   window.remRAE4=rem;
   function removeEverywhere(p,c){if(!c)return;['hand','deck','discard','deadzone','bank'].forEach(k=>{const a=p[k];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(k==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});['rankZone','leftFlank','rightFlank','rearFlank'].forEach(k=>{if(p[k]===c)p[k]=null;});if(p.delta&&p.delta[0]===c)p.delta=[];}
-  function moveTo(w,c,dest){const p=G[w];const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeEverywhere(p,c);if(dest==='hand')p.hand.push(c);else if(dest==='deck')p.deck.push(c);else if(dest==='deck_top')p.deck.unshift(c);else if(dest==='bank')bankInsert(p,c);else if(dest==='deadzone'){window.dzAdd(p,c);}else if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else p.discard.push(c);}
+  function moveTo(w,c,dest){const p=G[w];const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeEverywhere(p,c);ruLeaveOtherSides(p,c);if(dest==='hand')p.hand.push(c);else if(dest==='deck')p.deck.push(c);else if(dest==='deck_top')p.deck.unshift(c);else if(dest==='bank')bankInsert(p,c);else if(dest==='deadzone'){window.dzAdd(p,c);}else if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else p.discard.push(c);}
   window.moveToRAE4=moveTo;
   function drawN(w,n){for(let i=0;i<n;i++)draw(w,1);}
   window.drawNRAE4=drawN;
@@ -12910,7 +12932,7 @@ function useRetL2(idx,card){
   function moveCard(p,c,dest){
     if(!p||!c)return false;
     const wasDead=p.deadzone.includes(c);
-    [p.hand,p.deck,p.discard,p.deadzone,p.bank].forEach(a=>arrRem(a,c));
+    [p.hand,p.deck,p.discard,p.deadzone,p.bank].forEach(a=>arrRem(a,c));ruLeaveOtherSides(p,c);
     if(p.rankZone===c)p.rankZone=p.bank.length?p.bank.shift():makeStart('mv-'+uid());
     if(p.leftFlank===c)p.leftFlank=null;
     if(p.rightFlank===c)p.rightFlank=null;
@@ -13216,7 +13238,7 @@ function useRetL2(idx,card){
   function moveTo(p,card,to){
     if(!card||!p)return;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(card)!==-1);
-    removeEverywhere(p,card);
+    removeEverywhere(p,card);ruLeaveOtherSides(p,card);
     if(to==='hand')p.hand.push(card);
     else if(to==='bank')bankInsert(p,card);
     else if(to==='deck_top')p.deck.unshift(card);
@@ -13601,7 +13623,7 @@ function useRetL2(idx,card){
   function move(p,c,to){
     if(!p||!c)return;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(c)!==-1);
-    ['hand','bank','discard','deadzone','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
+    ['hand','bank','discard','deadzone','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});ruLeaveOtherSides(p,c);
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===c)p[z]=null;});
     if(to==='hand')p.hand.push(c);
     else if(to==='bank')bankInsert(p,c);
@@ -13838,7 +13860,7 @@ function useRetL2(idx,card){
   function moveTo(p,c,to){
     if(!p||!c)return;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(c)!==-1);
-    removeEverywhere(p,c);
+    removeEverywhere(p,c);ruLeaveOtherSides(p,c);
     if(to==='hand')p.hand.push(c);
     else if(to==='deck_top')p.deck.unshift(c);
     else if(to==='deck'||to==='deck_bottom')p.deck.push(c);
@@ -14253,7 +14275,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function moveCard(p,c,to){
     if(!p||!c)return;
-    removeEverywhere(p,c);
+    removeEverywhere(p,c);ruLeaveOtherSides(p,c);
     if(to==='hand')p.hand.push(c);
     else if(to==='bank')bankInsert(p,c);
     else if(to==='deck_top')p.deck.unshift(c);
@@ -17063,7 +17085,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function moveTo(p,c,dest){
     if(!p||!c)return;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(c)!==-1);
-    removeKnown(p,c);
+    removeKnown(p,c);ruLeaveOtherSides(p,c);
     if(dest==='deadzone'){window.dzAdd(p,c);}
     else if(dest==='hand')p.hand.push(c);
     else if(dest==='deck_top')p.deck.unshift(c);
@@ -17174,7 +17196,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function moveTo(p,c,dest){
     if(!p||!c)return;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(c)!==-1);
-    removeKnown(p,c);
+    removeKnown(p,c);ruLeaveOtherSides(p,c);
     if(dest==='deadzone'){window.dzAdd(p,c);}
     else if(dest==='hand')p.hand.push(c);
     else if(dest==='bank')bankInsert(p,c);
@@ -17380,7 +17402,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function moveTo(p,c,dest){
     if(!p||!c)return;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(c)!==-1);
-    removeKnown(p,c);
+    removeKnown(p,c);ruLeaveOtherSides(p,c);
     if(dest==='deadzone'){window.dzAdd(p,c);}
     else if(dest==='hand')p.hand.push(c);
     else if(dest==='bank')bankInsert(p,c);
@@ -17661,7 +17683,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function moveTo(p,c,dest){
     const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);
-    removeFrom(p,c);
+    removeFrom(p,c);ruLeaveOtherSides(p,c);
     if(dest==='deadzone'){window.dzAdd(p,c);}
     else if(dest==='hand')p.hand.push(c);
     else if(dest==='deck')p.deck.push(c);
@@ -17781,7 +17803,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='bank')bankInsert(p,c);
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else put(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else put(p,c,dest);}
   window.moveToRAE16=moveTo;
   function addM(w,card){const p=side(w),m=Number(card&&card.M||0);if(p&&m){p.mp+=m;safeLog(card.name+' (E2): '+sidePossessiveLabel(w)+' MP '+(m>0?'+':'')+m+'.',m>0?'heal':'dmg');}}
   window.addMRAE16=addM;
@@ -17807,8 +17829,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else cb(pool[0]);
   }
   window.chooseOneRAE16=chooseOne;
-  function handCost(w,count,label,cb){
-    const p=side(w),pool=(p&&p.hand||[]).filter(Boolean);
+  function handCost(w,count,label,cb,exclude){
+    const p=side(w),pool=(p&&p.hand||[]).filter(function(c){return c&&!(exclude&&exclude(c));});
     chooseMany(w,label,pool,count,function(picks){
       if(!picks){cb(false,[]);return;}
       picks.forEach(function(c){moveTo(p,c,'discard');});
@@ -18008,7 +18030,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='deck_top')p.deck.unshift(c);
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else put(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else put(p,c,dest);}
   function bankTo(p,c,dest){
     if(!p||!c)return;
     var i=(p.bank||[]).indexOf(c);
@@ -18411,7 +18433,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='deadzone'){window.dzAdd(p,c);}
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else put(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else put(p,c,dest);}
   window.moveToSG7=moveTo;
   function addM(w,card){var p=side(w),m=Number(card&&card.M||0);if(p&&m){p.mp+=m;safeLog((card?card.name:'Card')+' (E2): '+sidePossessiveLabel(w)+' MP '+(m>0?'+':'')+m+'.',m>0?'heal':'dmg');}}
   window.addMRAE17=addM;
@@ -18707,7 +18729,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else p.discard.push(c);
   }
   window.putToRAE18=putTo;
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
   window.moveToRD3=moveTo;
   function choose(w,label,pool,min,max,optional,cb){
     pool=(pool||[]).filter(Boolean);
@@ -19017,7 +19039,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='deadzone'){window.dzAdd(p,c);}
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
   window.moveToRAE19=moveTo;
   function dropTop(w,n,dest){
     var p=side(w),out=[];
@@ -19305,7 +19327,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else p.discard.push(c);
   }
   window.putToL7=putTo;
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
   window.moveToL7=moveTo;
   function rankLimit(p){return p&&p.rankZone?np(p.rankZone):Infinity;}
   function canBank(p,c){return !isNum(c)||np(c)<=rankLimit(p);}
@@ -19635,7 +19657,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='deadzone'){window.dzAdd(p,c);}
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
   window.moveToRAE21=moveTo;
   function topDeck(w,n,dest){
     var p=side(w),out=[];
@@ -19967,7 +19989,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='deadzone'){window.dzAdd(p,c);}
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
   window.moveToRAE22=moveTo;
   function topDeck(w,n,dest){
     var p=side(w),out=[];
@@ -20242,7 +20264,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest==='deadzone'){window.dzAdd(p,c);}
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
+  function moveTo(p,c,dest){var _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeFrom(p,c);ruLeaveOtherSides(p,c);if(dest==='discard'&&_wd&&typeof G!=='undefined'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else putTo(p,c,dest);}
   window.moveToRAE23=moveTo;
   function topDeck(w,n,dest){
     var p=side(w),out=[];
@@ -20547,7 +20569,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else p.discard.push(c);
   }
   window.putToPA9=putTo;
-  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
+  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c);ruLeaveOtherSides(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
   window.moveToRD8=moveTo;
   function sourceTo(w,p,fieldZone,card,dest,label){
     if(!p || !card) return false;
@@ -21017,7 +21039,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest === 'deadzone'){ p.deadzone.push(c); p.cas = (p.cas || 0) + 1; }
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
+  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c);ruLeaveOtherSides(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
   window.moveToRD9=moveTo;
   function zoneCard(p,z){
     if(!p) return null;
@@ -21727,7 +21749,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else p.discard.push(c);
   }
   window.putToPA11=putTo;
-  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
+  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c);ruLeaveOtherSides(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
   window.moveToPA11=moveTo;
   function zoneCard(p,z){
     if(!p) return null;
@@ -22124,7 +22146,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(dest === 'deadzone'){ p.deadzone.push(c); p.cas = (p.cas || 0) + 1; }
     else p.discard.push(c);
   }
-  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
+  function moveTo(p,c,dest){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeFrom(p,c);ruLeaveOtherSides(p,c); if(dest==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,dest); } return c; }
   window.moveToRD10=moveTo;
   function zoneCard(p,z){
     if(!p) return null;
@@ -22405,7 +22427,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(to === 'deadzone'){ p.deadzone.push(c); p.cas = (p.cas || 0) + 1; }
     else p.discard.push(c);
   }
-  function moveTo(p,c,to){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeEverywhere(p,c); if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,to); } return c; }
+  function moveTo(p,c,to){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeEverywhere(p,c);ruLeaveOtherSides(p,c); if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,to); } return c; }
   function topDeckTo(p,n,to){
     var out = [];
     for(var i=0; p && i<n && p.deck.length; i++){
@@ -23100,7 +23122,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(to === 'deadzone'){ p.deadzone.push(c); p.cas = (p.cas || 0) + 1; }
     else p.discard.push(c);
   }
-  function moveTo(p,c,to){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeEverywhere(p,c); if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,to); } return c; }
+  function moveTo(p,c,to){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeEverywhere(p,c);ruLeaveOtherSides(p,c); if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,to); } return c; }
   function topDeckTo(p,n,to){
     var out = [];
     for(var i=0; p && i<n && p.deck.length; i++){

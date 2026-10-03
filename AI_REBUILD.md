@@ -59,6 +59,22 @@ Verified finally by playing as a human in the real UI.
    learned from self-play, search (ISMCTS over macro-moves to depth N), calibration, integration (Web Worker),
    cleanup of the old bot code.
 
+## Live-game integration (design)
+
+- **Solo = virtual online.** A solo match runs on the same input-driven path as online play: the human's seat is
+  local, every bot seat is driven by the new bot through inputs (like a remote player), the human sees
+  "AI is choosing…" mirrors instead of a bot's private prompts, and every deterministic-checkpoint rule applies.
+  Needs: an audit of `ruIsOnline()` uses that mean "the network" (→ a separate check), and multi-seat support for
+  1v1v1 / Royale.
+- **Thinking in a Web Worker.** `ai/` (deployed) holds the shared realm code (state, moves, brain, no-paint) and a
+  worker that loads the game's own scripts with the fake DOM and a virtual clock. The page posts the position
+  (G, RNG state, last quiet anchor + inputs since) and the seat; the worker returns the move; the page applies it
+  through the normal input layer. Several workers can split the hidden-information worlds.
+- **Pacing.** Top tiers think for seconds (the user accepts ~10–20 s per phase) and play their moves at a readable
+  pace, never rushing.
+- **Δ Decks.** None below Talented 2, more from there; each bot builds its Δ Deck from the Δ cards measured (by
+  self-play experiments per class) to raise its own class's win rate.
+
 ## Verification tools
 
 - `parity.js` — same inputs with and without painting → identical fingerprints after every input.

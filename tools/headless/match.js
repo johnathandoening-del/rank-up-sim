@@ -52,7 +52,7 @@ const HELPERS = `
   };
   // Record who won (endGameImmediate is the single place a match ends).
   var orig = window.endGameImmediate;
-  window.endGameImmediate = function(winner, reason){ if (G && !G.gameOver) G.__winner = winner || 'draw'; return orig.apply(this, arguments); };
+  window.endGameImmediate = function(winner, reason){ if (G && !G.gameOver) { G.__winner = winner || 'draw'; try { G.__reason = [].concat(typeof reason === 'string' ? reason : (reason && (reason.reason || reason.reasons)) || JSON.stringify(reason)).join(','); } catch (e) {} } return orig.apply(this, arguments); };
 })();
 `;
 

@@ -19,6 +19,9 @@ const moves = require('./moves');
 const CODE = `
 (function(){
   if (window.__B) return;
+  // Thinking time is REAL time. (Inside the engine Date.now() is the game's virtual clock — it jumps by seconds
+  // whenever timers run — so it must never measure a thinking budget.)
+  var NOW = window.__realNow || function(){ return Date.now(); };
   function opp(w){ return w === 'player' ? 'ai' : 'player'; }
   function npOf(c){ return c ? (c.currentNP != null ? c.currentNP : (c.numeral || 0)) : 0; }
   function rpOf(c){ return c ? (c.currentRP != null ? c.currentRP : (c.rank || 0)) : 0; }
@@ -37,8 +40,15 @@ const CODE = `
       f[pre+'flankNP'] = [p.leftFlank, p.rightFlank, p.rearFlank].reduce(function(s,c){ return s + npOf(c); }, 0);
       f[pre+'fieldN'] = fl.length; f[pre+'maxNP'] = fl.reduce(function(m,c){ return Math.max(m, npOf(c)); }, 0);
       f[pre+'actions'] = (p.hand||[]).filter(function(c){ return c && c.type === 'action'; }).length;
+      f[pre+'nums'] = (p.hand||[]).filter(function(c){ return c && c.type === 'numeral'; }).length;
+      f[pre+'areas'] = (p.hand||[]).filter(function(c){ return c && c.type === 'area'; }).length;
       f[pre+'delta'] = (p.delta && p.delta.length) ? 1 : 0;
       f[pre+'areaDead'] = (p.deadzone||[]).filter(function(c){ return c && c.type === 'area'; }).length;
+      // numerals in hand that are a legal promotion over the current Rank Zone card (NP +1..+3 at Rank +0/+1, or
+      // the same NP at Rank +1) — 0 means rank-locked
+      var rz = p.rankZone, cNP = rz ? (rz.numeral != null ? rz.numeral : (rz.currentNP || 0)) : 0, cRP = rz ? (rz.rank != null ? rz.rank : (rz.currentRP || 0)) : 0;
+      f[pre+'promo'] = (p.hand||[]).filter(function(c){ if (!c || c.type !== 'numeral') return false; var nd = (c.numeral||0) - cNP, rd = (c.rank||0) - cRP; return (nd >= 1 && nd <= 3 && rd >= 0 && rd <= 1) || (nd === 0 && rd === 1) || (c.rank||0) >= 4; }).length;
+      f[pre+'handNP'] = (p.hand||[]).reduce(function(m, c){ return c && c.type === 'numeral' ? Math.max(m, c.numeral || 0) : m; }, 0);
     }
     side(me, 'm_'); side(op, 'o_');
     // Threats on the board as it stands: the best Morale damage each side's attackers can deal into the other's
@@ -70,10 +80,24 @@ const CODE = `
       area: f.m_areaDead - f.o_areaDead, maxNP: f.m_maxNP - f.o_maxNP, tempo: f.tempo,
       mpRaw: f.m_mp - f.o_mp, casRaw: f.m_cas - f.o_cas, deckRaw: f.m_deck - f.o_deck,
       threat: f.m_threat - f.o_threat, beats: f.m_beats - f.o_beats,
-      threatT: f.tempo * (f.tempo > 0 ? f.m_threat : f.o_threat)     // the side to move gets to use its threat first
+      threatT: f.tempo * (f.tempo > 0 ? f.m_threat : f.o_threat),    // the side to move gets to use its threat first
+      // v2 terms (rules knowledge: where Morale / Casualties / Deck become dangerous, rank-lock, lethal threats)
+      mpLow: Math.min(Math.max(f.m_mp, 0), 12) - Math.min(Math.max(f.o_mp, 0), 12),
+      mpHigh: Math.max(0, f.m_mp - 60) - Math.max(0, f.o_mp - 60),
+      casHigh: Math.max(0, f.m_cas - 8) - Math.max(0, f.o_cas - 8),
+      casNeg: Math.max(0, -f.m_cas) - Math.max(0, -f.o_cas),
+      deckLow: Math.max(0, 10 - f.m_deck) - Math.max(0, 10 - f.o_deck),
+      promo: Math.min(f.m_promo, 2) - Math.min(f.o_promo, 2),
+      locked: (f.m_promo ? 0 : 1) - (f.o_promo ? 0 : 1),
+      nums: f.m_nums - f.o_nums, areas: f.m_areas - f.o_areas,
+      lethal: (f.tempo > 0 ? (f.m_threat >= f.o_mp ? 1 : 0) : -(f.o_threat >= f.m_mp ? 1 : 0)),
+      danger: (f.o_threat >= f.m_mp ? 1 : 0) - (f.m_threat >= f.o_mp ? 1 : 0)
     };
   }
-  var W0 = { mv: 1, cv: 1, deck: 1, rank: 1.2, rankRP: 0, flank: 0.6, fieldN: 2.0, hand: 0.8, bank: 0.5, actions: 0.7, delta: 0, area: 0, maxNP: 0 };
+  // Starting weights (units: ~2 per Morale point at 15 MP). The Deck is a resource (deck-out loses), worth much more
+  // below 10 cards; a threat that can finish the other side next turn counts for whoever holds it.
+  var W0 = { mv: 1, cv: 1, deck: 1, rank: 1.2, rankRP: 0, flank: 0.6, fieldN: 2.0, hand: 0.8, bank: 0.5, actions: 0.7, delta: 0, area: 0, maxNP: 0,
+    deckRaw: 0.25, deckLow: -2.5, lethal: 20, danger: -10 };
   function evaluate(w){
     if (G.gameOver) { var win = G.__winner; return win === w ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
     var t = terms(features(w)), wt = (W && W.w) || W0, s = 0;
@@ -84,18 +108,37 @@ const CODE = `
   // ── hidden information ──
   function shuffleArr(a, r){ for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
   function mb(s){ return function(){ s |= 0; s = s + 0x6D2B79F5 | 0; var t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-  // keep: ids of opponent cards the mover has SEEN since the anchor (played from hand in the inputs being replayed) —
-  // those are not hidden any more and stay exactly where they are; everything else hidden is re-dealt.
-  function determinize(w, r, keep){
+  // Re-deal what seat w cannot know, AT THE CURRENT POINT (everything already seen stays exactly as it is): the
+  // opponent's unknown hand cards and both decks are re-dealt from the same cards, and future random rolls are
+  // re-seeded. known: ids of opponent hand cards w has seen go there (they stay). Arrays are refilled in place —
+  // a prompt that is open mid-action may hold a reference to them.
+  function refill(arr, items){ arr.length = 0; for (var i = 0; i < items.length; i++) arr.push(items[i]); }
+  function determinize(w, r, known){
     var me = G[w], op = G[opp(w)];
-    var kept = [], hidden = [];
-    (op.hand || []).forEach(function(c){ (keep && c && keep[c.id] ? kept : hidden).push(c); });
-    var fromDeck = (op.deck || []).slice();
-    var pool = hidden.concat(fromDeck); shuffleArr(pool, r);
-    var hn = (op.hand || []).length - kept.length;
-    op.hand = kept.concat(pool.slice(0, hn)); op.deck = pool.slice(hn);
-    shuffleArr(me.deck || [], r);
+    var hand = op.hand || [], slots = [], pool = [];
+    hand.forEach(function(c, i){ if (!(c && known && known[c.id])) { slots.push(i); pool.push(c); } });
+    pool = pool.concat(op.deck || []); shuffleArr(pool, r);
+    var nh = hand.slice(); slots.forEach(function(i, k){ nh[i] = pool[k]; });
+    refill(hand, nh); if (op.deck) refill(op.deck, pool.slice(slots.length));
+    if (me.deck) refill(me.deck, shuffleArr(me.deck.slice(), r));
     var st = window.ruRngState(); st.g = Math.floor(r() * 4294967296) | 0; st.ai = Math.floor(r() * 4294967296) | 0; window.ruRngRestore(st);
+  }
+  // Which cards in each seat's hand the OTHER seat has seen (they went to the hand from a public zone).
+  var seenInHand = { player: {}, ai: {} }, lastPublic = {};
+  function publicIds(){
+    var o = {};
+    ['player', 'ai'].forEach(function(s){ var p = G[s]; if (!p) return;
+      [].concat(field(p), p.discard || [], p.deadzone || [], p.bank || [], p.delta || []).forEach(function(c){ if (c) o[c.id] = 1; }); });
+    return o;
+  }
+  function trackSeen(){
+    if (!G || !G.player) return;
+    ['player', 'ai'].forEach(function(s){
+      var k = seenInHand[s], now = {};
+      (G[s].hand || []).forEach(function(c){ if (!c) return; now[c.id] = 1; if (lastPublic[c.id]) k[c.id] = 1; });
+      Object.keys(k).forEach(function(id){ if (!now[id]) delete k[id]; });
+    });
+    lastPublic = publicIds();
   }
   // What seat w can SEE (public zones, its own hand, counts of hidden things, the pending decision).
   function visSig(w){
@@ -119,26 +162,37 @@ const CODE = `
   // A prompt situation seen before in this flow means an answer led round in a circle (choose a skill → cancel → the
   // same window again): answers that lead back to a seen situation are skipped, so the flow always moves on.
   function promptKey(){ var d = dec(); return d.kind + '|' + (d.seat || '') + '|' + (d.title || '') + '|' + (d.labels || []).join('/') + '|' + ruStateSig(); }
-  function finishFlow(w, rebuild, budget){
-    var seq = [], seen = new Set();
+  var PASSY = /^(Pass|Skip|Decline|No|Close|Cancel|Keep|Continue|Done)/i;
+  function finishFlow(w, rebuild, budget, cheap){
+    var seq = [], seen = new Set(), atPrompt = true;      // atPrompt: the live position is rebuild + seq (no trial applied)
+    cheap = cheap || budget.cheap;
+    function back(){ rebuild(); for (var q = 0; q < seq.length; q++) apply(seq[q]); atPrompt = true; }
     for (var guard = 0; guard < 40; guard++) {
       if (G.gameOver || __S.quiet()) return seq;
       var d = dec(); if (isOver(d)) return seq;
       seen.add(promptKey());
       var L = __M.candidates(d.seat); if (!L.length) return null;
-      var best = null, bestV = 0, fallback = null;
-      if (Date.now() > budget.deadline) L = L.slice(0, Math.min(L.length, 2));
+      var choice = null;
+      if (L.length === 1) choice = L[0];
+      // cheap mode (completing a line, not choosing one): the other player passes on optional prompts
+      if (!choice && cheap && d.seat !== w && d.kind === 'modal') {
+        var pi = (d.labels || []).findIndex(function(l){ return PASSY.test(String(l).trim()); });
+        if (pi >= 0) choice = { t: 'modal', i: pi, s: d.seat };
+      }
+      if (choice) { seq.push(choice); apply(choice); budget.evals++; continue; }
+      var best = null, bestV = 0, bestIdx = -1;
+      if (NOW() > budget.deadline) L = L.slice(0, Math.min(L.length, 2));
       for (var i = 0; i < L.length; i++) {
-        rebuild(); for (var q = 0; q < seq.length; q++) apply(seq[q]);
-        apply(L[i]); budget.evals++;
-        if (!fallback) fallback = L[i];
+        if (!atPrompt) back();                 // the first answer is tried on the live position; later ones rebuild it
+        apply(L[i]); budget.evals++; atPrompt = false;
         if (!G.gameOver && !__S.quiet() && seen.has(promptKey())) continue;     // back where we were: a circle
         var v = evaluate(w);
-        if (best === null || (d.seat === w ? v > bestV : v < bestV)) { best = L[i]; bestV = v; }
+        if (best === null || (d.seat === w ? v > bestV : v < bestV)) { best = L[i]; bestV = v; bestIdx = i; }
       }
-      if (!best) { var lastIdx = L.length - 1; best = L[lastIdx]; }   // every answer circles: take the last (Pass / Cancel sit last)
-      seq.push(best);
-      rebuild(); for (var k = 0; k < seq.length; k++) apply(seq[k]);
+      if (!best) { best = L[L.length - 1]; bestIdx = L.length - 1; }   // every answer circles: take the last (Pass / Cancel sit last)
+      // the live position is already "seq + best" when the best was the last answer tried; otherwise rebuild it
+      if (!(bestIdx === L.length - 1 && !atPrompt)) { back(); apply(best); budget.evals++; }
+      seq.push(best); atPrompt = true;                 // live = rebuild + seq again
     }
     return __S.quiet() ? seq : null;
   }
@@ -161,7 +215,8 @@ const CODE = `
     var d = dec();
     // (switchdraw is not a board mode to bundle: every switch reveals a new card, so each one is its own decision)
     var inMode = d.kind === 'turn' && d.seat === mover && d.mode && d.mode !== 'normal' && d.mode !== 'switchdraw';
-    if (!inMode || depth >= 4) { cb(inputs, { base: base, tail: inputs }); return; }
+    // one complete action per move (attack: attacker → target); a further attack is the next move of the phase search
+    if (!inMode || depth >= 2) { cb(inputs, { base: base, tail: inputs }); return; }
     // a board mode for the mover: each way to complete it is a move of its own
     var modeSnap = __S.snap(), sig = ruStateSig();
     var C = __M.candidates(mover).filter(function(c){ return c.t !== 'cancel'; });
@@ -176,72 +231,106 @@ const CODE = `
   }
   function materialize(rec){ rewind(rec.base); for (var i = 0; i < rec.tail.length; i++) apply(rec.tail[i]); return __S.snap(); }
 
-  // Search the mover's turn from a quiet root. Returns the best line per first move, sorted by v (desc):
+  // Search the mover's turn from a quiet root, PHASE BY PHASE. A turn is a sequence of phases (draw → promotion →
+  // rally → main → standby → battle → end); advancing a phase changes nothing the evaluation can see, so a search
+  // that pruned whole lines by value as it went would starve the later phases (battle above all) — lines that
+  // "do something" now always look better than lines that move on. Instead each phase is searched on its own: the
+  // moves within the phase (a few deep), and every position reached may leave the phase; the best positions that
+  // left it start the next phase. Passes widen while time remains (the first pass is quick and always finishes
+  // turns). Returns the best complete line per first move, sorted by v (desc):
   // [{ first, steps:[{ inputs:[...], vis: visible sig after the step, opp: the other player answered in it }], v, end }]
-  // A position reached twice (by any line) is searched once — no cycles, no duplicate work.
-  function turnSearch(mover, root, cfg, budget){
-    var groups = new Map(), seen = new Set();
-    rewind(root); seen.add(ruStateSig());
-    var frontier = [{ snap: root, steps: [], firstKey: null }];
-    function record(node, rec, v, done){
-      var g = groups.get(node.firstKey) || { best: null, beam: [] };
-      groups.set(node.firstKey, g);
-      var line = { first: node.steps[0].inputs[0], steps: node.steps, v: v, rec: rec, done: done };
-      if (done && (!g.best || !g.best.done || v > g.best.v)) g.best = line;
-      else if (!g.best) g.best = line;
-      if (!done) g.beam.push({ rec: rec, steps: node.steps, firstKey: node.firstKey, v: v });
-    }
-    for (var depth = 0; depth < cfg.maxDepth && frontier.length; depth++) {
-      groups.forEach(function(g){ g.beam = []; });
-      for (var f = 0; f < frontier.length; f++) {
-        var node = frontier[f];
-        if (!node.snap) node.snap = materialize(node.rec);
-        rewind(node.snap);
-        var sig0 = ruStateSig(), dirty = false;
-        var C = __M.candidates(mover);
-        for (var i = 0; i < C.length; i++) {
-          if (budget.evals >= budget.max || Date.now() > budget.deadline) break;
-          if (C[i].t === 'cancel') continue;
-          if (dirty) { rewind(node.snap); dirty = false; }
-          apply(C[i]); budget.evals++;
-          if (__S.quiet() && !G.gameOver && ruStateSig() === sig0) continue;   // refused: nothing changed
-          dirty = true;
-          expand(mover, node.snap, C[i], budget, function(inputs, rec){
-            var sg = ruStateSig();
-            if (!G.gameOver && seen.has(sg)) return;        // reached before (a cycle, or a duplicate line)
-            seen.add(sg);
-            var v = evaluate(mover), d = dec();
-            var step = { inputs: inputs, vis: visSig(mover), opp: inputs.some(function(x){ return x.s && x.s !== mover; }) };
-            var child = { steps: node.steps.concat([step]), firstKey: node.firstKey || key(inputs[0]) };
-            record(child, rec, v, isOver(d) || G.turn !== mover);
-          }, 0, true);
-        }
-      }
-      // next frontier: each first move keeps its own best few continuations (copied only now)
-      // (cfg.greedy — used for simulated future turns — keeps one global beam instead: a fast single line of play)
-      frontier = [];
-      if (cfg.greedy) {
-        var all = []; groups.forEach(function(g){ all = all.concat(g.beam); });
-        all.sort(function(a, b){ return b.v - a.v; });
-        all.slice(0, cfg.width).forEach(function(n){ frontier.push({ snap: null, rec: n.rec, steps: n.steps, firstKey: n.firstKey }); });
-      } else groups.forEach(function(g){ g.beam.sort(function(a, b){ return b.v - a.v; }); g.beam.slice(0, cfg.width).forEach(function(n){ frontier.push({ snap: null, rec: n.rec, steps: n.steps, firstKey: n.firstKey }); }); });
-    }
-    // Lines are compared at the same point — when the turn has passed. Unfinished ones are played to the end of the
-    // turn first (otherwise "never end the turn" would look better than any line that lets the opponent draw).
-    var out = [];
-    groups.forEach(function(g){
-      var best = null;
-      if (g.best && g.best.done) best = { first: g.best.first, steps: g.best.steps, v: g.best.v, end: materialize(g.best.rec), done: true };
-      var cands = g.beam.slice(0, Date.now() > budget.deadline ? 1 : cfg.width);
-      if (!best && g.best && !cands.length) cands = [{ rec: g.best.rec, steps: g.best.steps }];
-      cands.forEach(function(n){
-        var fin = finishTurn(mover, materialize(n.rec), budget);
-        if (fin && (!best || fin.v > best.v)) best = { first: n.steps[0].inputs[0], steps: n.steps.concat(fin.steps), v: fin.v, end: fin.end, done: true };
-      });
-      if (best) out.push(best);
-    });
-    out.sort(function(a, b){ return b.v - a.v; });
+  function isLeave(c){ return c.t === 'adv' || c.t === 'end' || c.t === 'sdDone'; }
+  // Keep B positions: the best of the leading first-move groups first (so different starts survive), then by value.
+  function beam(list, B){
+    list = list.filter(function(x, i){ return list.indexOf(x) === i; });
+    list.sort(function(a, b){ return b.v - a.v; });
+    var out = [], used = new Set(), groups = new Set(), half = Math.max(1, Math.ceil(B / 2));
+    for (var i = 0; i < list.length && groups.size < half; i++) if (!groups.has(list[i].firstKey)) { groups.add(list[i].firstKey); used.add(i); out.push(list[i]); }
+    for (var j = 0; j < list.length && out.length < B; j++) if (!used.has(j)) out.push(list[j]);
     return out;
+  }
+  function searchPass(mover, root, B, depthCap, budget, out){
+    var seen = new Set(); rewind(root); seen.add(ruStateSig());
+    function record(n){
+      var o = out.get(n.firstKey);
+      if (!o || n.v > o.v) out.set(n.firstKey, { first: n.first, steps: n.steps, v: n.v, rec: n.rec, end: null, done: true });
+    }
+    var frontier = [{ snap: root, rec: null, steps: [], firstKey: null, first: null, v: evaluate(mover) }];
+    var unexpanded = [];        // positions still in the mover's turn that time did not let us search further
+    for (var pg = 0; pg < 14 && frontier.length; pg++) {
+      var leaving = [], layer = frontier, next = [];
+      for (var depth = 0; depth <= depthCap && layer.length; depth++) {
+        next = [];
+        for (var f = 0; f < layer.length; f++) {
+          if (budget.evals >= budget.max || NOW() > budget.deadline) { unexpanded = unexpanded.concat(layer.slice(f)); break; }
+          var node = layer[f];
+          if (!node.snap) node.snap = materialize(node.rec);
+          rewind(node.snap);
+          var ph0 = G.phase, sig0 = ruStateSig(), dirty = false;
+          var C = __M.candidates(mover);
+          for (var i = 0; i < C.length; i++) {
+            if (budget.evals >= budget.max || NOW() > budget.deadline) break;
+            if (C[i].t === 'cancel') continue;
+            if (depth === depthCap && !isLeave(C[i])) continue;       // deep enough in this phase: only move on
+            if (dirty) { rewind(node.snap); dirty = false; }
+            apply(C[i]); budget.evals++;
+            if (__S.quiet() && !G.gameOver && ruStateSig() === sig0) continue;   // refused: nothing changed
+            dirty = true;
+            (function(node, ph0){
+              expand(mover, node.snap, C[i], budget, function(inputs, rec){
+                var d = dec();
+                // still in a board mode once its moves are done (e.g. attack mode after the attack): leave the mode,
+                // so the position can go on (end the turn, move to the next phase) like any other
+                if (!G.gameOver && __S.quiet() && d.kind === 'turn' && d.seat === mover && d.mode && d.mode !== 'normal' && d.mode !== 'switchdraw') {
+                  var cz = { t: 'cancel', s: mover }, sgm = ruStateSig(); apply(cz); budget.evals++;
+                  if (ruStateSig() !== sgm || !__S.quiet()) { inputs = inputs.concat([cz]); rec = { base: rec.base, tail: rec.tail.concat([cz]) }; }
+                  if (!__S.quiet() && !G.gameOver) return;         // leaving the mode opened a prompt: not a clean line
+                  d = dec();
+                }
+                var sg = ruStateSig();
+                if (!G.gameOver && seen.has(sg)) return;         // reached before (a cycle, or a duplicate line)
+                seen.add(sg);
+                var step = { inputs: inputs, vis: visSig(mover), opp: inputs.some(function(x){ return x.s && x.s !== mover; }) };
+                var child = { snap: null, rec: rec, steps: node.steps.concat([step]), firstKey: node.firstKey || key(inputs[0]), first: node.first || inputs[0], v: evaluate(mover) };
+                if (G.gameOver || isOver(d) || G.turn !== mover) record(child);
+                else if (G.phase !== ph0) leaving.push(child);
+                else next.push(child);
+              }, 0, true);
+            })(node, ph0);
+          }
+        }
+        if (budget.trace) budget.trace.push('B' + B + ' pg' + pg + ' d' + depth + ' ph ' + (layer[0] && layer[0].snap ? '' : '') + ' layer ' + layer.length + ' -> next ' + next.length + ' leaving ' + leaving.length + ' done ' + out.size + ' bestNext ' + (next.length ? Math.max.apply(null, next.map(function(x){ return x.v; })).toFixed(1) : '-') + ' bestLeave ' + (leaving.length ? Math.max.apply(null, leaving.map(function(x){ return x.v; })).toFixed(1) : '-') + ' evals ' + budget.evals + ' t ' + (NOW() - budget.t0));
+        layer = beam(next, B);
+      }
+      if (budget.evals >= budget.max || NOW() > budget.deadline) { unexpanded = unexpanded.concat(layer, leaving); frontier = []; break; }
+      frontier = beam(leaving, B);
+      if (budget.trace && frontier.length) { rewind(frontier[0].snap || materialize(frontier[0].rec)); budget.trace.push('  -> next phase ' + G.phase + ' (' + G.turn + ')'); }
+    }
+    // Positions still in the mover's turn (time ran out before they were searched further) are finished quickly —
+    // the most promising first (always the best two), so a strong position found late (an attack) is never lost.
+    var rest = beam(unexpanded.concat(frontier), Math.max(2 * B, 4));
+    rest.forEach(function(n, idx){
+      if (budget.evals >= budget.max || (idx >= 2 && NOW() > budget.deadline + 50)) return;
+      var fin = finishTurn(mover, n.snap || materialize(n.rec), budget);
+      if (fin) { var o = out.get(n.firstKey); if (!o || fin.v > o.v) out.set(n.firstKey, { first: n.first, steps: n.steps.concat(fin.steps), v: fin.v, rec: null, end: fin.end, done: true }); }
+    });
+  }
+  function turnSearch(mover, root, cfg, budget){
+    var out = new Map(), tMain = NOW();
+    var passes = cfg.greedy ? [[1, 2]] : [[2, 2], [4, 3], [Math.max(6, (cfg.width || 2) * 3), 4], [Math.max(10, (cfg.width || 2) * 5), 5]];
+    for (var k = 0; k < passes.length; k++) {
+      if (k > 0 && (NOW() > budget.deadline || budget.evals >= budget.max)) break;
+      var saved = budget.deadline;
+      // the first pass may run over the budget (bounded) so it always reaches the end of the turn
+      if (k === 0) budget.deadline = Math.max(budget.deadline, tMain + 2.5 * Math.max(50, budget.deadline - tMain));
+      searchPass(mover, root, passes[k][0], passes[k][1], budget, out);
+      budget.deadline = saved;
+    }
+    if (budget.tm) { budget.tm.main += NOW() - tMain; budget.tm.calls++; }
+    var lines = [];
+    out.forEach(function(l){ if (!l.end) l.end = l.rec ? materialize(l.rec) : null; lines.push(l); });
+    lines.sort(function(a, b){ return b.v - a.v; });
+    return lines;
   }
 
   // Play the rest of the mover's turn quickly: advance (adv / end) each phase; when that is refused (e.g. an
@@ -272,7 +361,7 @@ const CODE = `
       }
       if (!__S.quiet() && !G.gameOver) {
         var cs = cur, aa = a;
-        var ans = finishFlow(mover, function(){ rewind(cs); apply(aa); }, budget);
+        var ans = finishFlow(mover, function(){ rewind(cs); apply(aa); }, budget, true);
         if (!ans) return null;
         steps.push({ inputs: [a].concat(ans), vis: visSig(mover), opp: true });
       } else steps.push({ inputs: [a], vis: visSig(mover), opp: false });
@@ -280,17 +369,23 @@ const CODE = `
     return { steps: steps, v: evaluate(mover), end: __S.quiet() ? __S.snap() : null };
   }
 
-  // Play 'turns' more turns from a quiet snapshot, each side by its own planner (smaller budget); score for 'judge'.
-  function lookahead(judge, snap, turns, cfg, budget){
+  // Play 'turns' more turns from a quiet snapshot, each side by its own planner (a fast greedy line of play), until
+  // the time 'until'; each turn gets an even share of what is left. Returns the horizon value for 'judge', or null
+  // when not even one turn could be played (the caller then ranks the line below the looked-ahead ones).
+  function lookahead(judge, snap, turns, cfg, budget, until){
     rewind(snap);
+    var saved = budget.deadline, played = 0, savedCheap = budget.cheap; budget.cheap = true;
     for (var t = 0; t < turns && !G.gameOver; t++) {
       if (!__S.quiet()) break;
+      var now = NOW(); if (now >= until && played > 0) break;
+      budget.deadline = now + Math.max(5, (until - now) / (turns - t));
       var mover = dec().seat || G.turn;
       var lines = turnSearch(mover, __S.snap(), cfg.future, budget);
       if (!lines.length) break;
-      rewind(lines[0].end);
+      rewind(lines[0].end); played++;
     }
-    return evaluate(judge);
+    budget.deadline = saved; budget.cheap = savedCheap;
+    return played > 0 || G.gameOver ? evaluate(judge) : null;
   }
 
   // ── live bookkeeping and the decision ──
@@ -322,13 +417,13 @@ const CODE = `
     for (var i = 0; i < all.length; i++) if (all[i] && all[i].id === a.id) return true;
     return false;
   }
-  function noteApplied(a){ if (__S.quiet()) { live.quiet = __S.snap(); live.path = []; } else if (a) live.path.push(a); }
+  function noteApplied(a){ trackSeen(); if (__S.quiet()) { live.quiet = __S.snap(); live.path = []; } else if (a) live.path.push(a); }
 
   function plan(w, opts){
     opts = opts || {};
-    var N = Math.max(1, opts.N || 1), t0 = Date.now();
+    var N = Math.max(1, opts.N || 1), t0 = NOW();
     var cfg = { own: { width: opts.width || 3, maxDepth: opts.maxDepth || 18 }, future: { width: opts.futureWidth || 1, maxDepth: opts.maxDepth || 18, greedy: true } };
-    var budget = { evals: 0, max: opts.maxEvals || 20000, deadline: t0 + (opts.ms || 20000) };
+    var budget = { evals: 0, max: opts.maxEvals || 20000, deadline: t0 + (opts.ms || 20000), tm: { main: 0, fin: 0, calls: 0, groups: 0, worlds: 0, flow: 0 } };
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
 
     // 1) follow the current plan while what it expected is what the bot sees
@@ -337,16 +432,24 @@ const CODE = `
     var quietNow = __S.quiet();
     if (!quietNow && !live.quiet) return { move: __M.candidates(w)[0], why: 'no anchor' };
     var anchor = quietNow ? __S.snap() : live.quiet, path = quietNow ? [] : live.path.slice();
-    var keepIds = {}; path.forEach(function(a){ if (a && a.id && a.s && a.s !== w) keepIds[a.id] = 1; });   // the opponent's cards played since
+    var known = seenInHand[opp(w)] || {};
     // Worlds are added until the best first move is clearly ahead of the rest (paired: every world scores every first
     // move, so differences come from the moves, not the deals). A move that is not clearly better than simply passing
     // (Done / advance / end) loses to passing — acting on luck-noise is how a search talks itself into bad plays.
     var minW = opts.worlds || 3, maxW = opts.maxWorlds || Math.max(minW, minW * 4);
     var agg = new Map();             // first-move key → { sum, sq, n, line, vals:[per world] }
+    var tStart = NOW(), total = budget.deadline - tStart;
+    // With lookahead, a world's time is split: its own turn first, then the rest of the time playing the best few
+    // lines on N-1 more turns.
+    var ownFrac = N > 1 ? (opts.ownFrac || 0.45) : 1;
     for (var k = 0; k < maxW; k++) {
-      if (k >= minW && Date.now() > budget.deadline) break;
+      if (k >= minW && NOW() > tStart + total) break;
+      // each of the first minW worlds gets an even share of the thinking time (extra worlds use what is left)
+      var wEnd = k < minW ? tStart + total * (k + 1) / minW : tStart + total, wNow = NOW();
+      budget.deadline = wNow + (wEnd - wNow) * ownFrac;
       var seed = ((opts.seed >>> 0) || 1) * 7919 + k * 104729;
-      var mkWorld = function(){ rewind(anchor); determinize(w, mb(seed), keepIds); for (var p = 0; p < path.length; p++) apply(path[p]); };
+      // the real position (anchor + the inputs since), then everything w cannot see re-dealt
+      var mkWorld = function(){ rewind(anchor); for (var p = 0; p < path.length; p++) apply(path[p]); determinize(w, mb(seed), known); };
       mkWorld();
       var dd = dec(); if (isOver(dd) || dd.seat !== w) continue;
       var lines;
@@ -367,10 +470,19 @@ const CODE = `
       }
       lines.sort(function(a, b){ return b.v - a.v; });
       var topK = opts.topK || 6;
+      budget.deadline = wEnd;
       for (var j = 0; j < lines.length; j++) {
         var L = lines[j], val = L.v;
-        if (N > 1 && j < topK && L.end && Date.now() < budget.deadline) val = lookahead(w, L.end, N - 1, cfg, budget);
-        else if (N > 1 && j >= topK) val = L.v - 1e3;
+        if (N > 1) {
+          // the best few lines are played on N-1 more turns (each an even share of the world's remaining time; the
+          // best two always); a line that could not be looked ahead ranks below every line that was
+          var la = null, nNow = NOW();
+          if (j < topK && L.end && !(L.v >= 1e6 || L.v <= -1e6) && (j < 2 || nNow < wEnd)) {
+            var share = Math.max(10, (wEnd - nNow) / Math.max(1, Math.min(topK, lines.length) - j));
+            la = lookahead(w, L.end, N - 1, cfg, budget, nNow + share);
+          }
+          val = la != null ? la : (L.v >= 1e6 || L.v <= -1e6) ? L.v : L.v - 1e3;
+        }
         var kk = key(L.first), a = agg.get(kk) || { sum: 0, sq: 0, n: 0, line: L };
         a.sum += val; a.sq += val * val; a.n++; agg.set(kk, a);
       }
@@ -407,16 +519,16 @@ const CODE = `
     }
     var line = best.line;
     cache = { seat: w, turnNo: G._turnNo || 0, steps: line.steps, si: 0, ii: 1 };
-    return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: Date.now() - t0, why: 'search' };
+    return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow };
   }
 
   window.__B = { features: features, terms: terms, evaluate: evaluate, plan: plan, determinize: determinize, noteApplied: noteApplied,
     visSig: visSig, setWeights: function(x){ W = x; }, resetPlan: function(){ cache = null; }, live: live,
     // debugging: one turn search from the live position (no worlds), summarised
-    _ts: function(w, cfgx){ var b = { evals: 0, max: 1e9, deadline: Date.now() + 8000, trace: [] }; var root = __S.snap();
+    _ts: function(w, cfgx, ms){ var t0 = NOW(); var b = { evals: 0, max: 1e9, deadline: NOW() + (ms || 8000), trace: [], t0: t0 }; var root = __S.snap();
       var out = turnSearch(w, root, cfgx || { width: 2, maxDepth: 18 }, b); rewind(root);
-      return { lines: out.map(function(l){ return { first: l.first, v: Math.round(l.v), steps: l.steps.length, end: !!l.end }; }), evals: b.evals, trace: b.trace.slice(0, 40) }; },
-    _finishTurnDebug: function(w){ var b = { evals: 0, max: 1e9, deadline: Date.now() + 8000 }; var root = __S.snap(); var r = finishTurn(w, root, b); var res = r ? { v: r.v, steps: r.steps.map(function(s){ return s.inputs.map(function(i){ return i.t; }).join('+'); }), end: !!r.end } : null; var after = { turn: G.turn, phase: G.phase, quiet: __S.quiet(), dec: __M.decider() }; rewind(root); return { res: res, after: after }; } };
+      return { lines: out.map(function(l){ return { first: l.first, v: Math.round(l.v * 100) / 100, moves: l.steps.map(function(st){ return st.inputs.map(function(i){ return i.t + (i.z ? ':' + i.o + '/' + i.z : '') + (i.slot ? ':' + i.slot : ''); }).join('+'); }).join(' , '), end: !!l.end }; }), evals: b.evals, ms: NOW() - t0, trace: b.trace }; },
+    _finishTurnDebug: function(w){ var b = { evals: 0, max: 1e9, deadline: NOW() + 8000 }; var root = __S.snap(); var r = finishTurn(w, root, b); var res = r ? { v: r.v, steps: r.steps.map(function(s){ return s.inputs.map(function(i){ return i.t; }).join('+'); }), end: !!r.end } : null; var after = { turn: G.turn, phase: G.phase, quiet: __S.quiet(), dec: __M.decider() }; rewind(root); return { res: res, after: after }; } };
 })();
 `;
 
@@ -425,6 +537,7 @@ function install(eng) {
   // Timers due within a few seconds of game time run now; a flow that is polling while a prompt waits (e.g. a
   // Casualty Draw step, every 40 ms) just continues on the next call instead of spinning through minutes.
   eng.ctx.__settle = () => eng.settle(3000);
+  eng.ctx.__realNow = () => Date.now();          // Node's real clock (the realm's Date is the virtual game clock)
   eng.run(CODE);
 }
-module.exports = { install };
+module.exports = { install, CODE };

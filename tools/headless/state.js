@@ -16,7 +16,29 @@ const CODE = `
     for (var k in v) { if (!Object.prototype.hasOwnProperty.call(v, k)) continue; var c = deepClone(v[k], memo); if (c !== undefined) o[k] = c; }
     return o;
   }
-  function fastClone(v){ try { return window.__structuredClone(v); } catch(e) { return deepClone(v, new Map()); } }
+  // The position copy used for every rewind. A tree copy made in this realm, with every object copied once (shared
+  // references — e.g. the last attacker IS the Rank Zone card — stay shared). ~2x faster than structuredClone. Anything
+  // that is not plain data, a Set or a Map (a Date, a DOM node, a class instance) falls back to the structural copy.
+  function NotPlain(){}
+  var OP = Object.prototype;
+  function treeClone(root){
+    var memo = new Map();
+    function fc(v){
+      var hit = memo.get(v); if (hit !== undefined) return hit;
+      if (Array.isArray(v)) { var a = new Array(v.length); memo.set(v, a); for (var i = 0; i < v.length; i++) { var x = v[i]; a[i] = (x === null || typeof x !== 'object') ? x : fc(x); } return a; }
+      var pr = Object.getPrototypeOf(v);
+      if (pr !== OP && pr !== null) {
+        if (v instanceof Set) { var ss = new Set(); memo.set(v, ss); v.forEach(function(x){ ss.add((x === null || typeof x !== 'object') ? x : fc(x)); }); return ss; }
+        if (v instanceof Map) { var mm = new Map(); memo.set(v, mm); v.forEach(function(x, key){ mm.set(key, (x === null || typeof x !== 'object') ? x : fc(x)); }); return mm; }
+        throw new NotPlain();
+      }
+      var o = {}; memo.set(v, o);
+      for (var k in v) { var y = v[k]; if (typeof y === 'function') continue; o[k] = (y === null || typeof y !== 'object') ? y : fc(y); }
+      return o;
+    }
+    return fc(root);
+  }
+  function fastClone(v){ try { return treeClone(v); } catch(e) { return deepClone(v, new Map()); } }
   function modal(){ return document.getElementById('modal'); }
   function picker(){ return document.getElementById('picker-modal'); }
   function openEl(e){ return !!(e && e.classList.contains('open')); }
@@ -28,8 +50,7 @@ const CODE = `
         && !(typeof _modalQueue !== 'undefined' && _modalQueue.length)
         && !(window.ruSettlePending && window.ruSettlePending()));
     },
-    // The position is copied with the native structured clone (shared references and values like Infinity kept —
-    // a JSON copy lost them, leaktest.js caught it); the structural copy is the fallback if G ever holds a function.
+    // (a JSON copy lost shared references and values like Infinity — leaktest.js caught it)
     snap: function(){
       return { G: fastClone(G), rng: window.ruRngState(), cq: (window._RUcq || []).slice() };
     },
@@ -39,7 +60,7 @@ const CODE = `
       try { _modalOpen = false; } catch(e){}
       var m = modal(); if (m) { m.classList.remove('open'); m._ruStash = null; m._ruOwner = null; m._ruMirror = false; m._ruViewOnly = false; }
       var pk = picker(); if (pk) { pk.classList.remove('open'); pk._ruOwner = null; pk._ruMirror = false; }
-      try { PCK = null; } catch(e){}
+      try { PCK = { cb: null, pool: [], sel: [], max: 1, min: 1, opt: false, npMode: false, npMin: 0 }; } catch(e){}   // the game's own idle picker state
       try { SF = null; } catch(e){}
       if (window.ruSettleReset) window.ruSettleReset();
       window._RUcq = s.cq.slice(); window._RUcbusy = false;
