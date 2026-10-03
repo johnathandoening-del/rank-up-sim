@@ -364,6 +364,8 @@ function ruInstallOnlineSeats(g,cfg){
   g._localSeat=cfg.spectator?null:((cfg.mySeat===1)?'ai':'player');
   if(g.player){g.player._netName=ruCleanName(cfg.name0)||'Player 1';g.player.isBot=false;}
   if(g.ai){g.ai._netName=ruCleanName(cfg.name1)||'Player 2';g.ai.isBot=false;}
+  // further seats of a 3-4 seat lockstep match (solo radial modes)
+  ['ai2','ai3'].forEach(function(w){ if(g[w]){ g[w]._netName=ruCleanName(cfg.names&&cfg.names[w])||(w==='ai2'?'AI 2':'AI 3'); g[w].isBot=false; } });
   // SOLO with the thinking bots: the same lockstep rules, no network. Bot seats are input-driven like a remote
   // player (ai/host.js gives them their inputs); _botSeats holds each bot seat's tier (ladder key).
   if(cfg.solo){g._soloNet=true;g._botSeats=Object.assign({},cfg.solo.bots||{});}
@@ -472,7 +474,7 @@ window.startGame=startGame;
 // Each bot seat keeps its chosen tier (ladder key) and its Δ Deck / Area Support, chosen for its class and tier.
 function ruSoloBotConfig(mode){
   if(!window.RUBots||!window.RUBots.available())return null;
-  if(['standard','tournament','gauntlet','ai-vs-ai'].indexOf(mode)===-1)return null;
+  if(['standard','tournament','gauntlet','ai-vs-ai','1v1v1','royale4'].indexOf(mode)===-1)return null;
   const aivai=mode==='ai-vs-ai', evo=evolutionsAllowed();
   const tierOf=function(w){return window.ru14KeyFor?window.ru14KeyFor(w):'basic-1';};
   const botDelta=function(cls,w){return (evo&&window.ruBotDeltaDeckFor)?window.ruBotDeltaDeckFor(cls,w):[];};
@@ -486,6 +488,19 @@ function ruSoloBotConfig(mode){
   const dA=aivai?botDelta(pCls,'player'):(evo&&window.legalDeltaDeck(window.RU_PLAYER_DELTA_DECK).ok?(window.RU_PLAYER_DELTA_DECK||[]).slice():[]);
   const dB=botDelta(aCls,'ai');
   const bots={ai:tierOf('ai')};if(aivai)bots.player=tierOf('player');
+  // 1v1v1 / Royale: you and two or three bots, in a turn order drawn now (every copy of the game uses the same)
+  if(mode==='1v1v1'||mode==='royale4'){
+    const seats=mode==='royale4'?['player','ai','ai2','ai3']:['player','ai','ai2'];
+    const cls={player:pCls,ai:aCls,ai2:aCls2,ai3:aCls3}, decks={player:dA}, areas={player:window.RU_PLAYER_AREA_SUPPORT||null}, names={player:'You',ai:'AI',ai2:'AI 2',ai3:'AI 3'};
+    seats.forEach(function(w){ if(w==='player')return; bots[w]=tierOf(w); decks[w]=botDelta(cls[w],w); areas[w]=botArea(w,decks[w]); });
+    const order=seats.slice(); for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=order[i];order[i]=order[j];order[j]=t;}
+    const classes={}; seats.forEach(function(w){classes[w]=cls[w];});
+    return {
+      seed:(window.RU_SOLO_SEED!=null)?(window.RU_SOLO_SEED>>>0):((Math.random()*0xFFFFFFFF)>>>0), mySeat:0, spectator:false, mode:mode,
+      order:order, classes:classes, names:names, seat0Class:pCls, seat1Class:aCls, firstSeat:order[0]==='player'?0:1,
+      name0:'You', name1:'AI', allowEvolutions:evo, deltaDecks:decks, areaSupports:areas, solo:{bots:bots}
+    };
+  }
   return {
     // (RU_SOLO_SEED / RU_SOLO_FIRST: replay one exact match when testing)
     seed:(window.RU_SOLO_SEED!=null)?(window.RU_SOLO_SEED>>>0):((Math.random()*0xFFFFFFFF)>>>0), mySeat:aivai?null:0, spectator:aivai,
@@ -611,11 +626,21 @@ function ruModeOwner(){
   return null;
 }
 window.ruModeOwner=ruModeOwner;
+// With more than one seat able to react (1v1v1 / Royale), the windows go round them in turn order: G._offTurnAt holds
+// the seat being offered windows now (game state, so every copy of the game agrees), and each window's "passed"
+// key belongs to one reacting seat (ruOffTurnKey).
+function ruOffTurnCandidates(){
+  const order=G.sideOrder||['player','ai'], i=order.indexOf(G.turn), out=[];
+  for(let k=1;k<=order.length;k++){const w=order[(i+k)%order.length];if(w!==G.turn&&G[w]&&isHumanSeat(w)&&!(G.eliminated&&G.eliminated[w])&&out.indexOf(w)===-1)out.push(w);}
+  return out;
+}
 function ruOffTurnSeat(){
   if(!G||!G.turn||G.gameOver)return null;
   if(ruIsOnline()){
-    const s=(G.sideOrder||['player','ai']).find(function(w){return w!==G.turn&&G[w]&&isHumanSeat(w)&&!(G.eliminated&&G.eliminated[w]);});
-    return s||null;
+    const c=ruOffTurnCandidates(); if(!c.length)return null;
+    const st=G._offTurnAt;
+    if(st&&st.k===G.exchange+':'+G.turn&&c.indexOf(st.seat)!==-1)return st.seat;
+    return c[0];
   }
   // Solo: the human 'player' reacts during a bot's turn (in AI-vs-AI watch the 'player' bot does, its prompts
   // auto-answered by the watch mode).
@@ -634,14 +659,25 @@ function ruResumeAfterOffTurnWindow(ph){
 // from aiDo). Same order and once-per-phase pass keys as the bot-turn path.
 function ruOfferOffTurnWindows(ph){
   if(!G||G.gameOver||ruBotControlledSeat(G.turn)||!ruOffTurnSeat())return;
-  const key=G.exchange+':'+ph+':'+G.turn;
-  if(window.areaOpponentTurnEntries&&G._ruAreaOpponentPassKey!==key&&areaOpponentTurnEntries().length){openAreaOpponentTurnWindow(ph);return;}
-  if(window.hasteSkillEntries&&G._ru164HasteSkillPassKey!==key&&hasteSkillEntries(ph).length){openHasteSkillWindow(ph);return;}
-  if(ph==='battle'&&window.eligibleHasteAttackers164&&eligibleHasteAttackers164().length&&(G._ru164PendingHasteAttack||G._ru135HasteAttackReady)&&G._ruHastePassKey!==key){openHasteAttackWindow(ph);return;}
-  if(window.nonHasteOpponentEntries&&G._ruGeneralOpponentPassKey!==key&&nonHasteOpponentEntries(ph).length){openGeneralOpponentWindow(ph);return;}
-  if(window.hasteOpponentEntries&&G._ruHastePassKey!==key&&hasteOpponentEntries(ph).length){openOpponentTurnSkillWindow(ph);return;}
+  // the seat being offered windows now goes on; then each next reacting seat in turn order
+  const cands=ruIsOnline()?ruOffTurnCandidates():[ruOffTurnSeat()], ek=G.exchange+':'+G.turn, st=G._offTurnAt;
+  for(let i=(st&&st.k===ek&&st.ph===ph)?Math.max(0,cands.indexOf(st.seat)):0;i<cands.length;i++){
+    if(ruIsOnline())G._offTurnAt={k:ek,ph:ph,seat:cands[i]};
+    if(ruOfferOffTurnWindowsFor(ph))return;
+  }
 }
-window.ruOffTurnSeat=ruOffTurnSeat;window.ruResumeAfterOffTurnWindow=ruResumeAfterOffTurnWindow;window.ruOfferOffTurnWindows=ruOfferOffTurnWindows;
+function ruOfferOffTurnWindowsFor(ph){
+  const key=ruOffTurnKey(ph);
+  if(window.areaOpponentTurnEntries&&G._ruAreaOpponentPassKey!==key&&areaOpponentTurnEntries().length){openAreaOpponentTurnWindow(ph);return true;}
+  if(window.hasteSkillEntries&&G._ru164HasteSkillPassKey!==key&&hasteSkillEntries(ph).length){openHasteSkillWindow(ph);return true;}
+  if(ph==='battle'&&window.eligibleHasteAttackers164&&eligibleHasteAttackers164().length&&(G._ru164PendingHasteAttack||G._ru135HasteAttackReady)&&G._ruHastePassKey!==key){openHasteAttackWindow(ph);return true;}
+  if(window.nonHasteOpponentEntries&&G._ruGeneralOpponentPassKey!==key&&nonHasteOpponentEntries(ph).length){openGeneralOpponentWindow(ph);return true;}
+  if(window.hasteOpponentEntries&&G._ruHastePassKey!==key&&hasteOpponentEntries(ph).length){openOpponentTurnSkillWindow(ph);return true;}
+  return false;
+}
+// A window's "passed" key: once per phase of a turn, for one reacting seat.
+function ruOffTurnKey(ph){return G.exchange+':'+ph+':'+G.turn+':'+(ruOffTurnSeat()||'');}
+window.ruOffTurnSeat=ruOffTurnSeat;window.ruResumeAfterOffTurnWindow=ruResumeAfterOffTurnWindow;window.ruOfferOffTurnWindows=ruOfferOffTurnWindows;window.ruOffTurnKey=ruOffTurnKey;
 // Morale Damage a seat took from the most recent attack against it (read by Subtract / Revive / …).
 function ruLastMoraleTo(w){return (G&&G._lastMoraleTo&&G._lastMoraleTo[w])||0;}
 function ruSetLastMoraleTo(w,n){if(!G)return;G._lastMoraleTo=G._lastMoraleTo||{};G._lastMoraleTo[w]=n;}
@@ -872,8 +908,10 @@ function makeGameState(seats,firstTurn,clsFor,buildOrder){
 function initGame(){
   var netCfg=window.RU_NET_CONFIG||null;   // {seed, mySeat, seat0Class, seat1Class, firstSeat} for online mirrored-local
   const _mode=(window.modeState&&window.modeState.mode);
-  const is4Way=!netCfg && _mode==='royale4';                 // 4-player free-for-all (Royale)
-  const is3Way=!netCfg && _mode==='1v1v1';
+  // (a lockstep match names its own mode: solo radial matches with the thinking bots are lockstep too)
+  const _cfgMode=netCfg?(netCfg.mode||null):_mode;
+  const is4Way=_cfgMode==='royale4';                         // 4-player free-for-all (Royale)
+  const is3Way=_cfgMode==='1v1v1';
   const isRadial=is3Way||is4Way;                             // both use the radial (edge-facing) board layout
   const seats=is4Way?['player','ai','ai2','ai3']:is3Way?['player','ai','ai2']:['player','ai'];
   // Seed the game's deterministic RNG BEFORE any shuffle (turn order + all deck shuffles derive from it).
@@ -882,7 +920,14 @@ function initGame(){
   window.RU_INJECTED_SEED=null;
   window.ruSeedGame(_gameSeed);
   var sideOrder, firstTurn, clsFor, buildOrder=null;
-  if(netCfg){
+  if(netCfg&&netCfg.order){
+    // A lockstep match of 3-4 seats (solo radial modes with the thinking bots): the config gives the turn order
+    // and every seat's class, so every copy of the game builds the identical match.
+    sideOrder=netCfg.order.slice();
+    firstTurn=sideOrder[0];
+    clsFor=function(w){ return (netCfg.classes&&netCfg.classes[w])||(w==='player'?netCfg.seat0Class:netCfg.seat1Class); };
+    if(isRadial)log(`Turn order: ${sideOrder.map(w=>(netCfg.names&&netCfg.names[w])||w).join(' → ')}.`,'imp');
+  } else if(netCfg){
     // ONLINE: every client builds the IDENTICAL game from the room's seed, Seat 1 / Seat 2 classes and turn
     // order ('player' = Seat 1, 'ai' = Seat 2 — storage slots only). Which seat THIS device plays is
     // G._localSeat; it is used only for point of view and for which inputs this device may make. Your own
@@ -5000,19 +5045,19 @@ function aiDo(ph){
   // falls through to the legacy dispatch below.
   var is3Way=!!(G&&G.sideOrder&&G.sideOrder.length>=3);
   if(G&&G.turn&&G.turn!=='player'&&!G.gameOver){
-    var preAreaKey=G.exchange+':'+ph+':'+G.turn;
+    var preAreaKey=ruOffTurnKey(ph);
     if(G._ruAreaOpponentPassKey!==preAreaKey&&window.areaOpponentTurnEntries&&window.areaOpponentTurnEntries().length){window.openAreaOpponentTurnWindow(ph);return;}
-    var preHasteKey=G.exchange+':'+ph+':'+G.turn;
+    var preHasteKey=ruOffTurnKey(ph);
     if(window.hasteSkillEntries&&G._ru164HasteSkillPassKey!==preHasteKey&&window.hasteSkillEntries(ph).length){window.openHasteSkillWindow(ph);return;}
     if(ph==='battle'&&window.eligibleHasteAttackers164&&window.eligibleHasteAttackers164().length&&(G._ru164PendingHasteAttack||G._ru135HasteAttackReady)){window.openHasteAttackWindow(ph);return;}
-    var preGeneralKey=G.exchange+':'+ph+':'+G.turn;
+    var preGeneralKey=ruOffTurnKey(ph);
     if(window.nonHasteOpponentEntries&&G._ruGeneralOpponentPassKey!==preGeneralKey&&window.nonHasteOpponentEntries(ph).length){window.openGeneralOpponentWindow(ph);return;}
-    var preHasteOppKey=G.exchange+':'+ph+':'+G.turn;
+    var preHasteOppKey=ruOffTurnKey(ph);
     if(window.hasteOpponentEntries&&G._ruHastePassKey!==preHasteOppKey&&window.hasteOpponentEntries(ph).length){window.openOpponentTurnSkillWindow(ph);return;}
   }
   if(G&&G.turn&&G.turn!=='player'&&!G.gameOver&&(G.turn!=='ai'||is3Way)){return window.ru135RunBotSide(G.turn,ph);}
   if(G&&G.turn==='ai'&&!G.gameOver){
-    var areaKey=G.exchange+':'+ph+':'+G.turn;
+    var areaKey=ruOffTurnKey(ph);
     if(G._ruAreaOpponentPassKey!==areaKey&&window.areaOpponentTurnEntries().length){window.openAreaOpponentTurnWindow(ph);return;}
   }
   // (was aiDoL5) Haste promote + opponent-turn Haste skill/attack windows.
@@ -5020,7 +5065,7 @@ function aiDo(ph){
   function side(w){return G&&G[w];}
   if(G&&G.turn==='ai'&&ph==='promotion'&&side('ai')&&side('ai').class==='haste'){window.aiPromoteHaste();return;}
   if(G&&G.turn==='ai'){
-    var hasteKey=G.exchange+':'+ph+':'+G.turn;
+    var hasteKey=ruOffTurnKey(ph);
     if(G._ru164HasteSkillPassKey!==hasteKey&&window.hasteSkillEntries(ph).length){window.openHasteSkillWindow(ph);return;}
     if(ph==='battle'&&window.eligibleHasteAttackers164().length&&(G._ru164PendingHasteAttack||G._ru135HasteAttackReady)){window.openHasteAttackWindow(ph);return;}
   }
@@ -5030,12 +5075,12 @@ function aiDo(ph){
   if(G&&G.turn==='ai'&&ph==='battle'&&G._ru135HasteAttackReady&&window.eligibleHasteAttackers135().length){window.openHasteOpponentAttackWindow(ph);return;}
   // (was aiDoL3) General opponent-turn window.
   if(G&&G.turn==='ai'&&!G.gameOver){
-    const generalKey=`${G.exchange}:${ph}:${G.turn}`;
+    const generalKey=ruOffTurnKey(ph);
     if(G._ruGeneralOpponentPassKey!==generalKey&&window.nonHasteOpponentEntries(ph).length){window.openGeneralOpponentWindow(ph);return;}
   }
   // (was aiDoL2) Haste opponent-turn skill window.
   if(G&&G.turn==='ai'&&!G.gameOver){
-    const hasteOppKey=`${G.exchange}:${ph}:${G.turn}`;
+    const hasteOppKey=ruOffTurnKey(ph);
     if(G._ruHastePassKey!==hasteOppKey&&window.hasteOpponentEntries(ph).length){window.openOpponentTurnSkillWindow(ph);return;}
   }
   // (was aiDoL1 + aiDoBase) Token + guarded base dispatch (AI-thinking indicator, then _ai) + timeout net.
@@ -12638,7 +12683,7 @@ function useRetL2(idx,card){
     entries.forEach(e=>{body+=`<div style="border:1px solid rgba(255,230,0,.35);border-radius:5px;padding:.45rem;background:rgba(255,230,0,.04);"><strong>${e.card.name}</strong> <span style="color:var(--text-dim);font-size:.72rem;">(${e.zone}${e.where==='discard'?' / Drop':''})</span><br><span style="font-size:.7rem;color:var(--text-dim);">Cost: ${e.card.skillCost||'None'}<br>Effect: ${e.card.skillText||'No text.'}</span></div>`;});
     body+=`</div>`;
     const btns=entries.map(e=>({label:`Use ${e.card.name}`,cls:'mb-skill',fn:()=>{closeModal();useOpponentTurnEntry(e,ph);}}));
-    btns.push({label:'Pass',fn:()=>{closeModal();G._ruHastePassKey=`${G.exchange}:${ph}:${G.turn}`;ruResumeAfterOffTurnWindow(ph);}});
+    btns.push({label:'Pass',fn:()=>{closeModal();G._ruHastePassKey=ruOffTurnKey(ph);ruResumeAfterOffTurnWindow(ph);}});
     ruOwnPrompt(rw);
     openModal('Opponent-Turn Haste Skill Window',body,btns);
   }
@@ -12779,7 +12824,7 @@ function useRetL2(idx,card){
     entries.forEach(e=>{body+=`<div style="border:1px solid rgba(230,126,34,.42);border-radius:5px;padding:.45rem;background:rgba(230,126,34,.04);"><strong>${e.card.name}</strong> <span style="color:var(--text-dim);font-size:.72rem;">(${e.zone})</span><br><span style="font-size:.7rem;color:var(--text-dim);">Cost: ${e.card.skillCost||'None'}<br>Effect: ${e.card.skillText||'No text.'}</span></div>`;});
     body+='</div>';
     const btns=entries.map(e=>({label:`Use ${e.card.name}`,cls:'mb-skill',fn:()=>{closeModal();useNonHasteOpponentEntry(e,ph);}}));
-    btns.push({label:'Pass',fn:()=>{closeModal();G._ruGeneralOpponentPassKey=`${G.exchange}:${ph}:${G.turn}`;ruResumeAfterOffTurnWindow(ph);}});
+    btns.push({label:'Pass',fn:()=>{closeModal();G._ruGeneralOpponentPassKey=ruOffTurnKey(ph);ruResumeAfterOffTurnWindow(ph);}});
     ruOwnPrompt(rw);
     openModal('Opponent-Turn Reactive Skill Window',body,btns);
   }
@@ -14734,7 +14779,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function finishHasteWindow(ph){
     G._ru135HasteAttackOpen=false;G._ru135HasteAttackReady=false;
-    const key=G.exchange+':'+ph+':'+G.turn;G._ruHastePassKey=key;
+    const key=ruOffTurnKey(ph);G._ruHastePassKey=key;
     ruResumeAfterOffTurnWindow(ph);
   }
   // The reacting seat's opponent-turn attack: the defender (the turn seat) answers it like any attack.
@@ -22930,7 +22975,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     btns.push({label:'Pass',fn:function(){
       closeModal();
       G._ru164HasteSkillOpen = false;
-      var key = G.exchange + ':' + ph + ':' + G.turn;
+      var key = ruOffTurnKey(ph);
       G._ru164HasteSkillPassKey = key;
       G._ruHastePassKey = key;
       ruResumeAfterOffTurnWindow(ph);
@@ -22989,7 +23034,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     G._ru164PendingHasteAttack = false;
     G._ru164HasteAdvAllowed = false;
     G._ru135HasteAttackReady = false;
-    var key = G.exchange + ':' + ph + ':' + G.turn;
+    var key = ruOffTurnKey(ph);
     G._ruHastePassKey = key;
     ruResumeAfterOffTurnWindow(ph);
   }
@@ -25171,7 +25216,7 @@ window.ruSpecPace=function(base){
     entries.forEach(function(e){body+='<div style="border:1px solid rgba(180,100,200,.42);border-radius:5px;padding:.45rem;background:rgba(180,100,200,.05);"><strong>'+e.card.name+'</strong>: '+e.eff.label+'<br><span style="font-size:.7rem;color:var(--text-dim);">Cost: '+(e.eff.cost||'None')+'</span></div>';});
     body+='</div>';
     var btns=entries.map(function(e){return {label:'Use '+e.card.name+': '+e.eff.label,cls:'mb-skill',fn:function(){useAreaOpponentEntry(e,ph);}};});
-    btns.push({label:'Pass',fn:function(){closeModal();G._ruAreaOpponentPassKey=G.exchange+':'+ph+':'+G.turn;ruResumeAfterOffTurnWindow(ph);}});
+    btns.push({label:'Pass',fn:function(){closeModal();G._ruAreaOpponentPassKey=ruOffTurnKey(ph);ruResumeAfterOffTurnWindow(ph);}});
     ruOwnPrompt(rw);
     openModal('Area Card Effect Available',body,btns);
   }

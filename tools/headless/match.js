@@ -19,6 +19,8 @@ function newMatch(opts) {
     name0: 'P1', name1: 'P2', allowEvolutions: opts.evo !== false,
     deltaDecks: { player: opts.dd0 || [], ai: opts.dd1 || [] }, areaSupports: { player: null, ai: null },
     solo: opts.solo || undefined,    // { bots: { seat: tierKey } } — a solo match with the thinking bots (as the page builds it)
+    // 1v1v1 / Royale: the mode, the turn order and every seat's class
+    mode: opts.mode || undefined, order: opts.order || undefined, classes: opts.classes || undefined, names: opts.names || undefined,
   };
   eng.run('__H.start(' + JSON.stringify(cfg) + ')');
   eng.settle();

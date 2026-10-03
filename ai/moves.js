@@ -14,6 +14,8 @@ var MOVES_CODE = `
   var ZONES = ['rank','left-flank','right-flank','rear-flank','delta'];
   var ZKEY = { 'rank':'rankZone', 'left-flank':'leftFlank', 'right-flank':'rightFlank', 'rear-flank':'rearFlank' };
   function opp(w){ return w === 'player' ? 'ai' : 'player'; }
+  // every other living seat (one in a 1v1; two or three in 1v1v1 / Royale)
+  function opps(w){ return (G.sideOrder || ['player','ai']).filter(function(s){ return s !== w && G[s] && !(G.eliminated && G.eliminated[s]); }); }
   function modal(){ return document.getElementById('modal'); }
   function picker(){ return document.getElementById('picker-modal'); }
   function openShared(e){ return !!(e && e.classList.contains('open') && !e._ruViewOnly); }
@@ -83,7 +85,7 @@ var MOVES_CODE = `
     if (mode && mode !== 'normal') {
       out.push({ t:'cancel', s:seat });
       ZONES.forEach(function(z){ if (zoneCard(p, z)) out.push({ t:'zone', o:seat, z:z, s:seat }); });
-      ZONES.forEach(function(z){ if (zoneCard(o, z)) out.push({ t:'zone', o:opp(seat), z:z, s:seat }); });
+      opps(seat).forEach(function(os){ var oo = G[os]; ZONES.forEach(function(z){ if (zoneCard(oo, z)) out.push({ t:'zone', o:os, z:z, s:seat }); }); });
       if (mode === 'atk') out.push({ t:'direct', s:seat });
       return out;
     }

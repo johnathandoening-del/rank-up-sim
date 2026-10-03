@@ -15,7 +15,14 @@ const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstruc
 function game(g, tierA, tierB) {
   const seed = process.env.SEED ? Number(process.env.SEED) : 31000 + g * 17, c0 = process.env.CLS0 || CLASSES[(g * 4 + 1) % 15], c1 = process.env.CLS1 || CLASSES[(g * 9 + 6) % 15];
   const page = createEngine({ seed }); nopaint.install(page);
-  newMatch({ engine: page, seed, cls0: c0, cls1: c1, firstSeat: process.env.FIRST != null ? Number(process.env.FIRST) : g % 2, solo: { bots: { player: tierA, ai: tierB } } });
+  // MODE=1v1v1 / royale4: three or four bot seats in a turn order drawn from the game number
+  const mode = process.env.MODE || null, seatList = mode === 'royale4' ? ['player', 'ai', 'ai2', 'ai3'] : mode === '1v1v1' ? ['player', 'ai', 'ai2'] : null;
+  const classes = seatList ? Object.fromEntries(seatList.map((w, i) => [w, CLASSES[(g * 4 + 1 + i * 5) % 15]])) : null;
+  const order = seatList ? seatList.slice().sort((a, b) => ((a.charCodeAt(a.length - 1) * (g + 3)) % 7) - ((b.charCodeAt(b.length - 1) * (g + 3)) % 7)) : null;
+  const bots = seatList ? Object.fromEntries(seatList.map((w) => [w, w === 'player' ? tierA : tierB])) : { player: tierA, ai: tierB };
+  newMatch({ engine: page, seed, cls0: classes ? classes.player : c0, cls1: classes ? classes.ai : c1, firstSeat: process.env.FIRST != null ? Number(process.env.FIRST) : g % 2,
+    solo: { bots }, mode: mode || undefined, order: order || undefined, classes: classes || undefined });
+  if (seatList) console.log(`  ${mode}: order ${order.join(' > ')}, classes ${seatList.map((w) => classes[w]).join('/')}`);
   brain.install(page);                                  // (the page uses only __S / __M read-only helpers from it)
   const worker = createEngine({ seed: 1 }); nopaint.install(worker); brain.install(worker);
   // the page's bookkeeping (host.js): last quiet position before an input + the inputs since
@@ -30,7 +37,7 @@ function game(g, tierA, tierB) {
   for (let steps = 0; steps < 4000; steps++) {
     const d = page.run('__M.decider()');
     if (d.kind === 'over' || d.kind === 'none') break;
-    const tier = d.seat === 'player' ? tierA : tierB;
+    const tier = bots[d.seat] || tierB;
     if (!anchor) { anchor = snap(); path = []; }
     // the worker: restore + replay + plan
     const tw = Date.now();
@@ -65,7 +72,8 @@ function game(g, tierA, tierB) {
     const errs = page.errors.length + worker.errors.length;
     if (errs) { console.log(`  game ${g} step ${steps}: errors`, page.errors.concat(worker.errors).slice(0, 3)); page.errors.length = 0; worker.errors.length = 0; }
   }
-  const res = page.run('({ over: !!G.gameOver, w: G.__winner || null, t: G._turnNo || 0 })');
+  const res = page.run('({ over: !!G.gameOver, w: G.__winner || null, t: G._turnNo || 0, out: Object.keys(G.eliminated || {}) })');
+  if (seatList) console.log(`  eliminated: ${res.out.join(', ') || '-'}`);
   console.log(`game ${g} ${c0} vs ${c1}: ${res.over ? 'winner ' + res.w : 'UNFINISHED'} turn ${res.t}, ${inputs} inputs, ${mism} mismatches, ${Math.round((Date.now() - t0) / 1000)} s`);
   return { mism, over: res.over };
 }

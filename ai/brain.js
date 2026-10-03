@@ -20,16 +20,22 @@ var BRAIN_CODE = `
   // Thinking time is REAL time. (Inside the engine Date.now() is the game's virtual clock — it jumps by seconds
   // whenever timers run — so it must never measure a thinking budget.)
   var NOW = window.__realNow || function(){ return Date.now(); };
-  function opp(w){ return w === 'player' ? 'ai' : 'player'; }
+  // Seats: two in a 1v1, three or four in 1v1v1 / Royale (turn order = G.sideOrder). An eliminated seat is out.
+  function seats(){ return (G && G.sideOrder ? G.sideOrder : ['player', 'ai']).filter(function(s){ return G && G[s]; }); }
+  function out(s){ return !!(G && G.eliminated && G.eliminated[s]); }
+  function opps(w){ return seats().filter(function(s){ return s !== w && !out(s); }); }
+  function opp(w){ var o = opps(w); return o.length ? o[0] : (w === 'player' ? 'ai' : 'player'); }
   function npOf(c){ return c ? (c.currentNP != null ? c.currentNP : (c.numeral || 0)) : 0; }
   function rpOf(c){ return c ? (c.currentRP != null ? c.currentRP : (c.rank || 0)) : 0; }
   function field(p){ return [p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank].filter(Boolean); }
-  function lowlands(){ return ['player','ai'].some(function(s){ return G[s] && (G[s].deadzone||[]).some(function(c){ return c && c.name === 'The Lowlands'; }); }); }
+  function lowlands(){ return seats().some(function(s){ return G[s] && (G[s].deadzone||[]).some(function(c){ return c && c.name === 'The Lowlands'; }); }); }
   function clamp(x,a,b){ return x < a ? a : x > b ? b : x; }
 
   // ── features & evaluation (antisymmetric: evaluate(opp) == -evaluate(me)) ──
-  function features(w){
-    var me = G[w], op = G[opp(w)], f = {};
+  // Features of w against ONE opponent o (default: the first living one — the only one in a 1v1).
+  function features(w, o){
+    o = o || opp(w);
+    var me = G[w], op = G[o], f = {};
     function side(p, pre){
       var fl = field(p);
       f[pre+'mp'] = p.mp || 0; f[pre+'cas'] = p.cas || 0;
@@ -62,7 +68,7 @@ var BRAIN_CODE = `
     var tm = threat(me, op), to = threat(op, me);
     f.m_threat = tm.dmg; f.o_threat = to.dmg; f.m_beats = tm.beats; f.o_beats = to.beats;
     f.lowlands = lowlands() ? 1 : 0;
-    f.tempo = G.turn === w ? 1 : -1;        // whose turn it is (antisymmetric)
+    f.tempo = G.turn === w ? 1 : (G.turn === o ? -1 : 0);        // whose turn it is (antisymmetric)
     return f;
   }
   var W = null;
@@ -96,12 +102,22 @@ var BRAIN_CODE = `
   // below 10 cards; a threat that can finish the other side next turn counts for whoever holds it.
   var W0 = { mv: 1, cv: 1, deck: 1, rank: 1.2, rankRP: 0, flank: 0.6, fieldN: 2.0, hand: 0.8, bank: 0.5, actions: 0.7, delta: 0, area: 0, maxNP: 0,
     deckRaw: 0.25, deckLow: -2.5, lethal: 20, danger: -10 };
+  // Value of the position for w: in a 1v1, w against its opponent; with more seats, the mean of w against each other
+  // seat (an eliminated opponent is a pair already won), so every opponent's strength counts. w eliminated = lost.
+  var PAIR_WON = 400;
   function evaluate(w){
     if (G.gameOver) { var win = G.__winner; return win === w ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
-    var t = terms(features(w)), wt = (W && W.w) || W0, s = 0;
-    for (var k in t) s += (wt[k] || 0) * t[k];
-    return s;
+    if (out(w)) return -1e6;
+    var wt = (W && W.w) || W0, all = seats().filter(function(s){ return s !== w; }), sum = 0;
+    all.forEach(function(o){
+      if (out(o)) { sum += PAIR_WON; return; }
+      var t = terms(features(w, o)), v = 0;
+      for (var k in t) v += (wt[k] || 0) * t[k];
+      sum += v;
+    });
+    return all.length ? sum / all.length : 0;
   }
+
 
   // ── hidden information ──
   function shuffleArr(a, r){ for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
@@ -111,28 +127,33 @@ var BRAIN_CODE = `
   // re-seeded. known: ids of opponent hand cards w has seen go there (they stay). Arrays are refilled in place —
   // a prompt that is open mid-action may hold a reference to them.
   function refill(arr, items){ arr.length = 0; for (var i = 0; i < items.length; i++) arr.push(items[i]); }
+  // known: { seat: { id: 1 } } — each opponent's hand cards w has seen.
   function determinize(w, r, known){
-    var me = G[w], op = G[opp(w)];
-    var hand = op.hand || [], slots = [], pool = [];
-    hand.forEach(function(c, i){ if (!(c && known && known[c.id])) { slots.push(i); pool.push(c); } });
-    pool = pool.concat(op.deck || []); shuffleArr(pool, r);
-    var nh = hand.slice(); slots.forEach(function(i, k){ nh[i] = pool[k]; });
-    refill(hand, nh); if (op.deck) refill(op.deck, pool.slice(slots.length));
+    var me = G[w];
+    seats().forEach(function(o){
+      if (o === w) return;
+      var op = G[o], kn = (known && known[o]) || {};
+      var hand = op.hand || [], slots = [], pool = [];
+      hand.forEach(function(c, i){ if (!(c && kn[c.id])) { slots.push(i); pool.push(c); } });
+      pool = pool.concat(op.deck || []); shuffleArr(pool, r);
+      var nh = hand.slice(); slots.forEach(function(i, k){ nh[i] = pool[k]; });
+      refill(hand, nh); if (op.deck) refill(op.deck, pool.slice(slots.length));
+    });
     if (me.deck) refill(me.deck, shuffleArr(me.deck.slice(), r));
     var st = window.ruRngState(); st.g = Math.floor(r() * 4294967296) | 0; st.ai = Math.floor(r() * 4294967296) | 0; window.ruRngRestore(st);
   }
   // Which cards in each seat's hand the OTHER seat has seen (they went to the hand from a public zone).
-  var seenInHand = { player: {}, ai: {} }, lastPublic = {};
+  var seenInHand = {}, lastPublic = {};
   function publicIds(){
     var o = {};
-    ['player', 'ai'].forEach(function(s){ var p = G[s]; if (!p) return;
+    seats().forEach(function(s){ var p = G[s]; if (!p) return;
       [].concat(field(p), p.discard || [], p.deadzone || [], p.bank || [], p.delta || []).forEach(function(c){ if (c) o[c.id] = 1; }); });
     return o;
   }
   function trackSeen(){
     if (!G || !G.player) return;
-    ['player', 'ai'].forEach(function(s){
-      var k = seenInHand[s], now = {};
+    seats().forEach(function(s){
+      var k = seenInHand[s] = seenInHand[s] || {}, now = {};
       (G[s].hand || []).forEach(function(c){ if (!c) return; now[c.id] = 1; if (lastPublic[c.id]) k[c.id] = 1; });
       Object.keys(k).forEach(function(id){ if (!now[id]) delete k[id]; });
     });
@@ -140,11 +161,11 @@ var BRAIN_CODE = `
   }
   // What seat w can SEE (public zones, its own hand, counts of hidden things, the pending decision).
   function visSig(w){
-    var me = G[w], op = G[opp(w)];
+    var me = G[w];
     function ids(a){ return (a||[]).map(function(c){ return c && (c.id + ':' + npOf(c) + ':' + rpOf(c)); }).join(','); }
     function pub(p){ return [p.mp, p.cas, ids([p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank]), ids(p.discard), ids(p.deadzone), (p.bank||[]).length, (p.deck||[]).length, (p.hand||[]).length, (p.delta||[]).length].join('|'); }
     var d = __M.decider();
-    return [G.turn, G.phase, G.mode, G._turnNo || 0, pub(me), ids(me.hand), pub(op), d.kind, d.seat || '', d.n || 0].join('#');
+    return [G.turn, G.phase, G.mode, G._turnNo || 0, pub(me), ids(me.hand)].concat(opps(w).map(function(o){ return o + ':' + pub(G[o]); })).concat([d.kind, d.seat || '', d.n || 0]).join('#');
   }
 
   // ── engine stepping ──
@@ -469,7 +490,7 @@ var BRAIN_CODE = `
     var quietNow = __S.quiet();
     if (!quietNow && !live.quiet) return { move: fallback(w), why: 'no anchor' };
     var anchor = quietNow ? __S.snap() : live.quiet, path = quietNow ? [] : live.path.slice();
-    var known = seenInHand[opp(w)] || {};
+    var known = seenInHand;
     // Worlds are added until the best first move is clearly ahead of the rest (paired: every world scores every first
     // move, so differences come from the moves, not the deals). A move that is not clearly better than simply passing
     // (Done / advance / end) loses to passing — acting on luck-noise is how a search talks itself into bad plays.
