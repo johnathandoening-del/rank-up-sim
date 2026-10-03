@@ -16,6 +16,7 @@ const CODE = `
     for (var k in v) { if (!Object.prototype.hasOwnProperty.call(v, k)) continue; var c = deepClone(v[k], memo); if (c !== undefined) o[k] = c; }
     return o;
   }
+  function fastClone(v){ try { return window.__structuredClone(v); } catch(e) { return deepClone(v, new Map()); } }
   function modal(){ return document.getElementById('modal'); }
   function picker(){ return document.getElementById('picker-modal'); }
   function openEl(e){ return !!(e && e.classList.contains('open')); }
@@ -27,8 +28,10 @@ const CODE = `
         && !(typeof _modalQueue !== 'undefined' && _modalQueue.length)
         && !(window.ruSettlePending && window.ruSettlePending()));
     },
+    // The position is copied with the native structured clone (shared references and values like Infinity kept —
+    // a JSON copy lost them, leaktest.js caught it); the structural copy is the fallback if G ever holds a function.
     snap: function(){
-      return { G: deepClone(G, new Map()), rng: window.ruRngState(), cq: (window._RUcq || []).slice() };
+      return { G: fastClone(G), rng: window.ruRngState(), cq: (window._RUcq || []).slice() };
     },
     // Rewind to a snapshot: the abandoned line's open prompts / skill / queued continuations are dropped first.
     restore: function(s){
@@ -40,11 +43,11 @@ const CODE = `
       try { SF = null; } catch(e){}
       if (window.ruSettleReset) window.ruSettleReset();
       window._RUcq = s.cq.slice(); window._RUcbusy = false;
-      G = deepClone(s.G, new Map());
+      G = fastClone(s.G);
       window.ruRngRestore(s.rng);
     }
   };
 })();
 `;
-function install(eng) { eng.run(CODE); }
+function install(eng) { eng.ctx.__structuredClone = structuredClone; eng.run(CODE); }
 module.exports = { install };

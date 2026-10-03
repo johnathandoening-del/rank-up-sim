@@ -3577,6 +3577,10 @@ function endTurnCore(){
 function doSD(cardId,isFirstTurn){
   if(!G||G.mode!=='switchdraw')return;
   const w=G.turn,p=G[w];const idx=p.hand.findIndex(c=>c.id===cardId);if(idx===-1)return;
+  // Only a switchable card can be switched: an Action Card, or — on the first turn — an Area Card or a Rank³+
+  // Numeral (the dialog only offers these; the rule is enforced here, so no other input path can switch anything else).
+  // (Which switchdraw this is comes from the game itself, G._sdFirst — never from what an input claims.)
+  {const b=window.ruSwitchBuckets?ruSwitchBuckets(!!G._sdFirst):null;if(b&&b.must.indexOf(p.hand[idx])===-1&&b.can.indexOf(p.hand[idx])===-1)return;}
   const c=p.hand.splice(idx,1)[0];
   const ins=Math.min(p.deck.length,15);p.deck.splice(ins,0,c);draw(w,1);
   ruRecordSwitchOut(w, c);

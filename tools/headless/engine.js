@@ -144,7 +144,20 @@ function createEngine(opts) {
       }
       return ran;
     },
-    advance(ms) { const end = clock.now + ms; const n = eng.settle(ms); clock.now = Math.max(clock.now, end); return n; },
+    // Move virtual time forward by `ms`, firing EVERY timer due in that window — repeating ones included (the old
+    // AI-vs-AI mode is driven by an interval "watch pulse").
+    advance(ms) {
+      const end = clock.now + ms; let ran = 0;
+      for (;;) {
+        const t = clock.peek(); if (!t || t.at > end) break;
+        clock._pop(); if (t.dead) continue;
+        clock.now = Math.max(clock.now, t.at);
+        if (t.every) { t.at = clock.now + t.every; t.seq = ++clock.seq; clock._push(t); } else clock.live.delete(t.id);
+        try { t.fn.apply(W, t.args); } catch (e) { if (errors.length < 200) errors.push('timer: ' + (e && e.stack ? String(e.stack).split('\n').slice(0, 3).join(' | ') : e)); }
+        if (++ran > 2000000) { errors.push('advance: runaway timers'); break; }
+      }
+      clock.now = Math.max(clock.now, end); return ran;
+    },
     // One-shot timers still waiting (a position with any is not quiet: some flow is mid-way).
     pendingTimeouts() { return clock.pendingTimeouts(); },
     // Rewinding to a saved position: whatever the abandoned line still had scheduled must never fire.

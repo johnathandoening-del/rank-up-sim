@@ -74,3 +74,17 @@ Verified finally by playing as a human in the real UI.
   run through the input layer; deterministic. No-paint mode: parity OK (identical fingerprints), ~4,000
   inputs/s per core. RNG state exposed (`ruRngState` / `ruRngRestore`) — 10 reference games / 25,000
   fingerprints unchanged. Snapshot/restore: 48/48 leak checks identical; ~0.9 ms each.
+- **2026-10-03 (later)** — Old-bot baseline, 200 headless AI-vs-AI games per pairing (strong side's share of decided
+  games): Dis4 vs Inept 81.8% (target 100), Dis4 vs Dis3 52.0% (85), Dis4 vs Talented1 57.3% (100), Basic vs Inept
+  65.1% (95), DC2 vs DC1 55.7% (85). Move generation on the real engine (legal = the engine accepts it; probing never
+  disturbs the game, 0/4946). Planner v1: per-first-move beam over whole turns, adversarial answers to the other
+  player's mid-turn prompts, hidden info re-dealt per world, N-turn lookahead on top lines, plan kept until the
+  visible position deviates. Fixed: null moves (start+cancel) and comparing unfinished turns with finished ones.
+- **2026-10-03 (later)** — Game fix found by the bot: switchdraw accepted ANY hand card (only the dialog's buttons
+  enforced the rule); doSD now allows only Action Cards, plus Area / Rank³+ on the first turn, judged from the game's
+  own state (G._sdFirst), never the input's claim. Planner fixes: attack mode expanded into complete attacks; positions
+  reached twice are searched once; switchdraw switches are separate decisions (each reveals a card); planned inputs
+  that name a card not actually there drop the plan; adaptive paired world sampling with "don't act on noise";
+  lazy position copies (only kept lines are copied); virtual time per engine step capped (a polling Casualty Draw
+  step no longer spins minutes of timers). Tools: arena.js (parallel, mirrored deals), selfplay.js + fit.js
+  (learned evaluation weights).

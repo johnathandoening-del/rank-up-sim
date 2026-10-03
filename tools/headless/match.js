@@ -72,7 +72,7 @@ function newMatch(opts) {
     eng,
     pending() { return eng.run('__H.pending()'); },
     options(seat) { return eng.run('__H.options(' + JSON.stringify(seat) + ')'); },
-    apply(a) { eng.run('__H.apply(' + JSON.stringify(a) + ')'); eng.settle(); },
+    apply(a) { eng.run('__H.apply(' + JSON.stringify(a) + ')'); eng.settle(10000); },
     sig() { return eng.run('__H.sig()'); },
     winner() { return eng.run('G.__winner || null'); },
     turnNo() { return eng.run('G._turnNo || 0'); },
