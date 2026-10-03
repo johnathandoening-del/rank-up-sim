@@ -58,7 +58,9 @@
     if (!soloGame()) { stop(); return; }
     if (G.gameOver || pending) return;
     if (window.ruInboxBusy && window.ruInboxBusy()) return;
-    if (window.ruSettlePending && window.ruSettlePending()) return;       // the table is still settling
+    // (no waiting for the table to settle here: a continuation can be pending exactly BECAUSE a bot's prompt is open —
+    // the next Casualty Draw waits for this one's answer. The input itself is applied through ruCanApplyNow, which
+    // settles first, like an online player's input.)
     var d = decider();
     if (d.kind === 'over' || d.kind === 'none') return;
     var tier = tierOf(d.seat);
