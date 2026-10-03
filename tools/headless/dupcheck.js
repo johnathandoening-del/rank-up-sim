@@ -1,6 +1,6 @@
 'use strict';
 /* Card integrity check: random-play many games on the real engine; after every input, check that no card (the same
- * object, or the same id) sits in two places at once. Prints the input and the log lines that duplicated a card.
+ * object, or the same id) sits in two places at once, and that no Rank Zone is ever empty. Prints the input and the log lines that duplicated a card.
  *   node tools/headless/dupcheck.js [games=40] */
 const P = './';
 const { createEngine } = require(P+'engine'); const { newMatch } = require(P+'match'); const nopaint=require(P+'nopaint'); const moves=require(P+'moves');
@@ -16,6 +16,8 @@ const CHECK = `(function(){
       if (c.id && ids.has(c.id) && ids.get(c.id) !== c) out.push('SAME ID ' + c.id + ' ' + tag); else if (c.id) ids.set(c.id, c);
     }); });
   });
+  // a seat's Rank Zone is never empty (an empty rank holds the Numeral 0 placeholder)
+  ['player','ai'].forEach(function(s){ var p = G[s]; if (p && !p.rankZone) out.push('EMPTY RANK ZONE ' + s); });
   return out;
 })()`;
 const games = Number(process.argv[2] || 40); let found = 0;

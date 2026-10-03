@@ -364,6 +364,9 @@ function ruInstallOnlineSeats(g,cfg){
   g._localSeat=cfg.spectator?null:((cfg.mySeat===1)?'ai':'player');
   if(g.player){g.player._netName=ruCleanName(cfg.name0)||'Player 1';g.player.isBot=false;}
   if(g.ai){g.ai._netName=ruCleanName(cfg.name1)||'Player 2';g.ai.isBot=false;}
+  // SOLO with the thinking bots: the same lockstep rules, no network. Bot seats are input-driven like a remote
+  // player (ai/host.js gives them their inputs); _botSeats holds each bot seat's tier (ladder key).
+  if(cfg.solo){g._soloNet=true;g._botSeats=Object.assign({},cfg.solo.bots||{});}
   // Rule options come from the room (the host's choice), never from each device's own menu checkbox.
   g.allowEvolutions=(cfg.allowEvolutions!==false);
   // Both players' Δ Decks / Area Supports, so every client builds both seats' evolutions identically.
@@ -421,29 +424,39 @@ function startGame(){
   if(evolutionsAllowed()){const lg=window.legalDeltaDeck(window.RU_PLAYER_DELTA_DECK);if(!lg.ok){openModal('Illegal Δ Deck',`<p>${lg.msg}</p><p>Open <strong>Δ Deck</strong> and choose 1–3 legal Amalgamation cards, or clear it before starting the match.</p>`,[{label:'Open Δ Deck',cls:'mb-skill',fn:()=>{closeModal();openDeltaDeckBuilder();}},{label:'Close',fn:()=>closeModal()}]);return;}}
   // Tutorial flag off, then build the match.
   window.RUV10.tutorial.active=false;
-  el('title-screen').classList.remove('active');el('game-screen').classList.add('active');initGame();
+  // Two-seat solo matches are played by the THINKING bots: built under the online lockstep rules with every bot
+  // seat input-driven (ai/host.js chooses its inputs), so nothing in the engine decides for a bot. (The 3-/4-way
+  // radial modes keep the built-in bot until they have multi-seat lockstep support.)
+  const soloCfg=ruSoloBotConfig(window.modeState.mode||mode);
+  el('title-screen').classList.remove('active');el('game-screen').classList.add('active');
+  if(soloCfg){window.RU_NET_CONFIG=soloCfg;try{initGame();}finally{window.RU_NET_CONFIG=null;}}
+  else initGame();
   // Activation logs.
 
   setTimeout(()=>{window.refreshV10Buttons();},300);
-  // Δ Deck install.
-  setTimeout(window.installDeltaDecks,80);
+  // Δ Deck install (lockstep: now, before anyone can act).
+  if(soloCfg){try{window.installDeltaDecks();}catch(e){console.error(e);}}
+  else setTimeout(window.installDeltaDecks,80);
   // Mode setup: tournament/ai-vs-ai flags, render, bot kick-off.
   if(G){
     G.ruMode=window.modeState.mode||'standard';
     if(G.ruMode==='tournament')G.tournament=Object.assign({},window.modeState.tournament);
     if(G.ruMode==='ai-vs-ai'){
-      G.ruPov='player';G.player.isBot=true;G.ai.isBot=true;
+      G.ruPov='player';
+      if(!G._soloNet){G.player.isBot=true;G.ai.isBot=true;}
       try{log('AI vs AI mode: AI A and AI B will play automatically. Use POV to swap watched hand.','imp');}catch(e){}
     }
     if(G.ruMode==='tournament'){
       try{log('Tournament Mode: Round '+G.tournament.round+' of '+G.tournament.totalRounds+' in a '+G.tournament.size+'-player bracket. Difficulty rises each round.','imp');}catch(e){}
     }
     renderAll();
-    if(G.ruMode==='ai-vs-ai'&&G.turn==='player')setTimeout(()=>window.ru135RunBotSide('player',G.phase),650);
+    if(G.ruMode==='ai-vs-ai'&&G.turn==='player'&&!G._soloNet)setTimeout(()=>window.ru135RunBotSide('player',G.phase),650);
   }
   window.modeState.launchingTournament=false;
-  // AI-vs-AI watch pulse.
-  if(G&&G.ruMode==='ai-vs-ai')window.ru135StartWatchPulse();
+  // AI-vs-AI watch pulse (the built-in bot only).
+  if(G&&G.ruMode==='ai-vs-ai'&&!G._soloNet)window.ru135StartWatchPulse();
+  // The thinking bots take their seats.
+  if(G&&G._soloNet&&window.RUBots)window.RUBots.attach();
   // Gauntlet/tournament bracket intro.
   if(G){
     if(mode==='gauntlet'){G.ruMode='gauntlet';G.gauntlet=Object.assign({},window.RU1355_GAUNTLET);try{log('Gauntlet Mode: Match '+G.gauntlet.round+' of '+G.gauntlet.order.length+'. Route is custom for '+window.clsNameRU135(pCls)+'.','imp');}catch(e){}}
@@ -454,6 +467,37 @@ function startGame(){
   if((G&&G.ruMode==='tournament')||mode==='tournament')window.hideOldBracket();
 }
 window.startGame=startGame;
+// The lockstep config for a two-seat solo match with the thinking bots (null when they can't run here, or for a
+// mode they don't cover yet). The human is Seat 1 ('player'); in AI vs AI both seats are bots and nobody acts here.
+// Each bot seat keeps its chosen tier (ladder key) and its Δ Deck / Area Support, chosen for its class and tier.
+function ruSoloBotConfig(mode){
+  if(!window.RUBots||!window.RUBots.available())return null;
+  if(['standard','tournament','gauntlet','ai-vs-ai'].indexOf(mode)===-1)return null;
+  const aivai=mode==='ai-vs-ai', evo=evolutionsAllowed();
+  const tierOf=function(w){return window.ru14KeyFor?window.ru14KeyFor(w):'basic-1';};
+  const botDelta=function(cls,w){return (evo&&window.ruBotDeltaDeckFor)?window.ruBotDeltaDeckFor(cls,w):[];};
+  // a bot running a Δ Deck sometimes fields Amalgamation Nation (more often at higher tiers)
+  const botArea=function(w,deck){
+    if(typeof window.RU_AI_AREA_SUPPORT!=='undefined')return window.RU_AI_AREA_SUPPORT||null;
+    if(!deck||!deck.length)return null;
+    const i=(window.RU_LADDER_ORDER||[]).indexOf(tierOf(w));
+    return Math.random()<Math.min(0.5,0.15+0.35*Math.max(0,i)/13)?'area-amalgamation-nation':null;
+  };
+  const dA=aivai?botDelta(pCls,'player'):(evo&&window.legalDeltaDeck(window.RU_PLAYER_DELTA_DECK).ok?(window.RU_PLAYER_DELTA_DECK||[]).slice():[]);
+  const dB=botDelta(aCls,'ai');
+  const bots={ai:tierOf('ai')};if(aivai)bots.player=tierOf('player');
+  return {
+    // (RU_SOLO_SEED / RU_SOLO_FIRST: replay one exact match when testing)
+    seed:(window.RU_SOLO_SEED!=null)?(window.RU_SOLO_SEED>>>0):((Math.random()*0xFFFFFFFF)>>>0), mySeat:aivai?null:0, spectator:aivai,
+    seat0Class:pCls, seat1Class:aCls, firstSeat:(window.RU_SOLO_FIRST!=null)?window.RU_SOLO_FIRST:(Math.random()<0.5?0:1),
+    name0:aivai?'AI A':'You', name1:aivai?'AI B':'AI',
+    allowEvolutions:evo,
+    deltaDecks:{player:dA,ai:dB},
+    areaSupports:{player:aivai?botArea('player',dA):(window.RU_PLAYER_AREA_SUPPORT||null),ai:botArea('ai',dB)},
+    solo:{bots:bots}
+  };
+}
+window.ruSoloBotConfig=ruSoloBotConfig;
 
 // ═══════════════════════════════════════════
 // GAME STATE
@@ -638,7 +682,7 @@ window.ruOnlineSeatLabel=ruOnlineSeatLabel;
 function sideMeta(sideId){
   const ids=sideChrome(sideId);
   if(ruIsOnline()&&G[sideId]){
-    return Object.assign({controller:isHumanSeat(sideId)?'human':'ai',clsKey:G[sideId].class,label:sideNameLabel(sideId)},ids);
+    return Object.assign({controller:(G._botSeats&&G._botSeats[sideId])?'ai':(isHumanSeat(sideId)?'human':'ai'),clsKey:G[sideId].class,label:sideNameLabel(sideId)},ids);
   }
   const clsKey=(G&&G[sideId])?G[sideId].class:(sideId==='player'?pCls:sideId==='ai2'?aCls2:sideId==='ai3'?aCls3:aCls);
   if(sideId==='player')return Object.assign({controller:isHumanSeat('player')?'human':'ai',clsKey:clsKey,label:'YOU'},ids);
@@ -855,7 +899,9 @@ function initGame(){
   }
   G=makeGameState(sideOrder,firstTurn,clsFor,buildOrder);
   if(G){ G._seed=window.ruGameSeed(); if(netCfg)ruInstallOnlineSeats(G,netCfg); }
-  if(netCfg){
+  if(netCfg&&netCfg.solo){
+    try{log(`Coin flip: ${sideVerbLabel(firstTurn,'go','goes')} first!`,'imp');}catch(e){}
+  }else if(netCfg){
     try{
       const meS=ruLocalSeatId();
       log('Online match: '+sideNameLabel('player')+' ('+CM[netCfg.seat0Class].name+') vs '+sideNameLabel('ai')+' ('+CM[netCfg.seat1Class].name+').'+(meS?(' You are '+ruOnlineSeatLabel(meS)+'.'):' You are spectating.'),'imp');
@@ -1092,7 +1138,8 @@ function ruLeaveOtherSides(p,c){
   ['player','ai','ai2','ai3'].forEach(function(w){
     var q=G[w]; if(!q||q===p)return;
     ['hand','deck','discard','deadzone','bank'].forEach(function(z){ var a=q[z],i; if(!Array.isArray(a))return; while((i=a.indexOf(c))!==-1){ a.splice(i,1); if(z==='deadzone')q.cas=Math.max(-7,(q.cas||0)-1); } });
-    ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(function(k){ if(q[k]===c)q[k]=null; });
+    if(q.rankZone===c)q.rankZone=(q.bank&&q.bank.length)?q.bank.shift():makeStart('lv-'+uid());   // a Rank Zone is never left empty
+    ['leftFlank','rightFlank','rearFlank'].forEach(function(k){ if(q[k]===c)q[k]=null; });
     if(q.delta&&q.delta[0]===c)q.delta=[];
   });
 }
@@ -5522,7 +5569,7 @@ function endGameImmediate(winner,reason){
   const winnerLine=winner==='draw'?'No winner':winnerName?(winnerName+(isLocalHumanSeat(winner)?' win':' wins')):'Match did not finish';
   safeLog('Match Result: '+status+' - '+winnerLine+' ('+reasonText(reasons,winner)+')','imp');
   const buttons=[];
-  const netLive=!!(G&&G._netMode);
+  const netLive=!!(G&&G._netMode&&!G._soloNet);
   if(netLive){
     // Report the result for ratings (server records it once; both clients report the same canonical winner).
     try{ if(!G._spectator && window.RUNet && RUNet.reportResult) RUNet.reportResult(winner==='draw'?'draw':(winner||'draw')); }catch(e){}
@@ -7133,7 +7180,7 @@ function execStepBase(step){
       const filt=step.filter||(c=>!!c);
       // Which opponent's card is picked determines which side the rest of the skill acts on
       // (ctx._targetOppSide), so a control/negate/target skill can hit EITHER opponent in 1v1v1.
-      G._oppZoneCb=(zone,tcard,owner)=>{ctx.oppTargetZone=zone;ctx.oppTargetCard=tcard;if(owner)ctx._targetOppSide=owner;G._oppZoneCb=null;clearHL();hide('btn-can');setHint('');renderAll();runStep();};
+      G._oppZoneCb=(zone,tcard,owner)=>{ctx.oppTargetZone=zone;ctx.oppTargetCard=tcard;if(owner)ctx._targetOppSide=owner;G._oppZoneCb=null;G._oppZoneFilter=null;clearHL();hide('btn-can');setHint('');renderAll();runStep();};
       G._oppZoneFilter=filt;G.mode='oppzonepick';clearHL();
       livingOpponentsOf(who).forEach(function(os){
         const o=G[os];if(!o)return;const pre=(window.sideMeta?sideMeta(os).zonePrefix:null)||'ai';
@@ -9559,7 +9606,7 @@ ADEFS['Seven Heaven']={
   window.npValRD1=npVal;
   function removeFromArray(arr,c){const i=arr.indexOf(c);if(i!==-1)arr.splice(i,1);}
   window.removeFromArrayRD1=removeFromArray;
-  function safeMoveCard(p,card,to){
+  function safeMoveCard(p,card,to){if(card)ruLeaveOtherSides(p,card);
     if(!card)return;
     ['hand','bank','discard','deadzone','deck'].forEach(z=>{if(Array.isArray(p[z])){const i=p[z].indexOf(card);if(i!==-1){p[z].splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===card)p[z]=null;});
@@ -9810,6 +9857,7 @@ ADEFS['Seven Heaven']={
     deltaOpenModal(`Δ Deck — Amalgamations — ${poolName(pool)}`,body,[{label:'Back to Amalgamations',fn:()=>renderDeltaDeckFamily()},{label:'Close',fn:()=>closeModal()},{label:'Clear Δ Deck',cls:'mb-danger',fn:()=>{PLAYER_DELTA_DECK=[];window.RU_PLAYER_DELTA_DECK=PLAYER_DELTA_DECK;renderDeltaDeckPool(pool);}}]);
   }
 
+  window.ruBotDeltaDeckFor=function(cls,who){return randomValidDeltaDeckFor(cls,who);};
   function randomValidDeltaDeckFor(cls,who){
     // The AI's Δ Deck is INDEPENDENT of the player's (no mirroring) and scales with difficulty:
     // stronger tiers run a full Δ Deck, weaker tiers a smaller one. Cards are chosen to SERVE the
@@ -10640,7 +10688,7 @@ ADEFS['Seven Heaven']={
     // Deadzone). Refuse the whole rank-zone removal up front instead.
     if(z==='rank'&&card.class==='fission'&&card.numeral===0){try{(window.safeLog||log)('Fission 0 cannot be removed from the Rank Zone by this effect.','info');}catch(e){}return;}
     if(z==='rank'){window.dzAdd(p,card);p.rankZone=p.bank.length?p.bank.shift():makeStart(w+'-area-rank-'+uid());}else if(z==='left'){p.leftFlank=null;window.dzAdd(p,card);}else if(z==='right'){p.rightFlank=null;window.dzAdd(p,card);}else if(z==='rear'){p.rearFlank=null;window.dzAdd(p,card);}else if(z==='delta'){if(typeof defeatDelta==='function')defeatDelta(w);else{p.delta=[];window.dzAdd(p,card);}}}
-  function removeFromZoneOrArray(p,c){if(!c)return;['hand','bank','discard','deadzone','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});zoneList().forEach(z=>{if(p[z]===c)p[z]=null;});if(p.delta&&p.delta[0]===c)p.delta=[];}
+  function removeFromZoneOrArray(p,c){if(!c)return;['hand','bank','discard','deadzone','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});zoneList().forEach(z=>{if(p[z]===c)p[z]=(z==='rankZone')?(p.bank.length?p.bank.shift():makeStart('rz-'+uid())):null;});if(p.delta&&p.delta[0]===c)p.delta=[];}   // (a Rank Zone left by its card is filled from the Bank, or Numeral 0 — never empty)
   function addFromDeadOrDropToHand(w,filter){const p=G[w];let c=p.deadzone.find(filter||(()=>true));if(c){removeFromZoneOrArray(p,c);p.hand.push(c);return c;}c=p.discard.find(filter||(()=>true));if(c){removeFromZoneOrArray(p,c);p.hand.push(c);return c;}return null;}
   function autoAreaSide(w){return window.ruBotControlledSeat?ruBotControlledSeat(w):(w!=='player'||(G&&G.ruMode==='ai-vs-ai'));}
   function chooseHandForCost(w,label,count,cb){const p=G[w];count=count||1;if(p.hand.length<count){log(`${label}: not enough cards in hand.`,'dmg');return;}if(autoAreaSide(w)){const picks=p.hand.splice(0,count);p.discard.push(...picks);cb&&cb(picks);return;}ruOwnedPicker(w,label,p.hand,count,count,false,(picks)=>{picks.forEach(c=>{const i=p.hand.indexOf(c);if(i!==-1)p.hand.splice(i,1);p.discard.push(c);});cb&&cb(picks);});}
@@ -11568,7 +11616,7 @@ function useRetL2(idx,card){
   window.npXRA6=npX;
   function rpX(c){return c?(c.currentRP??c.rank??0):0;}
   function removeX(p,c){if(!c)return null;['hand','bank','discard','deadzone','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});zonesX(p).forEach(z=>{if(p[z]===c)p[z]=null;});if(p.delta&&p.delta[0]===c)p.delta=[];return c;}
-  function moveX(p,c,to){const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeX(p,c);if(to==='hand')p.hand.push(c);else if(to==='bank')bankInsert(p,c);else if(to==='deadzone'){window.dzAdd(p,c);}else if(to==='deck_bottom')p.deck.push(c);else if(to==='deck_top')p.deck.unshift(c);else if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else p.discard.push(c);return c;}
+  function moveX(p,c,to){if(c)ruLeaveOtherSides(p,c);const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeX(p,c);if(to==='hand')p.hand.push(c);else if(to==='bank')bankInsert(p,c);else if(to==='deadzone'){window.dzAdd(p,c);}else if(to==='deck_bottom')p.deck.push(c);else if(to==='deck_top')p.deck.unshift(c);else if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else p.discard.push(c);return c;}
   window.moveXRA6=moveX;
   function chooseX(w,title,pool,min,cb){pool=pool||[];min=min||1;if(pool.length<min){log(`${title}: not enough eligible cards.`,'dmg');cb&&cb([]);return;}if(ruBotControlledSeat(w)){cb(pool.slice(0,min));return;}ruOwnedPicker(w,title,pool,min,min,false,picks=>cb&&cb(picks));}
   function handRankForTargetX(w){const opp=G[oppOfX(w)];const last=G._lastAtkInfo&&G._lastAtkInfo.defender;const target=last||opp.rankZone;return rpX(target);}
@@ -11761,7 +11809,7 @@ function useRetL2(idx,card){
   if(typeof ACDEFS==='object'){
     ACDEFS.Repair={steps:[{type:'move_self',to:'discard'},{type:'take_deadzone',count:1,to:'discard',label:'Repair: remove 1 card from your Deadzone.',scalesWithAdvMult:true}]};
   }
-  function ruMoveKnownLocal(p,card,to){
+  function ruMoveKnownLocal(p,card,to){if(card)ruLeaveOtherSides(p,card);
     if(!p||!card)return false;
     const zones=['hand','deck','discard','deadzone','bank'];
     zones.forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(card);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
@@ -12000,7 +12048,7 @@ function useRetL2(idx,card){
     ['hand','bank','discard','deadzone','deck','evolutions'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(card);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===card)p[z]=null;});
   }
-  function moveKnown(p,card,to){
+  function moveKnown(p,card,to){if(card)ruLeaveOtherSides(p,card);
     if(!card)return;
     const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(card)!==-1);
     removeKnown(p,card);
@@ -12633,7 +12681,7 @@ function useRetL2(idx,card){
   window.npRD2=np;
   function rp(c){return c?(c.currentRP??c.rank??0):0;}
   function removeFromArray(arr,c){const i=arr?arr.indexOf(c):-1;if(i!==-1)arr.splice(i,1);}
-  function moveEverywhere(p,card,to){
+  function moveEverywhere(p,card,to){if(card)ruLeaveOtherSides(p,card);
     if(!p||!card)return;
     ['hand','bank','discard','deadzone','deck','evolutions'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(card);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===card)p[z]=null;});
@@ -12754,7 +12802,7 @@ function useRetL2(idx,card){
   function ruNP(c){return c?(c.currentNP??c.numeral??0):0;}
   function ruRank(c){return c?((c.isRankMax||c.isRankUltra)&&typeof effRank==='function'?effRank(c):(c.currentRP??c.rank??0)):0;}
   function ruNoAttack(who,msg){G._noAttack=G._noAttack||{};G._noAttack[who]=true;if(msg)log(msg,'info');}
-  function ruMoveFromAll(p,card){
+  function ruMoveFromAll(p,card){if(card)ruLeaveOtherSides(p,card);
     if(!p||!card)return;
     ['hand','bank','discard','deadzone','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(card);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===card)p[z]=null;});
@@ -14378,11 +14426,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     const sel=document.getElementById('ai-level-select');if(sel)sel.value=k;
     if(window.ruRebuildSub)window.ruRebuildSub();
   }
-  function opponentForTournament(round){
-    const keys=Object.keys(CM);
-    if(!pCls)return keys[round%keys.length];
-    const start=Math.max(0,keys.indexOf(pCls));
-    return keys[(start+round)%keys.length];
+  // The opponent (class and skill tier) is whoever reached the player's match in the bracket.
+  function applyTournamentOpponent(round,total){
+    const o=window.ruTournamentOpponent&&window.ruTournamentOpponent();
+    if(!o){ setAILevelKey(levelForRound(round,total)); return; }
+    aCls=o.classKey;
+    const p=String(o.ladderKey).split('-');
+    setAILevelKey(p[0]); window.RU_AI_LEVEL_NUM=Number(p[1])||1;
+    if(window.ruRebuildSub)window.ruRebuildSub();
   }
 
   function aiLevelOptions(selKey){
@@ -14447,8 +14498,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         modeState.tournament={size:modeState.bracketSize||8,totalRounds:rounds,round:1,wins:0,playerClass:pCls};
       }
       const t=modeState.tournament;
-      aCls=opponentForTournament(t.round);
-      setAILevelKey(levelForRound(t.round,t.totalRounds));
+      applyTournamentOpponent(t.round,t.totalRounds);
     }
     if(modeState.mode==='ai-vs-ai'){
       if(!aCls)aCls=AIPAIR[pCls]||pCls;
@@ -14634,8 +14684,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(t.round>t.totalRounds){safeLog('Tournament complete.','imp');return;}
     modeState.mode='tournament';modeState.launchingTournament=true;
     pCls=t.playerClass||pCls;
-    aCls=opponentForTournament(t.round);
-    setAILevelKey(levelForRound(t.round,t.totalRounds));
+    applyTournamentOpponent(t.round,t.totalRounds);
     startGame();
   }
   window.advanceTournamentRound=advanceTournamentRound;
@@ -15256,7 +15305,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     fission:['extension','blizzard','deckstructive','astute','maximum','fission','zero'],
     extension:['fission','deckstructive','restorative','7th','maximum','extension','haste']
   };
-  const LEVELS=['inept','maladroit','basic','skilled','talented','d_candidate','distinguished'];
+  const LEVELS=['inept','maladroit','basic','skilled','talented','dCandidate','distinguished'];
 
   function safeLog(msg,cls){try{log(msg,cls||'info');}catch(e){}}
   window.safeLogRAE10=safeLog;
@@ -15266,10 +15315,19 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.clsNameRU135=clsName;
   function clsIcon(k){return CM&&CM[k]?CM[k].icon:'';}
   function clsColor(k){return CLASS_HEX[k]||'#c9a84c';}
+  // Gauntlet rounds climb the whole 14-rung ladder (sub-levels included): round 1 Inept … the last round Distinguished 4.
   function setLevelByRound(round,total){
-    const idx=Math.min(LEVELS.length-1,Math.max(0,Math.round(((round-1)/Math.max(1,total-1))*(LEVELS.length-1))));
-    window.RU_AI_LEVEL_KEY=LEVELS[idx];
+    const ladder=window.RU_LADDER_ORDER;
+    if(ladder&&ladder.length){
+      const i=Math.min(ladder.length-1,Math.max(0,Math.round(((round-1)/Math.max(1,total-1))*(ladder.length-1))));
+      const p=String(ladder[i]).split('-');
+      window.RU_AI_LEVEL_KEY=p[0];window.RU_AI_LEVEL_NUM=Number(p[1])||1;
+    }else{
+      const idx=Math.min(LEVELS.length-1,Math.max(0,Math.round(((round-1)/Math.max(1,total-1))*(LEVELS.length-1))));
+      window.RU_AI_LEVEL_KEY=LEVELS[idx];window.RU_AI_LEVEL_NUM=1;
+    }
     const sel=document.getElementById('ai-level-select');if(sel)sel.value=window.RU_AI_LEVEL_KEY;
+    if(window.ruRebuildSub)window.ruRebuildSub();
   }
   window.setLevelByRound=setLevelByRound;
 
@@ -15291,7 +15349,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(to==='deck_top')p.deck.unshift(c);
     else p.discard.push(c);
   }
-  function moveKnown(p,c,to){const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeKnown(p,c);if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else{putKnown(p,c,to);}return c;}
+  function moveKnown(p,c,to){if(c)ruLeaveOtherSides(p,c);const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeKnown(p,c);if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else{putKnown(p,c,to);}return c;}
   function fieldEntries(p){
     return [
       {zone:'Rank Zone',key:'rankZone',card:p.rankZone},
@@ -15507,26 +15565,32 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     function matchCount(size){return size-1;}
     function roundNames(size){return SIZE_INFO[size]||SIZE_INFO[8];}
     function sideOfSlot(size,slot){return slot<size/2?'left':'right';}
-    function entry(k,seed,isPlayer){return {classKey:k,seed:seed,isPlayer:!!isPlayer,id:(isPlayer?'player':'seed')+'-'+seed};}
-    function firstOpponent(player){
-      const ks=keys();if(!ks.length)return player;
-      const start=Math.max(0,ks.indexOf(player));
-      return ks[(start+1)%ks.length]||player;
+    function entry(k,seed,isPlayer,tier){return {classKey:k,seed:seed,isPlayer:!!isPlayer,tier:isPlayer?null:(tier==null?null:tier),id:(isPlayer?'player':'seed')+'-'+seed};}
+    // Every bot entrant has a skill tier on the 14-rung ladder (RU_LADDER_ORDER index). A bot-vs-bot match is
+    // decided by the ladder's win rates for that tier gap (the same rates the bots are calibrated to), so stronger
+    // bots tend to advance and a bracket escalates by itself.
+    const TIER_LABEL={inept:'Inept',maladroit:'Maladroit',basic:'Basic',skilled:'Skilled',talented:'Talented',dCandidate:'D-Candidate',distinguished:'Distinguished'};
+    function ladderKey(i){return (window.RU_LADDER_ORDER||[])[Math.max(0,Math.min(13,i|0))]||'basic-1';}
+    function tierLabel(i){const k=ladderKey(i),p=k.split('-');const sub=window.RU_AI_SUBLEVELS&&window.RU_AI_SUBLEVELS[p[0]]>1;return (TIER_LABEL[p[0]]||p[0])+(sub?' '+p[1]:'');}
+    window.ruTierLabel=tierLabel;
+    function tierWinProb(hi,lo){   // chance the higher-tier bot beats the lower one
+      const gap=hi-lo; if(gap<=0)return .5;
+      if(lo===0)return gap===1?.90:gap===2?.95:gap===3?.995:1;   // everything above Inept is steeper
+      return gap===1?.85:gap===2?.90:gap===3?.95:gap===4?.995:1;
     }
-    function opponentForRound(player,round){
-      const ks=keys();if(!ks.length)return player;
-      const start=Math.max(0,ks.indexOf(player));
-      return ks[(start+round)%ks.length]||firstOpponent(player);
-    }
+    function shuffled(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+    function seedOrder(size){let o=[1];while(o.length<size){const n=o.length*2,x=[];o.forEach(s=>{x.push(s);x.push(n+1-s);});o=x;}return o;}
+    // A fresh, random field each tournament: random classes (every class before any repeats) and random tiers. The
+    // bots are seeded by tier (seed 2 = strongest) into the standard bracket positions, the player is seed 1 in the
+    // top slot — so the first round meets the lowest seed and the strongest bots meet late.
     function newEntrants(size,player){
-      const ks=keys(),start=Math.max(0,ks.indexOf(player)),out=[];
-      out[0]=entry(player,1,true);
-      out[1]=entry(firstOpponent(player),2,false);
-      for(let i=2;i<size;i++){
-        const k=ks[(start+i*3+Math.floor(i/2))%ks.length]||player;
-        out[i]=entry(k,i+1,false);
-      }
-      return out;
+      const ks=keys();let pool=[];
+      while(pool.length<size-1)pool=pool.concat(shuffled(ks));
+      const bots=pool.slice(0,size-1).map(k=>({k,tier:Math.floor(Math.random()*14),r:Math.random()}));
+      bots.sort((a,b)=>(b.tier-a.tier)||(a.r-b.r));
+      const bySeed={1:entry(player,1,true)};
+      bots.forEach((b,i)=>{bySeed[i+2]=entry(b.k,i+2,false,b.tier);});
+      return seedOrder(size).map(s=>bySeed[s]);
     }
     function makeState(force){
       const size=bracketSize(),player=pCls||keys()[0],st=window.RU1355_SINGLE_ELIM;
@@ -15551,16 +15615,12 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       if(round<=1)return st.entrants[match*2+side]||null;
       return winnerAt(st,round-1,match*2+side);
     }
-    function classScore(e,round,match){
-      if(!e)return -999;
-      const name=e.classKey||'';
-      let h=0;for(let i=0;i<name.length;i++)h+=name.charCodeAt(i)*(i+1);
-      return (1000-(e.seed||99)*7)+((h+round*17+match*11)%53);
-    }
     function botWinner(a,b,round,match){
       if(!a)return b;if(!b)return a;
       if(a.isPlayer||b.isPlayer)return null;
-      return classScore(a,round,match)>=classScore(b,round,match)?a:b;
+      const ta=a.tier==null?6:a.tier,tb=b.tier==null?6:b.tier;
+      const hi=ta>=tb?a:b,lo=hi===a?b:a,p=tierWinProb(Math.max(ta,tb),Math.min(ta,tb));
+      return Math.random()<p?hi:lo;
     }
     function resolveBotRound(st,round){
       st.winners[round]=st.winners[round]||{};
@@ -15572,19 +15632,19 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         if(w&&m!==pm)st.winners[round][m]=w;
       }
     }
+    // The player's opponent this round: whoever actually reached the match (earlier bot rounds resolved first).
     function syncPlayerOpponent(st){
       const round=Math.max(1,Math.min(st.currentRound||1,st.totalRounds));
-      const desired=opponentForRound(st.playerClass,round);
-      if(round===1){
-        st.entrants[1]=entry(desired,2,false);
-        return;
-      }
-      const pm=playerMatchIndex(st,round);
-      const prevMatch=pm*2+1;
-      st.winners[round-1]=st.winners[round-1]||{};
-      st.winners[round-1][prevMatch]=entry(desired,prevMatch+1,false);
+      for(let r=1;r<round;r++)resolveBotRound(st,r);
+      return competitorAt(st,round,playerMatchIndex(st,round),1);
     }
     window.syncPlayerOpponent=syncPlayerOpponent;
+    window.ruTournamentOpponent=function(){
+      const st=window.RU1355_SINGLE_ELIM;
+      if(!st||st.complete)return null;
+      const e=syncPlayerOpponent(st);
+      return e?{classKey:e.classKey,tier:e.tier==null?6:e.tier,ladderKey:ladderKey(e.tier==null?6:e.tier),label:tierLabel(e.tier==null?6:e.tier)}:null;
+    };
     function completePlayerRound(winner){
       const st=window.RU1355_SINGLE_ELIM||makeState(false),round=Math.max(1,Math.min(st.currentRound||1,st.totalRounds)),pm=playerMatchIndex(st,round);
       st.winners[round]=st.winners[round]||{};
@@ -15597,7 +15657,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       }else if(winner==='draw'||winner==null){
         st.lastCompleted={round,match:pm,winner:'draw'};
       }else{
-        const oppEntry=competitorAt(st,round,pm,1)||entry(aCls||opponentForRound(st.playerClass,round),pm+2,false);
+        const oppEntry=competitorAt(st,round,pm,1)||entry(aCls||st.playerClass,pm+2,false);
         st.winners[round][pm]=oppEntry;
         st.eliminated=true;st.complete=true;st.champion=oppEntry;st.lastCompleted={round,match:pm,winner:'opponent'};
       }
@@ -15640,7 +15700,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       const max=size>=64?10:size>=32?12:size>=16?15:18;
       let name=clsName(e.classKey)||'Unknown';
       if(name.length>max)name=name.slice(0,Math.max(3,max-1))+'…';
-      return '#'+e.seed+' '+clsIcon(e.classKey)+' '+name+(e.isPlayer?' YOU':'');
+      return '#'+e.seed+' '+clsIcon(e.classKey)+' '+name+(e.isPlayer?' YOU':(e.tier!=null?' · '+tierLabel(e.tier):''));
     }
     function renderSlot(x,y,w,h,e,opts){
       opts=opts||{};const color=e?clsColor(e.classKey):'rgba(255,255,255,.28)',txt=displayEntry(e,opts.size||8);
@@ -15907,7 +15967,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else if(to==='deck_top')p.deck.unshift(c);
     else p.discard.push(c);
   }
-  function moveKnown(p,c,to,front){const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeKnown(p,c);if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else{putCard(p,c,to,front);}}
+  function moveKnown(p,c,to,front){if(c)ruLeaveOtherSides(p,c);const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1);removeKnown(p,c);if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else{putCard(p,c,to,front);}}
   window.moveKnown11=moveKnown;
   function pickCards(w,title,pool,max,min,optional,cb){
     pool=(pool||[]).filter(Boolean);
@@ -16405,7 +16465,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   if(window.RU139_SHADOW1_SEARCH_FIX)return;
   window.RU139_SHADOW1_SEARCH_FIX=true;
   function safeLog(msg,cls){try{log(msg,cls||'info');}catch(e){}}
-  function moveOutOfEverywhere(p,card){
+  function moveOutOfEverywhere(p,card){if(card)ruLeaveOtherSides(p,card);
     ['hand','deck','discard','deadzone','bank'].forEach(function(z){
       const a=p[z]; if(Array.isArray(a)){const i=a.indexOf(card); if(i!==-1){a.splice(i,1); if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}
     });
@@ -17533,7 +17593,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           if(!used.flank&&isNum(c)&&(!o.leftFlank||!o.rightFlank))a.push('Flank Zone');
           return a;
         }
-        function moveCardToDest(c,dest){
+        function moveCardToDest(c,dest){if(c)ruLeaveOtherSides(o,c);
           removeKnown(o,c);
           if(dest==='Deck'){o.deck.push(c);used.deck=true;}
           else if(dest==='Drop'){o.discard.push(c);used.discard=true;}
@@ -17594,7 +17654,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function other(w){return window.oppOf(w);}
   function hasObelus(w){const p=side(w);return !!(p&&((p.deadzone||[]).some(c=>c&&c.name==='Obelus Oubliette')||[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,p.delta&&p.delta[0]].some(c=>c&&c.name==='Obelus Oubliette')));}
   window.hasObelusSS7=hasObelus;
-  function moveFromZonesTo(p,c,dest){
+  function moveFromZonesTo(p,c,dest){if(c)ruLeaveOtherSides(p,c);
     if(!p||!c)return false;
     const _wd=!!(p.deadzone&&p.deadzone.indexOf(c)!==-1);
     ['deck','discard','deadzone','hand','bank'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(c);if(i!==-1){a.splice(i,1);if(z==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);}}});
@@ -18777,7 +18837,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     }
     return null;
   }
-  function moveSelfFromFieldZone(w,p,fieldZone,card,dest){
+  function moveSelfFromFieldZone(w,p,fieldZone,card,dest){if(card)ruLeaveOtherSides(p,card);
     if(fieldZone==='rank'||fieldZone==='rankZone'){
       if(p.bank&&p.bank.length)p.rankZone=p.bank.shift();
       else if(typeof makeStart==='function')p.rankZone=makeStart(window.ruRandId('ru154'));
@@ -19079,7 +19139,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     safeLog(label||'Rank Zone gets another attack.','info');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,rz);
   }
-  function sourceMoveSelf(w,p,fieldZone,card,dest){
+  function sourceMoveSelf(w,p,fieldZone,card,dest){if(card)ruLeaveOtherSides(p,card);
     if(fieldZone==='rank'||fieldZone==='rankZone'){
       if(p.bank&&p.bank.length)p.rankZone=p.bank.shift();
       else if(typeof makeStart==='function')p.rankZone=makeStart(window.ruRandId('ru155'));
@@ -24312,8 +24372,8 @@ window.ruSpecPace=function(base){
     'maladroit-1':    {depth:0, occ:1, every:10, delta:0},
     'basic-1':        {depth:0, occ:1, every:7,  delta:0},
     'skilled-1':      {depth:1, occ:0, every:5,  delta:0},
-    'skilled-2':      {depth:1, occ:2, every:7,  delta:1},
-    'talented-1':     {depth:2, occ:1, every:7,  delta:1},
+    'skilled-2':      {depth:1, occ:2, every:7,  delta:0},
+    'talented-1':     {depth:2, occ:1, every:7,  delta:0},
     'talented-2':     {depth:2, occ:3, every:10, delta:2},
     'dCandidate-1':   {depth:3, occ:2, every:7,  delta:2},
     'dCandidate-2':   {depth:3, occ:3, every:0,  delta:2},
@@ -25626,6 +25686,14 @@ window.ruSpecPace=function(base){
     return (h>>>0).toString(36);
   }
   window.ruStateSig=stateSig;
+  // Solo with the thinking bots: every input this screen makes is shown to the bot host BEFORE the pre-input
+  // checkpoint (the order every screen applies an input in: settle, checkpoint, the input) — the host keeps the
+  // position the bots think about, and replays each input in exactly that order.
+  function before(a){
+    var g=G_(); if(!a||!g||!g._soloNet||!window.RUBots||g._replaying||g._inInput) return;
+    if(a.s==null) a.s=localSeat();
+    try{ window.RUBots.noteInput(a); }catch(e){}
+  }
   function rec(a){
     var g=G_(); if(!a||!g||g._replaying||g._inInput) return false;   // never re-emit while applying, nor for an input nested inside a recorded one
     if(a.s==null) a.s=localSeat();
@@ -25641,7 +25709,7 @@ window.ruSpecPace=function(base){
   window.ruAsInput       = function(a,fn){ var g=G_(); if(!g||!isUserInput()||g._replaying||g._inInput) return fn();
                                          settleNow(); if(!G_()) return false;
                                          if(a.s==null) a.s=localSeat(); var why=refusal(a); if(why){ say(why); return false; }
-                                         checkpoint(); rec(a); var r=withActor(a.s,function(){ return inContext('shared',fn); }); inputDone(); return r; };
+                                         before(a); checkpoint(); rec(a); var r=withActor(a.s,function(){ return inContext('shared',fn); }); inputDone(); return r; };
   window.ruActionLog     = function(){ var g=G_(); return g?(g._actionLog||[]):[]; };
   window.ruStartRecording= function(){ var g=G_(); if(g){ g._recording=true; g._actionLog=[]; } };
   window.ruStopRecording = function(){ var g=G_(); if(g) g._recording=false; };
@@ -25693,6 +25761,7 @@ window.ruSpecPace=function(base){
         return withActor(localSeat(),function(){ return inContext('local',function(){ return orig.apply(self,args); }); });
       }
       var why=refusal(a); if(why){ say(why); return; }
+      before(a);
       checkpoint();
       rec(a);
       var r=withActor(a.s,function(){ return inContext('shared',function(){ return orig.apply(self,args); }); });
@@ -25774,7 +25843,7 @@ window.ruSpecPace=function(base){
           if(outer){ settleNow(); m=modalEl(); if(!G_()||!sharedOpen(m)||self.parentNode!==document.getElementById('m-btns')) return; }
           var a={t:'modal', i:i};
           var why=refusal(a); if(why){ say(why); return; }
-          if(outer) checkpoint();
+          if(outer){ before(a); checkpoint(); }
           rec(a);
           var seat=(m&&m._ruOwner)||localSeat();
           var res=withActor(seat,function(){ return inContext('shared',function(){ return f?f.call(self,ev):undefined; }); });
@@ -25805,7 +25874,7 @@ window.ruSpecPace=function(base){
     var outer=!g._inInput;
     var a={t:'pick', ids:ids, ix:ix||[]};
     var why=refusal(a); if(why){ say(why); return; }
-    if(outer) checkpoint();
+    if(outer){ before(a); checkpoint(); }
     rec(a);
     var seat=(pk&&pk._ruOwner)||localSeat();
     var r=withActor(seat,function(){ return inContext('shared',run); });
@@ -25835,7 +25904,7 @@ window.ruSpecPace=function(base){
     if(!pickerSettled()) return; pk=pickerEl();
     var a={t:'pickCancel'};
     var why=refusal(Object.assign({},a,{t:'pick'})); if(why){ say(why); return; }
-    if(outer) checkpoint();
+    if(outer){ before(a); checkpoint(); }
     rec(a);
     var seat=(pk&&pk._ruOwner)||localSeat();
     var r=withActor(seat,function(){ return inContext('shared',function(){ return _xOrig.apply(self,args); }); });
@@ -25875,12 +25944,15 @@ window.ruSpecPace=function(base){
       case 'pickCancel': if(window.cancelPick) window.cancelPick(); break;
       case 'modal': {
         var mm=modalEl(), r=document.getElementById('m-btns');
+        // only the prompt that is open now can be answered (a closed prompt's saved buttons are stale callbacks)
+        if(!sharedOpen(mm)){ console.warn('[net] a prompt answer arrived with no prompt open',a); break; }
         var b=(mm&&mm._ruStash)?mm._ruStash.btns[a.i]:(r&&r.children[a.i]);
         var fn=b&&(b.__ruFn||b.onclick);
         if(fn) fn.call(b); else console.warn('[net] relayed prompt answer arrived with no prompt open',a);
         break;
       }
       case 'pick': {
+        if(!sharedOpen(pickerEl())){ console.warn('[net] a card choice arrived with no picker open',a); break; }
         var pool=((typeof PCK!=='undefined'&&PCK&&PCK.pool)||[]), sel;
         if(Array.isArray(a.ix)) sel=a.ix.map(function(i){ return pool[i]; }).filter(function(c){ return c!=null; });
         else { var byId={}; pool.forEach(function(c){ if(c) byId[c.id]=c; }); sel=(a.ids||[]).map(function(id){return byId[id];}).filter(Boolean); }
@@ -25930,6 +26002,10 @@ window.ruSpecPace=function(base){
   window.ruReplayActions=function(log){ (log||[]).forEach(function(a){ window.ruApplyAction(a); }); };
 })();
 </script>
+<script src="ai/tiers.js"></script>
+<script src="ai/state.js"></script>
+<script src="ai/moves.js"></script>
+<script src="ai/host.js"></script>
 <script src="net.js"></script>
 </body>
 </html>

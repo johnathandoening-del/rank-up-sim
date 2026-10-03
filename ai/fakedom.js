@@ -462,4 +462,8 @@ class Document extends Node {
   elementFromPoint() { return null; }
 }
 
-module.exports = { Document, Element, Node, Text, FakeEvent, makeStyle };
+// Loadable as a Node module (the headless tools) and as a classic script (the browser bot worker: importScripts).
+(function (root) { var m = { Document: Document, Element: Element, Node: Node, Text: Text, FakeEvent: FakeEvent, makeStyle: makeStyle };
+  if (typeof module === 'object' && module.exports) module.exports = m;
+  else { root.RUAI = root.RUAI || {}; root.RUAI.Dom = m; }
+})(typeof self !== 'undefined' ? self : this);

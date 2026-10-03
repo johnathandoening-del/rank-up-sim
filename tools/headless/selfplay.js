@@ -1,6 +1,6 @@
 'use strict';
-/* Self-play data for learning the evaluation: brain-vs-brain games in parallel workers. At the start of every turn the
- * position's raw features are recorded from BOTH seats' points of view; when the game ends each record is labelled
+/* Self-play data for learning the evaluation: brain-vs-brain games in parallel workers. Every quiet position's raw
+ * features are recorded from BOTH seats' points of view; when the game ends each record is labelled
  * 1 (that seat won) / 0 (lost). Output: JSON lines appended to <out>.
  *   node tools/headless/selfplay.js <games> <out.jsonl> '<policy json>' [workers=14] [weights.json] */
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
@@ -14,12 +14,13 @@ function game(job) {
   const m = newMatch({ engine: eng, seed: job.seed, cls0: job.cls0, cls1: job.cls1, firstSeat: job.firstSeat, evo: job.evo });
   brain.install(eng); eng.run('__B.noteApplied(null)');
   if (job.weights) eng.run('__B.setWeights(' + JSON.stringify(job.weights) + ')');
-  const recs = []; let lastTurn = -1, steps = 0; const t0 = Date.now();
+  const recs = [], seenSig = new Set(); let lastTurn = -1, steps = 0; const t0 = Date.now();
   while (steps < 6000 && Date.now() - t0 < job.maxMs) {
     const d = eng.run('__M.decider()'); if (d.kind === 'over' || d.kind === 'none') break;
-    const tn = eng.run('G._turnNo||0');
-    if (tn !== lastTurn && eng.run('__S.quiet()')) {
-      lastTurn = tn;
+    // every quiet position (the positions the search compares: turn starts and between moves), each once
+    const tn = eng.run('G._turnNo||0'), sg = eng.run('__S.quiet() ? ruStateSig() : ""');
+    if (sg && !seenSig.has(sg)) {
+      seenSig.add(sg); lastTurn = tn;
       ['player', 'ai'].forEach((w) => recs.push({ g: job.seed, w, f: eng.run('__B.features(' + JSON.stringify(w) + ')'), turn: tn, cls: w === 'player' ? job.cls0 : job.cls1 }));
     }
     const r = eng.run('__B.plan(' + JSON.stringify(d.seat) + ',' + JSON.stringify(Object.assign({ seed: job.seed * 31 + steps }, job.pol)) + ')');
