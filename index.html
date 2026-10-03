@@ -405,7 +405,7 @@ function startGame(){
   const mode=document.getElementById('ru135-mode-select')?.value||'standard';
   // Tournament single-elim front screen (early return).
   if(mode==='tournament'&&!window.RU1356_ALLOW_TOURNAMENT_START){
-    const force=!window.RU1355_SINGLE_ELIM||!G||!(G.ruMode==='tournament')||window.RU1355_SINGLE_ELIM.complete||window.RU1355_SINGLE_ELIM.playerClass!==pCls||window.RU1355_SINGLE_ELIM.size!==window.bracketSizeRU1356();
+    const force=!window.RU1355_SINGLE_ELIM||!G||(!(G.ruMode==='tournament')&&!window.RU_RESUME_TOURNAMENT)||window.RU1355_SINGLE_ELIM.complete||window.RU1355_SINGLE_ELIM.playerClass!==pCls||window.RU1355_SINGLE_ELIM.size!==window.bracketSizeRU1356();
     const st=window.makeStateRU1356(force);
     window.syncPlayerOpponent(st);
     window.showScreen('before',st);
@@ -5668,6 +5668,17 @@ function endGameImmediate(winner,reason){
         const skip=document.createElement('button');skip.className='mb';skip.textContent='Skip To Next Round';skip.onclick=function(){skipToNextRound();};
         btns.insertBefore(spec,btns.firstChild);btns.insertBefore(skip,btns.children[1]||null);
       }
+    },80);
+  }
+  // A watched bracket match: its winner goes into the bracket; then back to your tournament (or watch another).
+  if(G&&G._bracketMatch){
+    const bm=G._bracketMatch;
+    if(window.ruBracketRecord&&(winner==='player'||winner==='ai'))window.ruBracketRecord(bm.round,bm.match,winner==='player'?0:1);
+    setTimeout(function(){
+      const btns=document.getElementById('m-btns');if(!btns)return;
+      const back=document.createElement('button');back.className='mb mb-skill';back.textContent='Back to Tournament';back.onclick=function(){closeModal();window.ruReturnToTournament();};
+      btns.insertBefore(back,btns.firstChild);
+      if(window.ruBracketBotMatch&&window.ruBracketBotMatch()){const again=document.createElement('button');again.className='mb';again.textContent='Watch Another Match';again.onclick=function(){closeModal();window.ru1355SpectateNextMatch();};btns.insertBefore(again,btns.children[1]||null);}
     },80);
   }
   if(wasMode==='gauntlet'&&roundInfo){
@@ -14543,11 +14554,17 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         modeState.tournament={size:modeState.bracketSize||8,totalRounds:rounds,round:1,wins:0,playerClass:pCls};
       }
       const t=modeState.tournament;
+      // the bracket is the one record of which round this is
+      const st=window.RU1355_SINGLE_ELIM;
+      if(st&&!st.complete){t.size=st.size;t.totalRounds=st.totalRounds;t.round=Math.max(1,Math.min(st.currentRound||1,st.totalRounds));}
       applyTournamentOpponent(t.round,t.totalRounds);
     }
     if(modeState.mode==='ai-vs-ai'){
       if(!aCls)aCls=AIPAIR[pCls]||pCls;
+      // (keep the chosen sub-level: setAILevelKey alone resets it to 1)
+      const n=window.RU_AI_LEVEL_NUM;
       setAILevelKey(window.RU_AI_LEVEL_KEY||'basic');
+      window.RU_AI_LEVEL_NUM=n||1;if(window.ruRebuildSub)window.ruRebuildSub();
     }
   }
   window.prepareModeStart=prepareModeStart;
@@ -15546,15 +15563,31 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 
 
 
+  // Watch a real match of the bracket: the next unplayed bot-vs-bot match of your round, its two entrants' classes
+  // and tiers, played out by the thinking bots — and its winner goes into the bracket.
   function spectateNextMatch(){
-    if(!G||G.ruMode!=='tournament')return;
-    window.RU1355_PENDING_TOURNAMENT=Object.assign({},G.tournament||{});
-    const keys=Object.keys(CM),r=(G.tournament&&G.tournament.round)||1;
-    pCls=keys[(r*5)%keys.length];aCls=keys[(r*5+3)%keys.length];
+    const mm=window.ruBracketBotMatch&&window.ruBracketBotMatch();
+    if(!mm){safeLog('No other bracket match is left to watch this round.','info');return;}
+    window.RU1355_PENDING_TOURNAMENT={levels:[window.RU_AI_LEVEL_KEY,window.RU_AI_LEVEL_NUM,window.RU_AI_LEVEL_KEY_A,window.RU_AI_LEVEL_NUM_A]};
+    pCls=mm.a.classKey;aCls=mm.b.classKey;
+    const ka=mm.a.ladderKey.split('-'),kb=mm.b.ladderKey.split('-');
+    window.RU_AI_LEVEL_KEY_A=ka[0];window.RU_AI_LEVEL_NUM_A=Number(ka[1])||1;window.RU_AI_LEVEL_KEY=kb[0];window.RU_AI_LEVEL_NUM=Number(kb[1])||1;
+    const sel=document.getElementById('ru135-mode-select');if(sel)sel.value='ai-vs-ai';
     if(window.ru135SetMode)window.ru135SetMode('ai-vs-ai');
-    safeLog('Spectating another bracket match: '+clsName(pCls)+' vs '+clsName(aCls)+'.','imp');
     startGame();
+    if(G){G._bracketMatch={round:mm.round,match:mm.match};G._spectatorOnly=true;safeLog('Watching a bracket match: '+clsName(pCls)+' ('+mm.a.label+') vs '+clsName(aCls)+' ('+mm.b.label+').','imp');}
   }
+  // Back from watching: your class, the tournament mode and your next round (the same bracket, resumed).
+  window.ruReturnToTournament=function(){
+    const st=window.RU1355_SINGLE_ELIM,pend=window.RU1355_PENDING_TOURNAMENT;
+    if(pend&&pend.levels){window.RU_AI_LEVEL_KEY=pend.levels[0];window.RU_AI_LEVEL_NUM=pend.levels[1];window.RU_AI_LEVEL_KEY_A=pend.levels[2];window.RU_AI_LEVEL_NUM_A=pend.levels[3];}
+    window.RU1355_PENDING_TOURNAMENT=null;
+    if(st)pCls=st.playerClass;
+    const sel=document.getElementById('ru135-mode-select');if(sel)sel.value='tournament';
+    if(window.ru135SetMode)window.ru135SetMode('tournament');
+    window.RU_RESUME_TOURNAMENT=true;
+    try{advanceTournamentRound();}finally{window.RU_RESUME_TOURNAMENT=false;}
+  };
   window.ru1355SpectateNextMatch=spectateNextMatch;
   window.spectateNextMatch=spectateNextMatch;
   function skipToNextRound(){
@@ -15684,6 +15717,24 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       return competitorAt(st,round,playerMatchIndex(st,round),1);
     }
     window.syncPlayerOpponent=syncPlayerOpponent;
+    // A bot-vs-bot match of the player's current round that hasn't been played yet (to watch it), or null.
+    window.ruBracketBotMatch=function(){
+      const st=window.RU1355_SINGLE_ELIM; if(!st||st.complete)return null;
+      const round=Math.max(1,Math.min(st.currentRound||1,st.totalRounds)), pm=playerMatchIndex(st,round);
+      for(let r=1;r<round;r++)resolveBotRound(st,r);
+      for(let m=0;m<roundMatches(st,round);m++){
+        if(m===pm||(st.winners[round]&&st.winners[round][m]))continue;
+        const a=competitorAt(st,round,m,0),b=competitorAt(st,round,m,1);
+        if(a&&b&&!a.isPlayer&&!b.isPlayer)return {round,match:m,a:{classKey:a.classKey,ladderKey:ladderKey(a.tier==null?6:a.tier),label:tierLabel(a.tier==null?6:a.tier)},b:{classKey:b.classKey,ladderKey:ladderKey(b.tier==null?6:b.tier),label:tierLabel(b.tier==null?6:b.tier)}};
+      }
+      return null;
+    };
+    // The watched match's winner goes into the bracket (side 0 = Seat 1, side 1 = Seat 2).
+    window.ruBracketRecord=function(round,match,side){
+      const st=window.RU1355_SINGLE_ELIM; if(!st)return;
+      st.winners[round]=st.winners[round]||{};
+      const e=competitorAt(st,round,match,side===1?1:0); if(e)st.winners[round][match]=e;
+    };
     window.ruTournamentOpponent=function(){
       const st=window.RU1355_SINGLE_ELIM;
       if(!st||st.complete)return null;
@@ -16469,7 +16520,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var prevSpectate=window.ru1355SpectateNextMatch;
     window.ru1355SpectateNextMatch=function(){
       var r=prevSpectate.apply(this,arguments);
-      if(G){
+      if(G&&!G._soloNet){   // (the built-in bot only: the thinking bots already play both seats of a watched match)
         G.ruMode='ai-vs-ai';
         G._spectatorOnly=true;
         G.player.isBot=true;
