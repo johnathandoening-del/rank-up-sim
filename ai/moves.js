@@ -110,6 +110,11 @@ var MOVES_CODE = `
     });
     if (p.delta && p.delta[0]) out.push({ t:'amalgSkill', id:p.delta[0].id, s:seat });
     if ((p.evolutions||[]).length) out.push({ t:'delta', w:seat, s:seat });
+    // Amalgamation Rank Up: the Δ Zone click only opens the acting player's own menu (a local view); the Rank Up
+    // itself is its own input, one per Evolution that the Battlefield can make right now
+    if ((p.evolutions||[]).length && G.allowEvolutions !== false && window.findAmalgamationOptionsAI1) {
+      try { window.findAmalgamationOptionsAI1(seat).forEach(function(o){ var ids = (o.combo||[]).map(function(x){ return x.card && x.card.id; }).filter(Boolean); if (ids.length) out.push({ t:'amalgRank', evoCardId:o.evo.id, evoId:o.evo.baseId || o.evo.id, elementIds:ids, s:seat }); }); } catch(e) {}
+    }
     if (ph === 'battle') { out.push({ t:'atkMode', s:seat }); out.push({ t:'direct', s:seat }); }
     if (ph === 'rally') { out.push({ t:'sdMode', s:seat }); out.push({ t:'rvMode', s:seat }); out.push({ t:'maxFlank', s:seat }); }
     return out;

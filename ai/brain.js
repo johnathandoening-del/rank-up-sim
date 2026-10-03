@@ -27,7 +27,8 @@ var BRAIN_CODE = `
   function opp(w){ var o = opps(w); return o.length ? o[0] : (w === 'player' ? 'ai' : 'player'); }
   function npOf(c){ return c ? (c.currentNP != null ? c.currentNP : (c.numeral || 0)) : 0; }
   function rpOf(c){ return c ? (c.currentRP != null ? c.currentRP : (c.rank || 0)) : 0; }
-  function field(p){ return [p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank].filter(Boolean); }
+  // the Battlefield: Rank Zone, Flanks and the Δ Zone card (an Amalgamation attacks and is attacked like the others)
+  function field(p){ return [p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank, p.delta && p.delta[0]].filter(Boolean); }
   function lowlands(){ return seats().some(function(s){ return G[s] && (G[s].deadzone||[]).some(function(c){ return c && c.name === 'The Lowlands'; }); }); }
   function clamp(x,a,b){ return x < a ? a : x > b ? b : x; }
 
@@ -47,6 +48,16 @@ var BRAIN_CODE = `
       f[pre+'nums'] = (p.hand||[]).filter(function(c){ return c && c.type === 'numeral'; }).length;
       f[pre+'areas'] = (p.hand||[]).filter(function(c){ return c && c.type === 'area'; }).length;
       f[pre+'delta'] = (p.delta && p.delta.length) ? 1 : 0;
+      f[pre+'deltaNP'] = (p.delta && p.delta[0]) ? npOf(p.delta[0]) : 0;
+      // an Amalgamation Rank Up the Battlefield could make now (Δ Deck + three matching Numerals)
+      // progress toward one: the most Battlefield Numerals matching the value of an Evolution in the Δ Deck (up to 2)
+      f[pre+'amalgNear'] = 0;
+      if (G.allowEvolutions !== false && (p.evolutions||[]).length && !(p.delta && p.delta.length)) {
+        var vals = {}; [p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank].forEach(function(c){ if (c && c.type === 'numeral') vals[c.numeral] = (vals[c.numeral] || 0) + 1; });
+        // (weighted by what the Evolution is worth: a high Amalgamation is worth building toward, a low one barely)
+        p.evolutions.forEach(function(e){ f[pre+'amalgNear'] = Math.max(f[pre+'amalgNear'], Math.min(2, vals[e.numeral] || 0) * (1 + (e.numeral || 0) / 3)); });
+      }
+      f[pre+'amalg'] = 0; try { if (G.allowEvolutions !== false && (p.evolutions||[]).length && !(p.delta && p.delta.length) && window.findAmalgamationOptionsAI1) f[pre+'amalg'] = window.findAmalgamationOptionsAI1(p === me ? w : o).length ? 1 : 0; } catch(e) {}
       f[pre+'areaDead'] = (p.deadzone||[]).filter(function(c){ return c && c.type === 'area'; }).length;
       // numerals in hand that are a legal promotion over the current Rank Zone card (NP +1..+3 at Rank +0/+1, or
       // the same NP at Rank +1) — 0 means rank-locked
@@ -67,6 +78,20 @@ var BRAIN_CODE = `
     }
     var tm = threat(me, op), to = threat(op, me);
     f.m_threat = tm.dmg; f.o_threat = to.dmg; f.m_beats = tm.beats; f.o_beats = to.beats;
+    // A fuller threat: every ready attacker, strongest first, attacks the target it beats by the most; a beaten target
+    // is gone (sent to the Deadzone) — the total Morale damage, and how many attackers are ready.
+    function threat2(a, d){
+      var att = field(a).filter(function(c){ return c.canAttack !== false && !c.frozen; }).map(npOf).sort(function(x, y){ return y - x; });
+      var tg = field(d).map(npOf), dmg = 0;
+      att.forEach(function(np){
+        var bi = -1, bx = 0;
+        for (var i = 0; i < tg.length; i++) { var x = np - tg[i]; if (x > bx) { bx = x; bi = i; } }
+        if (bi >= 0) { dmg += bx; tg.splice(bi, 1); }
+      });
+      return { dmg: dmg, n: att.length };
+    }
+    var t2m = threat2(me, op), t2o = threat2(op, me);
+    f.m_threat2 = t2m.dmg; f.o_threat2 = t2o.dmg; f.m_attackers = t2m.n; f.o_attackers = t2o.n;
     f.lowlands = lowlands() ? 1 : 0;
     f.tempo = G.turn === w ? 1 : (G.turn === o ? -1 : 0);        // whose turn it is (antisymmetric)
     return f;
@@ -93,19 +118,31 @@ var BRAIN_CODE = `
       deckLow: Math.max(0, 10 - f.m_deck) - Math.max(0, 10 - f.o_deck),
       promo: Math.min(f.m_promo, 2) - Math.min(f.o_promo, 2),
       locked: (f.m_promo ? 0 : 1) - (f.o_promo ? 0 : 1),
-      nums: f.m_nums - f.o_nums, areas: f.m_areas - f.o_areas,
+      nums: f.m_nums - f.o_nums, areas: f.m_areas - f.o_areas, amalg: (f.m_amalg || 0) - (f.o_amalg || 0), amalgNear: (f.m_amalgNear || 0) - (f.o_amalgNear || 0), deltaNP: (f.m_deltaNP || 0) - (f.o_deltaNP || 0),
       lethal: (f.tempo > 0 ? (f.m_threat >= f.o_mp ? 1 : 0) : -(f.o_threat >= f.m_mp ? 1 : 0)),
+      threat2: (f.m_threat2 || 0) - (f.o_threat2 || 0), attackers: (f.m_attackers || 0) - (f.o_attackers || 0),
+      threat2T: f.tempo * (f.tempo > 0 ? (f.m_threat2 || 0) : (f.o_threat2 || 0)),
+      lethal2: (f.tempo > 0 ? ((f.m_threat2 || 0) >= f.o_mp ? 1 : 0) : -((f.o_threat2 || 0) >= f.m_mp ? 1 : 0)),
       danger: (f.o_threat >= f.m_mp ? 1 : 0) - (f.m_threat >= f.o_mp ? 1 : 0)
     };
   }
   // Starting weights (units: ~2 per Morale point at 15 MP). The Deck is a resource (deck-out loses), worth much more
   // below 10 cards; a threat that can finish the other side next turn counts for whoever holds it.
-  var W0 = { mv: 1, cv: 1, deck: 1, rank: 1.2, rankRP: 0, flank: 0.6, fieldN: 2.0, hand: 0.8, bank: 0.5, actions: 0.7, delta: 0, area: 0, maxNP: 0,
-    deckRaw: 0.25, deckLow: -2.5, lethal: 20, danger: -10 };
+  var W0 = { mv: 1, cv: 1, deck: 1, rank: 1.2, rankRP: 0, flank: 0.6, fieldN: 2.0, hand: 0.8, bank: 0.5, actions: 0.7, area: 0, maxNP: 0,
+    deckRaw: 0.25, deckLow: -2.5, lethal: 20, danger: -10, delta: 4, deltaNP: 1.5, amalg: 3, amalgNear: 1 };
   // Value of the position for w: in a 1v1, w against its opponent; with more seats, the mean of w against each other
   // seat (an eliminated opponent is a pair already won), so every opponent's strength counts. w eliminated = lost.
   var PAIR_WON = 400;
+  // Judgment noise (a weaker tier's skill): every position the bot judges is misjudged by a random amount (sd NOISE,
+  // evaluation units), drawn from the bot's own stream — in its search and in its prompt answers alike. Wins and
+  // losses are never misjudged.
+  var NOISE = 0, NR = null;
+  function gauss(){ var u = 0, v = 0; while (!u) u = NR(); v = NR(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
   function evaluate(w){
+    var v = evaluate0(w);
+    return (NOISE && v > -1e5 && v < 1e5) ? v + NOISE * gauss() : v;
+  }
+  function evaluate0(w){
     if (G.gameOver) { var win = G.__winner; return win === w ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
     if (out(w)) return -1e6;
     var wt = (W && W.w) || W0, all = seats().filter(function(s){ return s !== w; }), sum = 0;
@@ -281,7 +318,14 @@ var BRAIN_CODE = `
     for (var j = 0; j < list.length && out.length < B; j++) if (!used.has(j)) out.push(list[j]);
     return out;
   }
-  function searchPass(mover, root, B, depthCap, budget, out){
+  // The quick opponent model for simulated future turns: develop and attack. Switchdraw is skipped, the Main and
+  // Standby phases are passed through, and the moves that make a turn dangerous — promoting, flanking, attacking —
+  // are searched. (A full search of a future turn on the small share of effort it gets never reached the Battle
+  // Phase: every simulated opponent just ended its turn, and lines looked safe that a real opponent would punish.)
+  var QUICK = { draw: { sdDone: 1 }, promotion: { promote: 1, maxPromote: 1, relieveHand: 1, adv: 1, end: 1 }, rally: { flank: 1, maxFlank: 1, relieveHand: 1, adv: 1, end: 1 },
+    main: { adv: 1, end: 1 }, standby: { adv: 1, end: 1 }, battle: { atkMode: 1, direct: 1, end: 1, cancel: 1, zone: 1 }, end: { adv: 1, end: 1 } };
+  function quickOK(c){ var ph = QUICK[G.phase]; if (!ph) return true; if (G.mode && G.mode !== 'normal' && G.mode !== 'switchdraw') return true; return !!ph[c.t]; }
+  function searchPass(mover, root, B, depthCap, budget, out, quick){
     var seen = new Set(); rewind(root); seen.add(ruStateSig());
     function record(n){
       var o = out.get(n.firstKey);
@@ -302,6 +346,7 @@ var BRAIN_CODE = `
           var C = __M.candidates(mover);
           for (var i = 0; i < C.length; i++) {
             if (bover(budget)) break;
+            if (quick && !quickOK(C[i])) continue;
             // (leaving a board mode — e.g. attack mode once no attacker is left — is a move like any other: the
             // position it returns to is new, and one already reached is skipped)
             if (depth === depthCap && !isLeave(C[i])) continue;       // deep enough in this phase: only move on
@@ -356,7 +401,7 @@ var BRAIN_CODE = `
       var saved = budget.end;
       // the first pass may run over the budget (bounded) so it always reaches the end of the turn
       if (k === 0) budget.end = Math.max(budget.end, tMain + 2.5 * Math.max(budget.fixed ? 30 : 50, budget.end - tMain));
-      searchPass(mover, root, passes[k][0], passes[k][1], budget, out);
+      searchPass(mover, root, passes[k][0], passes[k][1], budget, out, !!cfg.quick);
       budget.end = saved;
     }
     if (budget.tm) { budget.tm.main += NOW() - tReal; budget.tm.calls++; }
@@ -473,14 +518,15 @@ var BRAIN_CODE = `
   function plan(w, opts){
     opts = opts || {};
     var N = Math.max(1, opts.N || 1), t0 = NOW();
-    var cfg = { own: { width: opts.width || 3, maxDepth: opts.maxDepth || 18 }, future: { width: opts.futureWidth || 1, maxDepth: opts.maxDepth || 18, greedy: true } };
+    var cfg = { own: { width: opts.width || 3, maxDepth: opts.maxDepth || 18 }, future: { width: opts.futureWidth || 1, maxDepth: opts.maxDepth || 18, greedy: true, quick: opts.quickFuture !== false } };
     var fixed = !!opts.fixed;
     var budget = fixed
       ? { fixed: true, evals: 0, end: opts.evals || 3000, max: 3 * (opts.evals || 3000) + 2000, hard: t0 + (opts.safetyMs || 60000), tm: { main: 0, fin: 0, calls: 0, groups: 0, worlds: 0, flow: 0 } }
       : { evals: 0, max: opts.maxEvals || 20000, end: t0 + (opts.ms || 20000), tm: { main: 0, fin: 0, calls: 0, groups: 0, worlds: 0, flow: 0 } };
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
     CUR = budget;
-    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; }
+    NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
+    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; NOISE = 0; NR = null; }
   }
   function planWith(w, opts, N, cfg, budget, t0){
 

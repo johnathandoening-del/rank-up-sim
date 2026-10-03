@@ -5,7 +5,9 @@
  *   node tools/headless/fit.js <data.jsonl[,more.jsonl]> <out-weights.json> [l2=1e-3] */
 const fs = require('fs');
 const [files, out, l2Arg] = process.argv.slice(2);
-const rows = files.split(',').flatMap((f) => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+// FIT_EVERY=k keeps every k-th position (positions of one game are strongly correlated; a big run needs no more)
+const EVERY = Number(process.env.FIT_EVERY || 1);
+const rows = files.split(',').flatMap((f) => fs.readFileSync(f, 'utf8').split('\n').filter((l, i) => l && i % EVERY === 0).map((l) => JSON.parse(l))).filter((r) => r.type !== 'game');
 // rows with raw features get their terms from the bot's own terms() (one definition; refit after changing it)
 const B = (() => { const win = {}; require('vm').runInNewContext(require('./brain').CODE, { window: win, Date, Math }); return win.__B; })();
 rows.forEach((r) => { if (r.f) r.t = B.terms(r.f); });

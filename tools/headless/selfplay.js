@@ -11,6 +11,8 @@ function game(job) {
   const { createEngine } = require('./engine'); const { newMatch } = require('./match');
   const nopaint = require('./nopaint'); const brain = require('./brain');
   const eng = createEngine({ seed: job.seed }); nopaint.install(eng);
+  // ddClass: each side's Δ Deck from the game's own class-aware chooser at full size (a top-tier bot's deck)
+  if (job.ddClass && job.evo) { const dd = eng.run(`(function(){ window.RU_AI_LEVEL_KEY = window.RU_AI_LEVEL_KEY_A = 'distinguished'; window.RU_AI_LEVEL_NUM = window.RU_AI_LEVEL_NUM_A = 4; return [window.ruBotDeltaDeckFor(${JSON.stringify(job.cls0)}, 'player'), window.ruBotDeltaDeckFor(${JSON.stringify(job.cls1)}, 'ai')]; })()`); job.dd0 = dd[0]; job.dd1 = dd[1]; }
   const m = newMatch({ engine: eng, seed: job.seed, cls0: job.cls0, cls1: job.cls1, firstSeat: job.firstSeat, evo: job.evo, dd0: job.dd0, dd1: job.dd1 });
   brain.install(eng); eng.run('__B.noteApplied(null)');
   if (job.weights) eng.run('__B.setWeights(' + JSON.stringify(job.weights) + ')');
@@ -49,7 +51,7 @@ if (isMainThread) {
   const AMALG = [...new Set((fs.readFileSync(require('path').join(__dirname, '..', '..', 'index.html'), 'utf8').match(/"id": "amalg-[a-z]+-\d+"/g) || []).map((x) => x.slice(7, -1)))];
   let rs = (base * 2654435761) >>> 0; const rnd = () => { rs = (rs + 0x6D2B79F5) >>> 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const randDeck = () => { const n = Math.floor(rnd() * 4), out = []; while (out.length < n) { const id = AMALG[Math.floor(rnd() * AMALG.length)]; if (out.indexOf(id) === -1) out.push(id); } return out; };
-  const jobs = Array.from({ length: games }, (_, k) => { const evo = k % 4 !== 0; return { seed: base + k * 17, cls0: CLASSES[(base + k * 7) % 15], cls1: CLASSES[(base + k * 11 + 4) % 15], firstSeat: k % 2, evo, dd0: evo ? randDeck() : [], dd1: evo ? randDeck() : [], pol, weights, maxMs: 25 * 60000 }; });
+  const jobs = Array.from({ length: games }, (_, k) => { const evo = k % 4 !== 0; return { seed: base + k * 17, cls0: CLASSES[(base + k * 7) % 15], cls1: CLASSES[(base + k * 11 + 4) % 15], firstSeat: k % 2, evo, dd0: evo ? randDeck() : [], dd1: evo ? randDeck() : [], ddClass: !!pol.ddClass, pol, weights, maxMs: 25 * 60000 }; });
   console.log(`${AMALG.length} Δ cards in the library`);
   let next = 0, live = 0, done = 0, rows = 0; const t0 = Date.now();
   const spawn = () => {
