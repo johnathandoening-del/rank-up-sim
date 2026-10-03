@@ -21,5 +21,7 @@ const CODE = `
   window.ruLogHoldBegin = undefined;   // no per-input whole-state JSON for log hold-back (there is no screen)
 })();
 `;
-function install(eng) { eng.run(CODE); }
+// The page's own repeating timers started at load are all display (card animations, the odometer, button refresh,
+// a network health ping) or a solo-bot freeze guard that is inert in input-driven games — none run headless.
+function install(eng) { eng.run(CODE); eng.clock.live.forEach((t, id) => { if (t.every) { t.dead = true; eng.clock.live.delete(id); } }); }
 module.exports = { install, PAINTERS };

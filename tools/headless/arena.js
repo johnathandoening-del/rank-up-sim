@@ -19,6 +19,7 @@ function play(job) {
   const m = newMatch({ engine: eng, seed: job.seed, cls0: job.cls0, cls1: job.cls1, firstSeat: job.firstSeat, evo: job.evo });
   brain.install(eng); eng.run('__B.noteApplied(null)');
   const rnd = mulberry32(job.seed * 977 + (job.aSeat === 'player' ? 1 : 2));
+  job.wcache = {};
   const t0 = Date.now(), stat = { A: { n: 0, ms: 0 }, B: { n: 0, ms: 0 } };
   let steps = 0, last = '', stale = 0;
   while (steps < 6000 && Date.now() - t0 < job.maxMs) {
@@ -32,7 +33,11 @@ function play(job) {
       move = L[Math.floor(rnd() * L.length)];
       const adv = L.find((x) => x.t === 'adv' || x.t === 'sdDone'); if (adv && rnd() < 0.3) move = adv;
     } else {
-      const r = eng.run('__B.plan(' + JSON.stringify(d.seat) + ',' + JSON.stringify(Object.assign({ seed: job.seed * 31 + steps }, pol)) + ')');
+      // a tier policy turns into this turn's thinking settings (N with its occasional bump, worlds, width, time, temp)
+      const opts = pol.kind === 'tier' ? require('./tiers').planOpts(pol.key, eng.run('G._turnNo||0'), job.seed * 7 + (who === 'A' ? 1 : 2), pol.scale || 1) : pol;
+      // each side thinks with its own evaluation weights (null = the built-in starting weights)
+      eng.run('__B.setWeights(' + JSON.stringify(pol.weightsFile ? (job.wcache[pol.weightsFile] || (job.wcache[pol.weightsFile] = JSON.parse(require('fs').readFileSync(pol.weightsFile, 'utf8')))) : null) + ')');
+      const r = eng.run('__B.plan(' + JSON.stringify(d.seat) + ',' + JSON.stringify(Object.assign({ seed: job.seed * 31 + steps }, opts)) + ')');
       if (!r || !r.move) break;
       move = r.move;
     }

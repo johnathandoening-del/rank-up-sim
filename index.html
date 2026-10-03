@@ -5802,6 +5802,7 @@ function renderAll(){
     window._ruReconcilingRear = false;
   }
   if(eng)window.applyHigherGroundPassiveRA16();
+  if(eng&&window.ruRankKeeper)window.ruRankKeeper();   // an emptied Rank Zone takes the top Bank card
   // Point of view lives in sideChrome/ruViewSeat: every render function paints each seat onto that seat's
   // own board, so this screen's seat is at the bottom without ever touching the game state.
   var r=renderAllL15();
@@ -24253,14 +24254,16 @@ window.ruSpecPace=function(base){
 </script>
 <script>
 /* v13.6.0 rank-zone keeper: when a Rank Zone card is removed and the Bank still has cards, the top of
-   the Bank stack auto-promotes to Rank (catches paths like Fission 9 upkeep that forgot to restore it). */
+   the Bank stack auto-promotes to Rank (catches paths like Fission 9 upkeep that forgot to restore it).
+   It changes the game, so it is a render-time ENGINE PASS (renderAll → ruEngineRender), not a free-running timer:
+   a timer fires at a different moment on each screen online (a desync), and inside the AI's simulations. */
 (function(){ if(window._ruRankKeeper)return; window._ruRankKeeper=true;
   function keep(){ try{ if(typeof G==='undefined'||!G||G.gameOver)return;
     (G.sideOrder||['player','ai']).forEach(function(w){ var pl=G[w]; if(!pl)return;
       if(!pl.rankZone && pl.bank && pl.bank.length){ pl.rankZone=pl.bank.shift();
         try{ if(window.log) log((sidePossessiveLabel(w))+' Rank Zone was empty \u2014 '+(pl.rankZone&&pl.rankZone.name||'a card')+' promoted from the Bank.','info'); }catch(e){}
       } }); }catch(e){} }
-  setInterval(keep, 120);
+  window.ruRankKeeper=keep;
 })();
 </script>
 <!-- [Issue 2] The Extension Rear-Flank-promotion renderAll wrapper that lived here was folded directly

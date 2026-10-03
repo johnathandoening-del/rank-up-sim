@@ -88,3 +88,11 @@ Verified finally by playing as a human in the real UI.
   lazy position copies (only kept lines are copied); virtual time per engine step capped (a polling Casualty Draw
   step no longer spins minutes of timers). Tools: arena.js (parallel, mirrored deals), selfplay.js + fit.js
   (learned evaluation weights).
+- **2026-10-03/04** — Game fix: the rank-zone keeper (moves the top Bank card into an empty Rank Zone) ran on a
+  free 120 ms timer — a desync source online — now a render-time rule pass (deterministic checkpoints online, every
+  render solo). Headless drops the page's display timers (animations, odometer, button refresh) which had cost ~1/3 of
+  search time. Planner: prompt chains skip answers that lead round in a circle (use skill → cancel → same window);
+  turn completion plays a real move when advancing is refused (must-attack after an Advantageous card); mid-action
+  re-deals keep the opponent's just-played cards. Learned evaluation v1 from 42 self-play games (2,494 positions):
+  held-out outcome prediction 77.6% vs 46.5% for the hand-set start. Threat features added (best attack damage each
+  way, enemy cards beatable, raw Morale/Casualty/deck margins). Tier table (tiers.js) with the user's N schedule.

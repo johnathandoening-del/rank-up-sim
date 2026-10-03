@@ -41,6 +41,18 @@ const CODE = `
       f[pre+'areaDead'] = (p.deadzone||[]).filter(function(c){ return c && c.type === 'area'; }).length;
     }
     side(me, 'm_'); side(op, 'o_');
+    // Threats on the board as it stands: the best Morale damage each side's attackers can deal into the other's
+    // field (higher NP wins; the loser loses the difference), and how many enemy cards each side's strongest ready
+    // attacker would beat.
+    function threat(a, d){
+      var att = field(a).filter(function(c){ return c.canAttack !== false && !c.frozen; }), tg = field(d).concat(d.delta && d.delta[0] ? [d.delta[0]] : []);
+      var best = 0, beats = 0, top = att.reduce(function(m, c){ return Math.max(m, npOf(c)); }, 0);
+      att.forEach(function(c){ tg.forEach(function(t){ var x = npOf(c) - npOf(t); if (x > best) best = x; }); });
+      tg.forEach(function(t){ if (top > npOf(t)) beats++; });
+      return { dmg: best, beats: beats };
+    }
+    var tm = threat(me, op), to = threat(op, me);
+    f.m_threat = tm.dmg; f.o_threat = to.dmg; f.m_beats = tm.beats; f.o_beats = to.beats;
     f.lowlands = lowlands() ? 1 : 0;
     f.tempo = G.turn === w ? 1 : -1;        // whose turn it is (antisymmetric)
     return f;
@@ -55,7 +67,10 @@ const CODE = `
       deck: (f.m_deck <= 3 ? -(4 - f.m_deck) * 8 : 0) - (f.o_deck <= 3 ? -(4 - f.o_deck) * 8 : 0),
       rank: f.m_rankNP - f.o_rankNP, rankRP: f.m_rankRP - f.o_rankRP, flank: f.m_flankNP - f.o_flankNP, fieldN: f.m_fieldN - f.o_fieldN,
       hand: f.m_hand - f.o_hand, bank: f.m_bank - f.o_bank, actions: f.m_actions - f.o_actions, delta: f.m_delta - f.o_delta,
-      area: f.m_areaDead - f.o_areaDead, maxNP: f.m_maxNP - f.o_maxNP, tempo: f.tempo
+      area: f.m_areaDead - f.o_areaDead, maxNP: f.m_maxNP - f.o_maxNP, tempo: f.tempo,
+      mpRaw: f.m_mp - f.o_mp, casRaw: f.m_cas - f.o_cas, deckRaw: f.m_deck - f.o_deck,
+      threat: f.m_threat - f.o_threat, beats: f.m_beats - f.o_beats,
+      threatT: f.tempo * (f.tempo > 0 ? f.m_threat : f.o_threat)     // the side to move gets to use its threat first
     };
   }
   var W0 = { mv: 1, cv: 1, deck: 1, rank: 1.2, rankRP: 0, flank: 0.6, fieldN: 2.0, hand: 0.8, bank: 0.5, actions: 0.7, delta: 0, area: 0, maxNP: 0 };
@@ -69,10 +84,16 @@ const CODE = `
   // ── hidden information ──
   function shuffleArr(a, r){ for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
   function mb(s){ return function(){ s |= 0; s = s + 0x6D2B79F5 | 0; var t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-  function determinize(w, r){
+  // keep: ids of opponent cards the mover has SEEN since the anchor (played from hand in the inputs being replayed) —
+  // those are not hidden any more and stay exactly where they are; everything else hidden is re-dealt.
+  function determinize(w, r, keep){
     var me = G[w], op = G[opp(w)];
-    var hidden = (op.hand || []).concat(op.deck || []); shuffleArr(hidden, r);
-    var hn = (op.hand || []).length; op.hand = hidden.slice(0, hn); op.deck = hidden.slice(hn);
+    var kept = [], hidden = [];
+    (op.hand || []).forEach(function(c){ (keep && c && keep[c.id] ? kept : hidden).push(c); });
+    var fromDeck = (op.deck || []).slice();
+    var pool = hidden.concat(fromDeck); shuffleArr(pool, r);
+    var hn = (op.hand || []).length - kept.length;
+    op.hand = kept.concat(pool.slice(0, hn)); op.deck = pool.slice(hn);
     shuffleArr(me.deck || [], r);
     var st = window.ruRngState(); st.g = Math.floor(r() * 4294967296) | 0; st.ai = Math.floor(r() * 4294967296) | 0; window.ruRngRestore(st);
   }
@@ -95,19 +116,27 @@ const CODE = `
 
   // Finish a mid-flow position until quiet: the mover's own answers best-first (one step), the other player's worst-
   // for-the-mover. 'rebuild' recreates the mid-flow position. Returns the answers chosen (to extend the line), or null.
+  // A prompt situation seen before in this flow means an answer led round in a circle (choose a skill → cancel → the
+  // same window again): answers that lead back to a seen situation are skipped, so the flow always moves on.
+  function promptKey(){ var d = dec(); return d.kind + '|' + (d.seat || '') + '|' + (d.title || '') + '|' + (d.labels || []).join('/') + '|' + ruStateSig(); }
   function finishFlow(w, rebuild, budget){
-    var seq = [];
-    for (var guard = 0; guard < 24; guard++) {
+    var seq = [], seen = new Set();
+    for (var guard = 0; guard < 40; guard++) {
       if (G.gameOver || __S.quiet()) return seq;
       var d = dec(); if (isOver(d)) return seq;
+      seen.add(promptKey());
       var L = __M.candidates(d.seat); if (!L.length) return null;
-      var best = null, bestV = 0;
+      var best = null, bestV = 0, fallback = null;
+      if (Date.now() > budget.deadline) L = L.slice(0, Math.min(L.length, 2));
       for (var i = 0; i < L.length; i++) {
         rebuild(); for (var q = 0; q < seq.length; q++) apply(seq[q]);
         apply(L[i]); budget.evals++;
+        if (!fallback) fallback = L[i];
+        if (!G.gameOver && !__S.quiet() && seen.has(promptKey())) continue;     // back where we were: a circle
         var v = evaluate(w);
         if (best === null || (d.seat === w ? v > bestV : v < bestV)) { best = L[i]; bestV = v; }
       }
+      if (!best) { var lastIdx = L.length - 1; best = L[lastIdx]; }   // every answer circles: take the last (Pass / Cancel sit last)
       seq.push(best);
       rebuild(); for (var k = 0; k < seq.length; k++) apply(seq[k]);
     }
@@ -189,8 +218,13 @@ const CODE = `
         }
       }
       // next frontier: each first move keeps its own best few continuations (copied only now)
+      // (cfg.greedy — used for simulated future turns — keeps one global beam instead: a fast single line of play)
       frontier = [];
-      groups.forEach(function(g){ g.beam.sort(function(a, b){ return b.v - a.v; }); g.beam.slice(0, cfg.width).forEach(function(n){ frontier.push({ snap: null, rec: n.rec, steps: n.steps, firstKey: n.firstKey }); }); });
+      if (cfg.greedy) {
+        var all = []; groups.forEach(function(g){ all = all.concat(g.beam); });
+        all.sort(function(a, b){ return b.v - a.v; });
+        all.slice(0, cfg.width).forEach(function(n){ frontier.push({ snap: null, rec: n.rec, steps: n.steps, firstKey: n.firstKey }); });
+      } else groups.forEach(function(g){ g.beam.sort(function(a, b){ return b.v - a.v; }); g.beam.slice(0, cfg.width).forEach(function(n){ frontier.push({ snap: null, rec: n.rec, steps: n.steps, firstKey: n.firstKey }); }); });
     }
     // Lines are compared at the same point — when the turn has passed. Unfinished ones are played to the end of the
     // turn first (otherwise "never end the turn" would look better than any line that lets the opponent draw).
@@ -198,7 +232,7 @@ const CODE = `
     groups.forEach(function(g){
       var best = null;
       if (g.best && g.best.done) best = { first: g.best.first, steps: g.best.steps, v: g.best.v, end: materialize(g.best.rec), done: true };
-      var cands = g.beam.slice(0, cfg.width);
+      var cands = g.beam.slice(0, Date.now() > budget.deadline ? 1 : cfg.width);
       if (!best && g.best && !cands.length) cands = [{ rec: g.best.rec, steps: g.best.steps }];
       cands.forEach(function(n){
         var fin = finishTurn(mover, materialize(n.rec), budget);
@@ -210,18 +244,38 @@ const CODE = `
     return out;
   }
 
-  // Play the rest of the mover's turn by simply advancing (adv / end) until the turn passes. Returns the steps + end.
+  // Play the rest of the mover's turn quickly: advance (adv / end) each phase; when that is refused (e.g. an
+  // Advantageous Action Card obliges an attack first) play the best real move instead. Returns { steps, v, end }.
   function finishTurn(mover, snap, budget){
-    rewind(snap); var steps = [];
-    for (var g = 0; g < 12; g++) {
+    rewind(snap); var steps = [], cur = snap;
+    for (var g = 0; g < 16; g++) {
       if (G.gameOver || G.turn !== mover) break;
       var d = dec(); if (isOver(d)) break;
       if (!__S.quiet()) return null;
-      var a = { t: d.phase === 'battle' || d.phase === 'end' ? 'end' : 'adv', s: mover };
-      if (d.mode && d.mode !== 'normal') a = { t: 'cancel', s: mover };
-      var sig = ruStateSig(); apply(a); budget.evals++;
-      if (!__S.quiet() && !G.gameOver) { var ans = finishFlow(mover, function(){ rewind(snap); for (var q = 0; q < steps.length; q++) for (var r = 0; r < steps[q].inputs.length; r++) apply(steps[q].inputs[r]); apply(a); }, budget); if (!ans) return null; steps.push({ inputs: [a].concat(ans), vis: visSig(mover), opp: true }); }
-      else { if (ruStateSig() === sig && !G.gameOver) { a = { t: 'end', s: mover }; apply(a); budget.evals++; } steps.push({ inputs: [a], vis: visSig(mover), opp: false }); }
+      cur = __S.snap();
+      var sig = ruStateSig();
+      var a = { t: (d.mode && d.mode !== 'normal') ? 'cancel' : (d.phase === 'battle' || d.phase === 'end' ? 'end' : 'adv'), s: mover };
+      apply(a); budget.evals++;
+      if (!G.gameOver && __S.quiet() && ruStateSig() === sig) { rewind(cur); a = { t: 'end', s: mover }; apply(a); budget.evals++; }
+      if (!G.gameOver && __S.quiet() && ruStateSig() === sig) {
+        // advancing is refused: the best real move (attacks included) instead
+        rewind(cur);
+        var bestM = null, bestV = -Infinity, C = __M.candidates(mover);
+        for (var i = 0; i < C.length; i++) {
+          if (C[i].t === 'adv' || C[i].t === 'end' || C[i].t === 'cancel') continue;
+          expand(mover, cur, C[i], budget, function(inputs, rec){ var v = evaluate(mover); if (v > bestV && ruStateSig() !== sig) { bestV = v; bestM = { inputs: inputs, rec: rec }; } }, 0, false);
+        }
+        if (!bestM) return null;
+        rewind(materialize(bestM.rec));
+        steps.push({ inputs: bestM.inputs, vis: visSig(mover), opp: bestM.inputs.some(function(x){ return x.s && x.s !== mover; }) });
+        continue;
+      }
+      if (!__S.quiet() && !G.gameOver) {
+        var cs = cur, aa = a;
+        var ans = finishFlow(mover, function(){ rewind(cs); apply(aa); }, budget);
+        if (!ans) return null;
+        steps.push({ inputs: [a].concat(ans), vis: visSig(mover), opp: true });
+      } else steps.push({ inputs: [a], vis: visSig(mover), opp: false });
     }
     return { steps: steps, v: evaluate(mover), end: __S.quiet() ? __S.snap() : null };
   }
@@ -273,7 +327,7 @@ const CODE = `
   function plan(w, opts){
     opts = opts || {};
     var N = Math.max(1, opts.N || 1), t0 = Date.now();
-    var cfg = { own: { width: opts.width || 3, maxDepth: opts.maxDepth || 18 }, future: { width: opts.futureWidth || 1, maxDepth: opts.maxDepth || 18 } };
+    var cfg = { own: { width: opts.width || 3, maxDepth: opts.maxDepth || 18 }, future: { width: opts.futureWidth || 1, maxDepth: opts.maxDepth || 18, greedy: true } };
     var budget = { evals: 0, max: opts.maxEvals || 20000, deadline: t0 + (opts.ms || 20000) };
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
 
@@ -283,6 +337,7 @@ const CODE = `
     var quietNow = __S.quiet();
     if (!quietNow && !live.quiet) return { move: __M.candidates(w)[0], why: 'no anchor' };
     var anchor = quietNow ? __S.snap() : live.quiet, path = quietNow ? [] : live.path.slice();
+    var keepIds = {}; path.forEach(function(a){ if (a && a.id && a.s && a.s !== w) keepIds[a.id] = 1; });   // the opponent's cards played since
     // Worlds are added until the best first move is clearly ahead of the rest (paired: every world scores every first
     // move, so differences come from the moves, not the deals). A move that is not clearly better than simply passing
     // (Done / advance / end) loses to passing — acting on luck-noise is how a search talks itself into bad plays.
@@ -291,7 +346,7 @@ const CODE = `
     for (var k = 0; k < maxW; k++) {
       if (k >= minW && Date.now() > budget.deadline) break;
       var seed = ((opts.seed >>> 0) || 1) * 7919 + k * 104729;
-      var mkWorld = function(){ rewind(anchor); determinize(w, mb(seed)); for (var p = 0; p < path.length; p++) apply(path[p]); };
+      var mkWorld = function(){ rewind(anchor); determinize(w, mb(seed), keepIds); for (var p = 0; p < path.length; p++) apply(path[p]); };
       mkWorld();
       var dd = dec(); if (isOver(dd) || dd.seat !== w) continue;
       var lines;
@@ -340,13 +395,28 @@ const CODE = `
     });
     if (!best) return { move: __M.candidates(w)[0], why: 'no lines' };
     if (pass && pass !== best && best.m - pass.m <= Math.max(best.se, pass.se)) best = pass;   // not clearly better than holding
+    // Skill: a lower tier does not always play its best line. 'temp' (in evaluation units) makes worse lines
+    // proportionally less likely — near-equal lines get confused, clearly worse ones rarely. Drawn from the bot's own
+    // stream (opts.seed), never the game's.
+    if (opts.temp > 0 && agg.size > 1) {
+      var opts2 = []; agg.forEach(function(a, kk){ opts2.push({ m: a.sum / a.n, line: a.line }); });
+      var top = Math.max.apply(null, opts2.map(function(o){ return o.m; }));
+      var ws = opts2.map(function(o){ return Math.exp(Math.max(-50, (o.m - top) / opts.temp)); }), tot = ws.reduce(function(x, y){ return x + y; }, 0);
+      var rr = mb(((opts.seed >>> 0) || 1) * 2654435761 >>> 0)() * tot;
+      for (var q = 0; q < opts2.length; q++) { rr -= ws[q]; if (rr <= 0) { if (opts2[q].m < best.m) best = { m: opts2[q].m, line: opts2[q].line }; break; } }
+    }
     var line = best.line;
     cache = { seat: w, turnNo: G._turnNo || 0, steps: line.steps, si: 0, ii: 1 };
     return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: Date.now() - t0, why: 'search' };
   }
 
   window.__B = { features: features, terms: terms, evaluate: evaluate, plan: plan, determinize: determinize, noteApplied: noteApplied,
-    visSig: visSig, setWeights: function(x){ W = x; }, resetPlan: function(){ cache = null; }, live: live };
+    visSig: visSig, setWeights: function(x){ W = x; }, resetPlan: function(){ cache = null; }, live: live,
+    // debugging: one turn search from the live position (no worlds), summarised
+    _ts: function(w, cfgx){ var b = { evals: 0, max: 1e9, deadline: Date.now() + 8000, trace: [] }; var root = __S.snap();
+      var out = turnSearch(w, root, cfgx || { width: 2, maxDepth: 18 }, b); rewind(root);
+      return { lines: out.map(function(l){ return { first: l.first, v: Math.round(l.v), steps: l.steps.length, end: !!l.end }; }), evals: b.evals, trace: b.trace.slice(0, 40) }; },
+    _finishTurnDebug: function(w){ var b = { evals: 0, max: 1e9, deadline: Date.now() + 8000 }; var root = __S.snap(); var r = finishTurn(w, root, b); var res = r ? { v: r.v, steps: r.steps.map(function(s){ return s.inputs.map(function(i){ return i.t; }).join('+'); }), end: !!r.end } : null; var after = { turn: G.turn, phase: G.phase, quiet: __S.quiet(), dec: __M.decider() }; rewind(root); return { res: res, after: after }; } };
 })();
 `;
 

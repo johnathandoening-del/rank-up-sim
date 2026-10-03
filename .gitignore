@@ -8,3 +8,4 @@ all_class_icons.png
 .fly/
 cloudflared.exe
 server/stats.json
+tools/headless/data/
