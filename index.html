@@ -576,7 +576,9 @@ function ruOffTurnSeat(){
 function ruResumeAfterOffTurnWindow(ph){
   if(!G||G.gameOver)return;
   if(ruBotControlledSeat(G.turn)){setTimeout(function(){aiDo(ph);},0);return;}
-  setTimeout(function(){if(G&&!G.gameOver&&G.phase===ph&&window.ruOfferOffTurnWindows)ruOfferOffTurnWindows(ph);},0);
+  const next=function(){if(G&&!G.gameOver&&G.phase===ph&&window.ruOfferOffTurnWindows)ruOfferOffTurnWindows(ph);};
+  if(ruIsOnline()&&window.ruWhenSettled)window.ruWhenSettled(null,next,{defer:true});   // right after this input, on every screen
+  else setTimeout(next,0);
 }
 // Offer the reacting seat its opponent-turn windows during a HUMAN turn seat's phase (a bot turn offers them
 // from aiDo). Same order and once-per-phase pass keys as the bot-turn path.
@@ -6654,18 +6656,17 @@ function closeModal(){
 // Run fn only once all queued prompts (and any open picker) are cleared — keeps the AI from racing ahead of the player's choices.
 // Must not wait forever because an internal flag can stay true after the modal DOM closed.
 function afterModals(fn){
+  // Online, only SHARED prompts (some player's decision, present on every screen) hold the game's flow — never a
+  // private view (a card inspection, a zone browse) — and the step goes on at the same point on every screen (a
+  // settled-table continuation, see ruWhenSettled), never on this screen's own timer.
+  if(typeof ruIsOnline==='function'&&ruIsOnline()&&window.ruWhenSettled){
+    window.ruWhenSettled(function(){return !ruPromptPending();},function(){try{fn&&fn();}catch(err){console.error('Rank Up afterModals callback error:',err);}});
+    return;
+  }
   function ruDomModalOpen(){const m=document.getElementById('modal');return !!(m&&m.classList.contains('open'));}
   function ruPickerOpen(){const p=document.getElementById('picker-modal');return !!(p&&p.classList.contains('open'));}
   const started=Date.now();
   function spin(){
-    // Online, only SHARED prompts (some player's decision, present on every screen) hold the game's flow. A private
-    // view one player has open (a card inspection, a zone browse) must not, or this step would run at a different
-    // moment on each screen.
-    if(typeof ruIsOnline==='function'&&ruIsOnline()){
-      if(ruPromptPending()){setTimeout(spin,250);return;}
-      try{fn&&fn();}catch(err){console.error('Rank Up afterModals callback error:',err);}
-      return;
-    }
     const dom=ruDomModalOpen(), picker=ruPickerOpen();
     const queued=(typeof _modalQueue!=='undefined'&&_modalQueue.length>0);
     if(typeof _modalOpen!=='undefined'&&_modalOpen&&!dom&&!queued&&!picker){_modalOpen=false;}
@@ -12497,13 +12498,8 @@ function useRetL2(idx,card){
   }
   window.hasteOpponentEntries=hasteOpponentEntries;
   function waitHumanSkillDone(cb){
-    const start=Date.now();
+    if(ruIsOnline()&&window.ruWhenSettled){window.ruWhenSettled(window.ruTableClear,cb);return;}   // same point on every screen
     function spin(){
-
-
-
-
-
       const skill=(typeof SF!=='undefined'&&SF);
       if(window.ruUiBusy()||skill){setTimeout(spin,220);return;}
       cb&&cb();
@@ -12589,12 +12585,8 @@ function useRetL2(idx,card){
   function dropTop(who,n,to){const p=pside(who);for(let i=0;p&&i<(n||1);i++){if(!p.deck.length)break;const c=p.deck.shift();if(to==='deadzone'){window.dzAdd(p,c);}else p.discard.push(c);}}
 
   function waitClear(cb){
+    if(ruIsOnline()&&window.ruWhenSettled){window.ruWhenSettled(window.ruTableClear,cb);return;}   // same point on every screen
     function spin(){
-
-
-
-
-
       const skill=(typeof SF!=='undefined'&&SF);
       if(window.ruUiBusy()||skill){setTimeout(spin,180);return;}
       cb&&cb();
@@ -14230,13 +14222,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     else p.discard.push(c);
   }
   function waitClear135(cb){
+    if(ruIsOnline()&&window.ruWhenSettled){window.ruWhenSettled(window.ruTableClear,cb);return;}   // same point on every screen
     function spin(){
-
-
-
-
-
-
       const skill=(typeof SF!=='undefined'&&SF);
       if(window.ruUiBusy()||skill){setTimeout(spin,180);return;}
       cb&&cb();
@@ -15932,6 +15919,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return !((window._RUcq&&window._RUcq.length)||window._RUcbusy||window.ruUiBusy());
   }
   function resumeCounterAtkRA(){
+    if(ruIsOnline()&&window.ruWhenSettled){ window.ruWhenSettled(retaliationIdle,runCounterAtkRA,{defer:true}); return; }   // same point on every screen
     var settle=function(){ if(!retaliationIdle()){ setTimeout(settle,80); return; } runCounterAtkRA(); };
     setTimeout(settle,80);
   }
@@ -22775,11 +22763,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   window.hasteSkillEntries=hasteSkillEntries;
   function waitClear(cb){
+    if(ruIsOnline() && window.ruWhenSettled){ window.ruWhenSettled(window.ruTableClear, cb); return; }   // same point on every screen
     function spin(){
-
-
-
-
       var skill = false;
       try{ skill = typeof SF !== 'undefined' && !!SF; }catch(e){}
       if(window.ruUiBusy() || skill){ setTimeout(spin,220); return; }
@@ -25009,11 +24994,9 @@ window.ruSpecPace=function(base){
 // ═══════════════════════════════════════════
 (function(){
   function ruAreaWait(cb){
+    if(ruIsOnline()&&window.ruWhenSettled){window.ruWhenSettled(function(){return !window.ruUiBusy();},cb);return;}   // same point on every screen
     var tries=0;
     (function spin(){
-
-
-
       if(window.ruUiBusy()&&tries++<200){setTimeout(spin,220);return;}
       cb&&cb();
     })();
@@ -25488,6 +25471,49 @@ window.ruSpecPace=function(base){
   function inContext(kind,fn){ var g=G_(); if(!g) return fn(); var pi=g._inInput, pl=g._uiLocal; g._inInput=(kind==='shared'); g._uiLocal=(kind==='local'); try{ return fn(); } finally { var g2=G_(); if(g2){ g2._inInput=pi; g2._uiLocal=pl; } } }
   window.ruWithActor=withActor;
 
+  // ── continuations that wait for the table to settle ──
+  // Flows that continue "once no prompt / skill / Casualty Draw is pending" (after an opponent-turn window, an Area
+  // effect, a skill, a retaliation, a counter-attack) used to poll on each screen's own timer, so every screen went
+  // on at its own moment — and an input made in between (the turn player pressing Next Phase a moment after the
+  // other player's last pick) was made in a state the other screen had already left: a desync. Online they are
+  // registered here instead. Each runs, in registration order, as soon as its condition holds — at the end of the
+  // input that settles it, or on the next poll after a timed engine step — and ALWAYS before this screen makes or
+  // applies another input. Relative to the inputs, every screen therefore runs it at the same point. It runs as a
+  // timer did: no acting seat, outside any input, not a user input.
+  var waits=[], waitTimer=null, settling=false;
+  function armWaits(){ if(waitTimer){ clearTimeout(waitTimer); waitTimer=null; } if(waits.length) waitTimer=setTimeout(function(){ waitTimer=null; settleNow(); },100); }
+  function runAsTimer(cb){
+    var g=G_(), ud=userDepth, pa, pi, pl;
+    if(g){ pa=g._actor; pi=g._inInput; pl=g._uiLocal; delete g._actor; g._inInput=false; g._uiLocal=false; }
+    userDepth=0;
+    try{ cb(); }catch(e){ console.error('[settle] continuation failed',e); }
+    finally{ userDepth=ud; if(g&&G_()===g){ if(pa===undefined) delete g._actor; else g._actor=pa; g._inInput=pi; g._uiLocal=pl; } }
+  }
+  function settleNow(){
+    if(settling) return;
+    settling=true;
+    try{
+      for(var n=0;n<1000;n++){
+        var g=G_(), k=-1;
+        waits=waits.filter(function(w){ return w.g===g; });          // a continuation of a game that ended is dropped
+        for(var i=0;i<waits.length;i++){ var ok=false; try{ ok=!!waits[i].cond(); }catch(e){ ok=true; } if(ok){ k=i; break; } }
+        if(k<0) break;
+        runAsTimer(waits.splice(k,1)[0].cb);
+      }
+    } finally { settling=false; armWaits(); }
+  }
+  // cond: when the continuation may go on (default: at once). If it already holds, cb runs right here, as the first
+  // tick of a polling loop did; opts.defer instead always waits for the end of the current input / the next poll
+  // (what a setTimeout continuation did).
+  window.ruWhenSettled=function(cond,cb,opts){
+    cond=cond||function(){ return true; };
+    if(!(opts&&opts.defer)){ var ok=false; try{ ok=!!cond(); }catch(e){} if(ok){ cb(); return; } }
+    waits.push({g:G_(), cond:cond, cb:cb}); armWaits();
+  };
+  // The common condition: no shared prompt is pending and no skill is in flight.
+  window.ruTableClear=function(){ return !window.ruUiBusy()&&!(typeof SF!=='undefined'&&SF); };
+  window.ruSettleNow=settleNow;
+
   // A fingerprint of the shared game state an input was made in. The receiving client applies a relayed input
   // only once its own state has the same fingerprint — i.e. once its own engine flow (timed continuations,
   // queued Casualty Draws, the prompt that input answers) has caught up to exactly where the sender was.
@@ -25524,8 +25550,9 @@ window.ruSpecPace=function(base){
   // it — never inside the private dialog's context (anything that effect opens is a shared prompt, not a view).
   // Already inside an input / a replay, or not a live user input → just run it.
   window.ruAsInput       = function(a,fn){ var g=G_(); if(!g||!isUserInput()||g._replaying||g._inInput) return fn();
+                                         settleNow(); if(!G_()) return false;
                                          if(a.s==null) a.s=localSeat(); var why=refusal(a); if(why){ say(why); return false; }
-                                         rec(a); return withActor(a.s,function(){ return inContext('shared',fn); }); };
+                                         rec(a); var r=withActor(a.s,function(){ return inContext('shared',fn); }); settleNow(); return r; };
   window.ruActionLog     = function(){ var g=G_(); return g?(g._actionLog||[]):[]; };
   window.ruStartRecording= function(){ var g=G_(); if(g){ g._recording=true; g._actionLog=[]; } };
   window.ruStopRecording = function(){ var g=G_(); if(g) g._recording=false; };
@@ -25570,6 +25597,7 @@ window.ruSpecPace=function(base){
     var w=function(){
       var g=G_(), self=this, args=arguments;
       if(!g||g._replaying||g._inInput||!isUserInput()) return orig.apply(self,args);
+      settleNow(); g=G_(); if(!g) return;                         // whatever the table was waiting for happens first
       var a=null; try{ a=mk.apply(null,args); }catch(e){}
       if(!a){
         if(g._spectator&&online()) return;                       // spectators only watch
@@ -25577,7 +25605,9 @@ window.ruSpecPace=function(base){
       }
       var why=refusal(a); if(why){ say(why); return; }
       rec(a);
-      return withActor(a.s,function(){ return inContext('shared',function(){ return orig.apply(self,args); }); });
+      var r=withActor(a.s,function(){ return inContext('shared',function(){ return orig.apply(self,args); }); });
+      settleNow();
+      return r;
     };
     w._ruOrig=orig; window[name]=w;
   }
@@ -25650,11 +25680,15 @@ window.ruSpecPace=function(base){
           var g=G_(), m=modalEl(), self=this;
           if(!g||g._replaying) return f?f.call(self,ev):undefined;
           if(isLocalModal(m)) return withActor(localSeat(),function(){ return inContext('local',function(){ return f?f.call(self,ev):undefined; }); });
+          var outer=!g._inInput;
+          if(outer){ settleNow(); m=modalEl(); if(!G_()||!sharedOpen(m)||self.parentNode!==document.getElementById('m-btns')) return; }
           var a={t:'modal', i:i};
           var why=refusal(a); if(why){ say(why); return; }
           rec(a);
           var seat=(m&&m._ruOwner)||localSeat();
-          return withActor(seat,function(){ return inContext('shared',function(){ return f?f.call(self,ev):undefined; }); });
+          var res=withActor(seat,function(){ return inContext('shared',function(){ return f?f.call(self,ev):undefined; }); });
+          if(outer) settleNow();
+          return res;
         }; });
         // Decide ONCE, at open time, whether this prompt is a read-only MIRROR here (its owner is another player).
         if(window.ruMarkPromptMirror) ruMarkPromptMirror(document.getElementById('modal'));
@@ -25663,25 +25697,36 @@ window.ruSpecPace=function(base){
     };
   }
   // ── picker confirm / skip ── the chosen card ids are the input {pick,ids}; only the picker's owner answers.
+  // Before a player answers a SHARED picker the table settles; if that closed the picker, the answer is stale.
+  function pickerSettled(){
+    var g=G_(), pk=pickerEl();
+    if(!g||g._replaying||g._inInput||isLocalModal(pk)) return true;
+    settleNow(); return !!G_()&&sharedOpen(pickerEl());
+  }
   function pickInput(ids,run){
     var g=G_(), pk=pickerEl();
     if(!g||g._replaying) return run();
     if(isLocalModal(pk)) return withActor(localSeat(),function(){ return inContext('local',run); });
+    var outer=!g._inInput;
     var a={t:'pick', ids:ids};
     var why=refusal(a); if(why){ say(why); return; }
     rec(a);
     var seat=(pk&&pk._ruOwner)||localSeat();
-    return withActor(seat,function(){ return inContext('shared',run); });
+    var r=withActor(seat,function(){ return inContext('shared',run); });
+    if(outer) settleNow();
+    return r;
   }
   var _cOrig=window.confirmPick;
   if(typeof _cOrig==='function') window.confirmPick=function(){
     var self=this,args=arguments;
+    if(!pickerSettled()) return;
     var ids=((typeof PCK!=='undefined'&&PCK&&PCK.sel)||[]).map(function(c){return c&&c.id;});
     return pickInput(ids,function(){ return _cOrig.apply(self,args); });
   };
   var _sOrig=window.skipPick;
   if(typeof _sOrig==='function') window.skipPick=function(){
     var self=this,args=arguments;
+    if(!pickerSettled()) return;
     return pickInput([],function(){ return _sOrig.apply(self,args); });
   };
   // "Cancel Skill" on a picker abandons the skill in progress — an answer to the picker like any other.
@@ -25690,11 +25735,15 @@ window.ruSpecPace=function(base){
     var self=this,args=arguments,g=G_(),pk=pickerEl();
     if(!g||g._replaying) return _xOrig.apply(self,args);
     if(isLocalModal(pk)) return _xOrig.apply(self,args);
+    var outer=!g._inInput;
+    if(!pickerSettled()) return; pk=pickerEl();
     var a={t:'pickCancel'};
     var why=refusal(Object.assign({},a,{t:'pick'})); if(why){ say(why); return; }
     rec(a);
     var seat=(pk&&pk._ruOwner)||localSeat();
-    return withActor(seat,function(){ return inContext('shared',function(){ return _xOrig.apply(self,args); }); });
+    var r=withActor(seat,function(){ return inContext('shared',function(){ return _xOrig.apply(self,args); }); });
+    if(outer) settleNow();
+    return r;
   };
 
   // ── apply one recorded input (a relayed one from another player, or a local replay) AS ITS SEAT ──
@@ -25763,6 +25812,7 @@ window.ruSpecPace=function(base){
     try{ withActor(seat,function(){ inContext('shared',function(){ dispatch(g,seat,a); }); }); }
     catch(e){ console.error('[net] apply failed',e,a); }
     finally{ g._replaying=prev; if(hold){ var changed=true; try{ changed=(deepState()!==before); }catch(_){} window.ruLogHoldEnd(hold,changed); } }
+    if(!prev) settleNow();   // what this input settled goes on now, exactly as on the screen that made it
     if(window.renderAll){ try{ renderAll(); }catch(e){} }
     return true;
   };
@@ -25770,6 +25820,7 @@ window.ruSpecPace=function(base){
   // open on this screen first (this client may still be a moment behind in the same deterministic flow).
   window.ruCanApplyNow=function(a){
     if(!a) return true;
+    settleNow();   // first everything this screen's table was waiting for — the sender's had happened before it acted
     if(a.sig && stateSig()!==a.sig) return false;
     if(a.t==='modal') return sharedOpen(modalEl());
     if(a.t==='pick'||a.t==='pickCancel') return sharedOpen(pickerEl());
