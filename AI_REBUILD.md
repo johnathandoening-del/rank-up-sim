@@ -43,37 +43,26 @@ Amalgamations) chosen to serve the bot's plan.
 **All modes**: AI vs player, AI vs AI, 1v1v1, Royale, Tournament (random brackets, real escalation), Gauntlet.
 Verified finally by playing as a human in the real UI.
 
-## Architecture
+## Architecture (built)
 
-1. **Headless real engine** (`tools/headless/`): the game's own scripts run in Node with a small fake DOM
-   (`fakedom.js`), a virtual clock (timers fire instantly, in order) and seeded randomness (`engine.js`).
-   No second copy of the rules.
-2. **Inputs = moves**: matches run as a "virtual online" game watched by nobody — both seats are driven purely by
-   the same inputs a human makes (`{t:'adv'}`, `{t:'hand',id}`, `{t:'zone',o,z}`, `{t:'modal',i}`,
-   `{t:'pick',ix}`, …), applied through the battle-tested online receiver path (`match.js`). No built-in bot code
-   runs; whoever drives the inputs plays.
-3. **No-paint mode** (`nopaint.js`): drawing functions become no-ops; every rule pass still runs in order.
-4. **Save / rewind** (`state.js`): complete position snapshots at quiet points (G + both RNG streams + queues);
-   restoring drops the abandoned line's prompts, timers and continuations.
-5. Next: move generation (macro-moves from quiet point to quiet point), hidden-information sampling, evaluation
-   learned from self-play, search (ISMCTS over macro-moves to depth N), calibration, integration (Web Worker),
-   cleanup of the old bot code.
-
-## Live-game integration (design)
-
-- **Solo = virtual online.** A solo match runs on the same input-driven path as online play: the human's seat is
-  local, every bot seat is driven by the new bot through inputs (like a remote player), the human sees
-  "AI is choosing…" mirrors instead of a bot's private prompts, and every deterministic-checkpoint rule applies.
-  Needs: an audit of `ruIsOnline()` uses that mean "the network" (→ a separate check), and multi-seat support for
-  1v1v1 / Royale.
-- **Thinking in a Web Worker.** `ai/` (deployed) holds the shared realm code (state, moves, brain, no-paint) and a
-  worker that loads the game's own scripts with the fake DOM and a virtual clock. The page posts the position
-  (G, RNG state, last quiet anchor + inputs since) and the seat; the worker returns the move; the page applies it
-  through the normal input layer. Several workers can split the hidden-information worlds.
-- **Pacing.** Top tiers think for seconds (the user accepts ~10–20 s per phase) and play their moves at a readable
-  pace, never rushing.
-- **Δ Decks.** None below Talented 2, more from there; each bot builds its Δ Deck from the Δ cards measured (by
-  self-play experiments per class) to raise its own class's win rate.
+1. **One real engine, many realms.** `ai/realm.js` turns any global object into a game realm: the fake DOM
+   (`ai/fakedom.js`), a virtual clock (timers run when settled, in order), seeded randomness and the window stubs. The
+   Node tools (`tools/headless/engine.js`, a vm context) and the browser bot worker (`ai/worker.js`, its own global)
+   load the game's own scripts into it. No second copy of the rules.
+2. **Inputs = moves.** Every seat is driven by the same inputs a human makes (`{t:'adv'}`, `{t:'zone',o,z}`,
+   `{t:'modal',i}`, `{t:'pick',ix}`, ...), applied in the order every screen applies one: *settle -> pre-input
+   checkpoint -> input* (`ai/match.js`, the worker and the bot's own simulation all do this).
+3. **The bot** (`ai/brain.js`): turn search phase by phase (every phase searched, Battle included; widening passes;
+   unfinished positions always completed); prompts mid-action answered best-first for itself and worst-for-it for
+   others; hidden cards re-dealt per imagined world at the current point (what was seen stays); paired worlds with a
+   "don't act on noise" rule; lookahead N plays the best lines N-1 more turns; plans followed only while what the bot
+   sees matches (a planned prompt answer carries the prompt it was meant for). Effort is counted where work happens;
+   fixed-effort mode makes strength device-independent and games replayable. 2-4 seats (1v1v1 / Royale).
+4. **Tiers** (`ai/tiers.js`): the user's N table + worlds, width, effort, temperature; Δ only from Talented 2.
+5. **Live game** (`ai/host.js` + `ai/worker.js`): solo matches of every mode run under the online lockstep rules with
+   every bot seat input-driven (`G._soloNet`, `G._botSeats`). The page keeps the last quiet position (a plain-data
+   copy) + the inputs since; the worker restores it, replays and plans; the move returns through the input layer at a
+   readable pace, once the page's own game is exactly where the bot planned.
 
 ## Verification tools
 
@@ -81,6 +70,11 @@ Verified finally by playing as a human in the real UI.
 - `reftrace.js record|check` — proves an engine change didn't alter any game (fingerprint traces).
 - `leaktest.js` — snapshot, play K inputs, rewind, replay → identical fingerprints and identical game object.
 - `smoke.js` — whole games on random inputs; determinism check.
+- `dupcheck.js` — random games; no card ever in two places, no Rank Zone ever empty.
+- `hostsim.js` — the page/worker protocol end to end (2-4 seats): the worker must rebuild the page's exact position.
+- `arena.js` / `ladder.js` — mirrored-deal matches between policies, in parallel; a series of them unattended.
+- `selfplay.js` / `fit.js` — self-play data (positions + per-game Δ Decks) and evaluation fitting (split by game,
+  rule-known weight signs).
 
 ## Progress log
 
@@ -112,3 +106,14 @@ Verified finally by playing as a human in the real UI.
   re-deals keep the opponent's just-played cards. Learned evaluation v1 from 42 self-play games (2,494 positions):
   held-out outcome prediction 77.6% vs 46.5% for the hand-set start. Threat features added (best attack damage each
   way, enemy cards beatable, raw Morale/Casualty/deck margins). Tier table (tiers.js) with the user's N schedule.
+- **2026-10-03/04** — Phase-by-phase turn search (the old value-pruned search starved the Battle Phase: bots rarely
+  attacked and games ran to deck-out). vs a random mover: 94.6% -> 100% (56/56, fixed effort 4,000); games 24 -> 7
+  turns, decided by Morale / Casualties. Game fixes found by bot play: cards duplicating across zones (Subtract,
+  'any'-source skills used from Drop/Deadzone, every move helper, Divide/Protect Star costs, Deckstroy), Drawbridge /
+  Seven Heaven leaving an empty Rank Zone, stale prompt buttons firing, Stand Down placeholder ids, reaction windows
+  reaching only one seat in 3-4 seat games. Live integration: thinking bots play every solo mode in the browser
+  (Standard, Tournament, Gauntlet, AI vs AI, 1v1v1, Royale); tournaments draw random tiered fields and settle bot
+  matches by the ladder's win rates; the Gauntlet climbs all 14 tiers. Measurements (fixed effort, 56 games each): 4x
+  effort 58.5%; N=2 vs N=1 at equal effort 40%; temperature 0 vs 1 49%, 1 vs 3 54.5%, 3 vs 8 60.7% (the strength curve
+  is shallow: the evaluation is the bottleneck). Next: a better evaluation from 2,000 self-play games, Δ card values
+  from the same games, then tier calibration.
