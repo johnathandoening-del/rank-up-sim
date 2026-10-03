@@ -15,6 +15,7 @@
  */
 (function () {
   if (window.RUBots || window.__headless) return;      // (also loaded inside the headless realms: nothing to do there)
+  var lastDiv = null;
   var worker = null, ready = false, seq = 0, pending = null, timer = null, gameId = 0, failures = 0, lastSig = null, lastSeat = null, repeats = 0;
   var track = { anchor: null, path: [], game: 0 };
   var PACE = { plan: 750, search: 1200 };     // never faster than this between a bot's inputs (ms) — readable play
@@ -65,10 +66,10 @@
     if (d.kind === 'over' || d.kind === 'none') return;
     var tier = tierOf(d.seat);
     if (!tier) return;                                                     // a person decides
-    if (track.game !== gameId || !track.anchor) {
-      if (!quiet()) return;
-      track.anchor = snap(); track.path = []; track.game = gameId;
-    }
+    // A quiet position is sent as it is (nothing to replay — the bot thinks about exactly this page's game); only a
+    // decision mid-action (where no copy can be taken) is sent as the last quiet position + the inputs since.
+    if (quiet()) { track.anchor = snap(); track.path = []; track.game = gameId; }
+    else if (track.game !== gameId || !track.anchor) return;
     var id = ++seq, sig = window.ruStateSig();
     var opts = window.RUAI && RUAI.tiers ? RUAI.tiers.planOpts(tier, G._turnNo || 0, (G._seed >>> 0) ^ (d.seat === 'player' ? 0x51 : 0xA7), 1, d) : { fixed: true, evals: 1000 };
     opts.seed = ((G._seed >>> 0) ^ Math.imul(id, 2654435761)) >>> 0;
@@ -96,10 +97,16 @@
   function shown() { try { if (window.ruSyncTurnControls) window.ruSyncTurnControls(); } catch (e) {} }
   function play(p, m, tries) {
     if (!soloGame() || p.game !== gameId || G.gameOver) { pending = null; return; }
-    if (window.ruStateSig() !== m.sig) {
+    var now = window.ruStateSig();
+    if (now !== m.sig) {
+      // The page has moved on from where the bot was asked (a timer-driven step while it thought): the answer is for a
+      // position that is gone — think again now. (Still where it was asked: it may just be catching up — wait.)
+      if (now !== p.sig && tries >= 3) { pending = null; shown(); return; }
       if (tries < 80) { setTimeout(function () { play(p, m, tries + 1); }, 100); return; }
       pending = null; failures++;
       console.warn('[bots] this game never reached the position the bot planned on', { page: window.ruStateSig(), bot: m.sig });
+      // kept for inspection: the exact position + inputs the worker rebuilt from (RUBots.lastDivergence())
+      lastDiv = { at: Date.now(), anchor: track.anchor, path: track.path.slice(), pageSig: window.ruStateSig(), botSig: m.sig };
       if (window.RU_BOTS_DEBUG) debugDiff().then(function (r) { console.warn('[bots] where the two copies differ', JSON.stringify(r)); });
       if (failures > 3) { say('The bot lost track of this game.', 'dmg'); stop(); }
       return;
@@ -150,5 +157,5 @@
   }
 
   window.RUBots = { available: available, attach: attach, stop: stop, noteInput: noteInput, ready: function () { return ready; }, debugDiff: debugDiff,
-    thinking: function () { return pending ? pending.seat : null; } };
+    thinking: function () { return pending ? pending.seat : null; }, lastDivergence: function () { return lastDiv; } };
 })();
