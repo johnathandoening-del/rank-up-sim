@@ -39,6 +39,22 @@ The lobby's server field auto-fills to the right `wss://…` — no need to touc
 
 ---
 
+### Keep the leaderboard between restarts (optional, free)
+
+A free Render service loses its disk on every deploy **and** every time it sleeps, so the ratings file
+resets. To keep ratings, give the server a free Upstash Redis database:
+
+1. Sign up at **upstash.com** (free) → **Create Database** (Redis, any region near your Render region).
+2. On the database page, under **REST API**, copy `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+3. In Render: your service → **Environment** → add both variables with those values → **Save**
+   (Render redeploys).
+
+Check it: `https://your-app/health` shows `"ratings":"redis"`. (`"file"` = not configured;
+`"redis-unavailable"` = the URL/token didn't work — the server then never writes to Redis, so stored
+ratings can't be overwritten.)
+
+---
+
 ## Alternative: Fly.io (needs a card for verification, but doesn't sleep as aggressively)
 
 Install `flyctl`, then in `rank-up-sim/`:

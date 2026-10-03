@@ -292,6 +292,7 @@ function buildTitle(){
 }
 function pickClass(k){
   pCls=k;
+  try{localStorage.setItem('ru_last_class',k);}catch(e){}   // remembered for the next page load (see buildTitle())
   // Only set a default AI class if none chosen yet, or if the current AI pick collides with the new player pick.
   if(!aCls||aCls===pCls)aCls=AIPAIR[k]||Object.keys(CM).filter(c=>c!==k)[0];
   document.querySelectorAll('.cc').forEach(c=>c.classList.toggle('sel',c.dataset.k===k));
@@ -2780,7 +2781,11 @@ function beginPhaseBase(ph){
         // Nothing to switchdraw: the first-turn switchdraw is complete and the turn moves on to Promotion
         // (every client, the same moment in the flow; guarded so a Next Phase click in between can't double it).
         const sw=G.turn;renderAll();
-        setTimeout(()=>{if(G&&!G.gameOver&&G.phase==='draw'&&G.turn===sw&&G.mode==='normal')beginPhase('promotion');},360);
+        const toPromo=()=>{if(G&&!G.gameOver&&G.phase==='draw'&&G.turn===sw&&G.mode==='normal')beginPhase('promotion');};
+        // Online: at a fixed point in the flow on every screen (a settled continuation), never this screen's own timer —
+        // otherwise a Next Phase click inside the delay is made in a phase the other screen has already left.
+        if(ruIsOnline()&&window.ruWhenSettled)window.ruWhenSettled(null,toPromo,{defer:true});
+        else setTimeout(toPromo,360);
         return;
       }
       let _aiSwN=0,_aiSwGuard=0;
@@ -2922,7 +2927,11 @@ function beginPhaseBase(ph){
     const finishTurn=()=>{
     log(turnPossessive+' End Phase.');
     renderAll();
-    setTimeout(()=>endTurn(),450);
+    // Online the hand-off is a settled continuation: it happens right after the input that finished the End Phase,
+    // at the same point on every screen — not on this screen's own timer, during which the turn player could still
+    // act (a second End Turn re-ran the End Phase here only) while the other screen had already passed the turn.
+    if(ruIsOnline()&&window.ruWhenSettled)window.ruWhenSettled(null,()=>endTurn(),{defer:true});
+    else setTimeout(()=>endTurn(),450);
     };
     if(typeof resolveRecoverEndPhaseQueue==='function'&&resolveRecoverEndPhaseQueue(finishTurn))return;
     finishTurn();
@@ -3497,6 +3506,7 @@ function phaseAfter(ph, delay){
 // End Turn — skip the rest of the player's phases. Goes through the End Phase so end-of-turn effects still run.
 function endTurnNow(){
   if(!localMayDriveTurnAction())return;
+  if(G.phase==='end')return;   // the turn is already ending — a second End Turn must not run the End Phase again
   if(G.mode==='switchdraw'){ruNotice(G.turn,'Finish your switchdraw first.');return;}
   if(ruPromptPending()){ruNotice(G.turn,'Resolve the current prompt before ending your turn.');return;}
   if(SF){ruNotice(G.turn,'Finish your current skill before ending your turn.');return;}
@@ -5410,6 +5420,9 @@ function wildfireMainPhase(){
   try{checkWin();}catch(e){}
 }
 
+// Run the Area passives once (guarded against re-entry: they can draw, which renders).
+function ruAreaPassivesNow(){if(!G||G._inAreaPassives)return;G._inAreaPassives=true;try{checkAreaPassives();}finally{G._inAreaPassives=false;}}
+window.ruAreaPassivesNow=ruAreaPassivesNow;
 // Drawbridge: (a) punish a player who adds cards to hand outside their Draw Phase while the opponent holds Drawbridge;
 // (b) once per turn, if any hand reaches 7+, all players Drop their hands and redraw that many cards.
 function checkAreaPassives(){
@@ -5647,8 +5660,18 @@ function updEliminatedVisuals(){
   });
 }
 window.updEliminatedVisuals=updEliminatedVisuals;
+// RENDER-TIME ENGINE PASSES. Several passes that run as part of a render CHANGE the game: the Area passives (Drawbridge
+// mills, the 7-card redraw, continuous NP/RP, first-seen stamps), "entered the Battlefield" observers (Deckstructive 6,
+// Extension entries, Zero 1/6/7/9, Divide, City), Rear-Flank promotion, Higher Ground, Morale locks, Amalgamation
+// Nation's Rank-Up detection. Solo they run at every render. Online a render happens at a different moment on each
+// screen — the screen applying the other player's input renders right after it, the screen that made the input only
+// where its handlers do, and timers render whenever — so there they run only in a render that is part of an input
+// (identical code on every screen) or at a fixed checkpoint: just before and right after every input, and after each
+// settled continuation (the action layer sets window._ruCheckpoint). Any other render online only paints.
+function ruEngineRender(){return !ruIsOnline()||!!(window._ruCheckpoint||(G&&G._inInput));}
+window.ruEngineRender=ruEngineRender;
 function renderAllBase(){
-  if(!G._inAreaPassives){G._inAreaPassives=true;try{checkAreaPassives();}finally{G._inAreaPassives=false;}}
+  if(ruEngineRender())ruAreaPassivesNow();
   updHUD();renderHudStrip();
   // Every seat paints onto its own board (sideZoneId: this screen's seat at the bottom, the other on top).
   ['player','ai','ai2','ai3'].forEach(function(w){
@@ -5686,31 +5709,34 @@ function renderAllL5(){
   return r;
 }
 function renderAllL6(){
-  try{(G.sideOrder||['player','ai']).forEach(w=>{const p=G[w];if(!p)return;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,...(p.hand||[]),...(p.bank||[]),...(p.discard||[]),...(p.deadzone||[]),...(p.deck||[])].forEach(window.ruNormalizeNoSkillInZoneRA6);});}catch(e){}
+  if(ruEngineRender())try{(G.sideOrder||['player','ai']).forEach(w=>{const p=G[w];if(!p)return;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,...(p.hand||[]),...(p.bank||[]),...(p.discard||[]),...(p.deadzone||[]),...(p.deck||[])].forEach(window.ruNormalizeNoSkillInZoneRA6);});}catch(e){}
   return renderAllL5();
 }
 function renderAllL7(){const r=renderAllL6();window.updateModeButtonsRA7();return r;}
 function renderAllL8(){
-  window.applyZeroOneARA8();
+  const eng=ruEngineRender();
+  if(eng)window.applyZeroOneARA8();
   var r=renderAllL7();
-  window.markShadowVersusRA8();
+  if(eng)window.markShadowVersusRA8();
   return r;
 }
 function renderAllL9(){
-  window.scanDivideTriggerRA9();
+  if(ruEngineRender())window.scanDivideTriggerRA9();
   return renderAllL8();
 }
 function renderAllL10(){
-  window.zero7ScanRA10();
-  window.applyZero9NextTurnARA10();
-  window.applyMoraleLocksRA10();
-  window.restoreZero6IfReturnedRA10();
+  if(ruEngineRender()){
+    window.zero7ScanRA10();
+    window.applyZero9NextTurnARA10();
+    window.applyMoraleLocksRA10();
+    window.restoreZero6IfReturnedRA10();
+  }
   return renderAllL9();
 }
-function renderAllL11(){window.applyNoMoraleGainGuardsRA11();return renderAllL10();}
+function renderAllL11(){if(ruEngineRender())window.applyNoMoraleGainGuardsRA11();return renderAllL10();}
 function renderAllL12(){
   var result=renderAllL11();
-  try{
+  if(ruEngineRender())try{
     (G.sideOrder||['player','ai']).forEach(function(w){
       var p=window.sideRA12(w);
       if(!p)return;
@@ -5729,13 +5755,13 @@ function renderAllL12(){
   }catch(e){}
   return result;
 }
-function renderAllL13(){window.applyNeg3MarksRA13();return renderAllL12();}
+function renderAllL13(){if(ruEngineRender())window.applyNeg3MarksRA13();return renderAllL12();}
 function renderAllL14(){
-  try{ window.processExtensionEntriesRA14('player'); window.processExtensionEntriesRA14('ai'); }catch(e){}
+  if(ruEngineRender())try{ window.processExtensionEntriesRA14('player'); window.processExtensionEntriesRA14('ai'); }catch(e){}
   return renderAllL13();
 }
 function renderAllL15(){
-  try{ window.scanCityOnDeadzoneRA15(); }catch(e){}
+  if(ruEngineRender())try{ window.scanCityOnDeadzoneRA15(); }catch(e){}
   return renderAllL14();
 }
 // [Issue 2] Folded the former "Extension Rear Flank promotion" renderAll wrapper (a separate IIFE that
@@ -5760,12 +5786,13 @@ function reconcileRearFlank(pl){
 }
 function renderAll(){
   // Rear-Flank promotion pre-pass (re-entrancy-guarded, since it may move cards before the paint).
-  if(!window._ruReconcilingRear){
+  const eng=ruEngineRender();   // engine passes only where every screen runs them alike (see ruEngineRender)
+  if(eng&&!window._ruReconcilingRear){
     window._ruReconcilingRear = true;
     try{ if(typeof G!=='undefined' && G){ (G.sideOrder||['player','ai']).forEach(function(w){if(G[w])reconcileRearFlank(G[w]);}); } }catch(e){}
     window._ruReconcilingRear = false;
   }
-  window.applyHigherGroundPassiveRA16();
+  if(eng)window.applyHigherGroundPassiveRA16();
   // Point of view lives in sideChrome/ruViewSeat: every render function paints each seat onto that seat's
   // own board, so this screen's seat is at the bottom without ever touching the game state.
   var r=renderAllL15();
@@ -11012,6 +11039,9 @@ window.RU_CLASS_ICONS={light:'',phantom:'',maximum:'',inferno:'',res
 window.applyRUClassIcons=function(){ if(typeof CM!=='object')return; var m=window.RU_CLASS_ICONS; for(var k in m){ if(CM[k])CM[k].icon=m[k]; } };
 window.applyRUClassIcons();
 buildTitle();
+// The Combat-Class last picked on this device is picked again, so after a reload a player can rejoin their online match
+// straight away (the room keeps their original class anyway) and solo starts from the class they last played.
+try{const k=localStorage.getItem('ru_last_class');if(k&&Object.prototype.hasOwnProperty.call(CM,k))pickClass(k);}catch(e){}
 
 
 // ═══════════════════════════════════════════
@@ -22728,6 +22758,17 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   window.legalHaste9Promotion=legalHaste9Promotion;
 
+  // A skill the window starts through startSkill is offered only if startSkill would accept it right now — its
+  // definition allows this phase, it isn't reactive or already used, its own check passes. Otherwise the click is
+  // refused ("cannot be used in the rally phase") and the window simply reopens, over and over, until the player
+  // passes.
+  function startableNow(rw,e,ph){
+    var def = (typeof SDEFS !== 'undefined') && SDEFS[e.card.name];
+    if(!def || def.reactive || e.card.usedSkill) return false;
+    if(!def.phases || def.phases.indexOf(ph) === -1) return false;
+    try{ if(def.check && !def.check(rw,e.card,e.zone)) return false; }catch(_){ return false; }
+    return true;
+  }
   function hasteSkillEntries(ph){
     var rw = ruOffTurnSeat();
     if(!G || G.gameOver || !rw) return [];
@@ -22755,6 +22796,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       }
     });
     return out.filter(function(e){
+      if(e.kind === 'normal' && !startableNow(rw,e,ph)) return false;
       if(e.card.name === 'Haste 2') return p.deck.length >= 2 && p.rankZone;
       if(e.card.name === 'Haste 6') return p.deck.length >= 4;
       if(e.card.name === 'Haste 7') return p.hand.length > 0 && p.bank.length > 0;
@@ -25312,7 +25354,7 @@ window.ruSpecPace=function(base){
   }
   var _origRenderAll=window.renderAll;
   if(typeof _origRenderAll==='function'){
-    window.renderAll=function(){ try{ if(!G_()||!G_()._anInRender){ if(G_())G_()._anInRender=true; detectRankUps(); if(G_())G_()._anInRender=false; } }catch(e){ if(G_())G_()._anInRender=false; } return _origRenderAll.apply(this,arguments); };
+    window.renderAll=function(){ try{ if((!window.ruEngineRender||ruEngineRender())&&(!G_()||!G_()._anInRender)){ if(G_())G_()._anInRender=true; detectRankUps(); if(G_())G_()._anInRender=false; } }catch(e){ if(G_())G_()._anInRender=false; } return _origRenderAll.apply(this,arguments); };
   }
   // Drop locked cards at the start of that side's next phase.
   var _origBeginPhase=window.beginPhase;
@@ -25498,7 +25540,7 @@ window.ruSpecPace=function(base){
         waits=waits.filter(function(w){ return w.g===g; });          // a continuation of a game that ended is dropped
         for(var i=0;i<waits.length;i++){ var ok=false; try{ ok=!!waits[i].cond(); }catch(e){ ok=true; } if(ok){ k=i; break; } }
         if(k<0) break;
-        runAsTimer(waits.splice(k,1)[0].cb);
+        runAsTimer(waits.splice(k,1)[0].cb); checkpoint();
       }
     } finally { settling=false; armWaits(); }
   }
@@ -25513,6 +25555,15 @@ window.ruSpecPace=function(base){
   // The common condition: no shared prompt is pending and no skill is in flight.
   window.ruTableClear=function(){ return !window.ruUiBusy()&&!(typeof SF!=='undefined'&&SF); };
   window.ruSettleNow=settleNow;
+  // Render-time engine passes online (Area passives, entry observers, …): just before an input is recorded / applied,
+  // right after it, and after each settled continuation — the same points on every screen (see ruEngineRender).
+  function checkpoint(){
+    var g=G_(); if(!online()||!g||typeof window.renderAll!=='function') return;
+    var prev=window._ruCheckpoint; window._ruCheckpoint=true;
+    try{ window.renderAll(); }catch(e){ console.error('[checkpoint] render failed',e); }
+    finally{ window._ruCheckpoint=prev; }
+  }
+  function inputDone(){ settleNow(); checkpoint(); }
 
   // A fingerprint of the shared game state an input was made in. The receiving client applies a relayed input
   // only once its own state has the same fingerprint — i.e. once its own engine flow (timed continuations,
@@ -25552,7 +25603,7 @@ window.ruSpecPace=function(base){
   window.ruAsInput       = function(a,fn){ var g=G_(); if(!g||!isUserInput()||g._replaying||g._inInput) return fn();
                                          settleNow(); if(!G_()) return false;
                                          if(a.s==null) a.s=localSeat(); var why=refusal(a); if(why){ say(why); return false; }
-                                         rec(a); var r=withActor(a.s,function(){ return inContext('shared',fn); }); settleNow(); return r; };
+                                         checkpoint(); rec(a); var r=withActor(a.s,function(){ return inContext('shared',fn); }); inputDone(); return r; };
   window.ruActionLog     = function(){ var g=G_(); return g?(g._actionLog||[]):[]; };
   window.ruStartRecording= function(){ var g=G_(); if(g){ g._recording=true; g._actionLog=[]; } };
   window.ruStopRecording = function(){ var g=G_(); if(g) g._recording=false; };
@@ -25604,9 +25655,10 @@ window.ruSpecPace=function(base){
         return withActor(localSeat(),function(){ return inContext('local',function(){ return orig.apply(self,args); }); });
       }
       var why=refusal(a); if(why){ say(why); return; }
+      checkpoint();
       rec(a);
       var r=withActor(a.s,function(){ return inContext('shared',function(){ return orig.apply(self,args); }); });
-      settleNow();
+      inputDone();
       return r;
     };
     w._ruOrig=orig; window[name]=w;
@@ -25684,10 +25736,11 @@ window.ruSpecPace=function(base){
           if(outer){ settleNow(); m=modalEl(); if(!G_()||!sharedOpen(m)||self.parentNode!==document.getElementById('m-btns')) return; }
           var a={t:'modal', i:i};
           var why=refusal(a); if(why){ say(why); return; }
+          if(outer) checkpoint();
           rec(a);
           var seat=(m&&m._ruOwner)||localSeat();
           var res=withActor(seat,function(){ return inContext('shared',function(){ return f?f.call(self,ev):undefined; }); });
-          if(outer) settleNow();
+          if(outer) inputDone();
           return res;
         }; });
         // Decide ONCE, at open time, whether this prompt is a read-only MIRROR here (its owner is another player).
@@ -25703,17 +25756,22 @@ window.ruSpecPace=function(base){
     if(!g||g._replaying||g._inInput||isLocalModal(pk)) return true;
     settleNow(); return !!G_()&&sharedOpen(pickerEl());
   }
-  function pickInput(ids,run){
+  // A pick is relayed by POSITION in the picker's list (ix): every screen builds that list identically from the same
+  // state, and a choice need not be a card with an id at all (Fission 3 offers "Your / Opponent Rank Zone" options).
+  // The card ids ride along for the diagnostics history only.
+  function pickPositions(){ var pool=(typeof PCK!=='undefined'&&PCK&&PCK.pool)||[]; return ((typeof PCK!=='undefined'&&PCK&&PCK.sel)||[]).map(function(c){ return pool.indexOf(c); }); }
+  function pickInput(ids,run,ix){
     var g=G_(), pk=pickerEl();
     if(!g||g._replaying) return run();
     if(isLocalModal(pk)) return withActor(localSeat(),function(){ return inContext('local',run); });
     var outer=!g._inInput;
-    var a={t:'pick', ids:ids};
+    var a={t:'pick', ids:ids, ix:ix||[]};
     var why=refusal(a); if(why){ say(why); return; }
+    if(outer) checkpoint();
     rec(a);
     var seat=(pk&&pk._ruOwner)||localSeat();
     var r=withActor(seat,function(){ return inContext('shared',run); });
-    if(outer) settleNow();
+    if(outer) inputDone();
     return r;
   }
   var _cOrig=window.confirmPick;
@@ -25721,13 +25779,13 @@ window.ruSpecPace=function(base){
     var self=this,args=arguments;
     if(!pickerSettled()) return;
     var ids=((typeof PCK!=='undefined'&&PCK&&PCK.sel)||[]).map(function(c){return c&&c.id;});
-    return pickInput(ids,function(){ return _cOrig.apply(self,args); });
+    return pickInput(ids,function(){ return _cOrig.apply(self,args); },pickPositions());
   };
   var _sOrig=window.skipPick;
   if(typeof _sOrig==='function') window.skipPick=function(){
     var self=this,args=arguments;
     if(!pickerSettled()) return;
-    return pickInput([],function(){ return _sOrig.apply(self,args); });
+    return pickInput([],function(){ return _sOrig.apply(self,args); },[]);
   };
   // "Cancel Skill" on a picker abandons the skill in progress — an answer to the picker like any other.
   var _xOrig=window.cancelPick;
@@ -25739,10 +25797,11 @@ window.ruSpecPace=function(base){
     if(!pickerSettled()) return; pk=pickerEl();
     var a={t:'pickCancel'};
     var why=refusal(Object.assign({},a,{t:'pick'})); if(why){ say(why); return; }
+    if(outer) checkpoint();
     rec(a);
     var seat=(pk&&pk._ruOwner)||localSeat();
     var r=withActor(seat,function(){ return inContext('shared',function(){ return _xOrig.apply(self,args); }); });
-    if(outer) settleNow();
+    if(outer) inputDone();
     return r;
   };
 
@@ -25784,9 +25843,12 @@ window.ruSpecPace=function(base){
         break;
       }
       case 'pick': {
-        var byId={}; ((typeof PCK!=='undefined'&&PCK&&PCK.pool)||[]).forEach(function(c){ if(c) byId[c.id]=c; });
-        if(typeof PCK!=='undefined'&&PCK) PCK.sel=(a.ids||[]).map(function(id){return byId[id];}).filter(Boolean);
-        if((a.ids||[]).length===0 && typeof PCK!=='undefined' && PCK && PCK.opt) window.skipPick(); else window.confirmPick();
+        var pool=((typeof PCK!=='undefined'&&PCK&&PCK.pool)||[]), sel;
+        if(Array.isArray(a.ix)) sel=a.ix.map(function(i){ return pool[i]; }).filter(function(c){ return c!=null; });
+        else { var byId={}; pool.forEach(function(c){ if(c) byId[c.id]=c; }); sel=(a.ids||[]).map(function(id){return byId[id];}).filter(Boolean); }
+        if(typeof PCK!=='undefined'&&PCK) PCK.sel=sel;
+        var n=Array.isArray(a.ix)?a.ix.length:(a.ids||[]).length;
+        if(n===0 && typeof PCK!=='undefined' && PCK && PCK.opt) window.skipPick(); else window.confirmPick();
         break;
       }
       default: break;
@@ -25812,7 +25874,7 @@ window.ruSpecPace=function(base){
     try{ withActor(seat,function(){ inContext('shared',function(){ dispatch(g,seat,a); }); }); }
     catch(e){ console.error('[net] apply failed',e,a); }
     finally{ g._replaying=prev; if(hold){ var changed=true; try{ changed=(deepState()!==before); }catch(_){} window.ruLogHoldEnd(hold,changed); } }
-    if(!prev) settleNow();   // what this input settled goes on now, exactly as on the screen that made it
+    if(!prev) inputDone();   // what this input settled goes on now (then the Area passives), exactly as on the screen that made it
     if(window.renderAll){ try{ renderAll(); }catch(e){} }
     return true;
   };
@@ -25820,7 +25882,7 @@ window.ruSpecPace=function(base){
   // open on this screen first (this client may still be a moment behind in the same deterministic flow).
   window.ruCanApplyNow=function(a){
     if(!a) return true;
-    settleNow();   // first everything this screen's table was waiting for — the sender's had happened before it acted
+    settleNow(); checkpoint();   // first everything this screen's table was waiting for — the sender's had happened before it acted
     if(a.sig && stateSig()!==a.sig) return false;
     if(a.t==='modal') return sharedOpen(modalEl());
     if(a.t==='pick'||a.t==='pickCancel') return sharedOpen(pickerEl());

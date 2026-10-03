@@ -61,9 +61,43 @@ const STATS_PATH = path.join(__dirname, 'stats.json');
 // record instead of reaching (and polluting) Object.prototype for the whole server.
 function nameMap(src) { const m = Object.create(null); if (src && typeof src === 'object') Object.keys(src).forEach(function(k){ m[k] = src[k]; }); return m; }
 let STATS = { players: nameMap(null), history: [] };
-try { const j = JSON.parse(fs.readFileSync(STATS_PATH, 'utf8')); if (j && typeof j === 'object') STATS = { players: nameMap(j.players), history: Array.isArray(j.history) ? j.history : [] }; } catch (_) {}
+function adoptStats(j) { if (j && typeof j === 'object') STATS = { players: nameMap(j.players), history: Array.isArray(j.history) ? j.history : [] }; }
+try { adoptStats(JSON.parse(fs.readFileSync(STATS_PATH, 'utf8'))); } catch (_) {}
+
+// DURABLE RATINGS (optional). A free Render instance's disk is wiped on every deploy AND every idle spin-down, so
+// with only the file above the leaderboard keeps resetting. Give the server a free Upstash Redis database (set
+// UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN — see DEPLOY.md) and the ratings live there instead. Writes go
+// to Redis only after the stored ratings were read successfully at startup — a failed read never lets this
+// process overwrite them — and one at a time, in order, so an older snapshot can't land after a newer one.
+const KV_URL = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
+const KV_TOKEN = String(process.env.UPSTASH_REDIS_REST_TOKEN || '');
+const KV_KEY = String(process.env.STATS_KEY || 'rankup:stats');
+const KV_ON = !!(KV_URL && KV_TOKEN && typeof fetch === 'function');
+let kvLoaded = false, kvChain = Promise.resolve();
+function kvCall(cmd) {
+  return fetch(KV_URL, { method: 'POST', headers: { authorization: 'Bearer ' + KV_TOKEN, 'content-type': 'application/json' }, body: JSON.stringify(cmd) })
+    .then(function(r){ return r.json().then(function(j){ if (!r.ok || (j && j.error)) throw new Error((j && j.error) || ('HTTP ' + r.status)); return j ? j.result : null; }); });
+}
+function kvLoad(tries) {
+  return kvCall(['GET', KV_KEY]).then(function(v){
+    if (v) adoptStats(JSON.parse(v));
+    kvLoaded = true;
+    console.log('[stats] ratings loaded from Upstash Redis (' + Object.keys(STATS.players).length + ' players)');
+  }, function(e){
+    if (tries > 1) return new Promise(function(res){ setTimeout(res, 2000); }).then(function(){ return kvLoad(tries - 1); });
+    console.warn('[stats] could not read ratings from Upstash Redis (' + e.message + ') — this run keeps them in the local file only');
+  });
+}
 let statsSaveTimer = null;
-function saveStats() { if (statsSaveTimer) return; statsSaveTimer = setTimeout(function(){ statsSaveTimer = null; try { fs.writeFileSync(STATS_PATH, JSON.stringify(STATS)); } catch (_) {} }, 400); }
+function saveStats() {
+  if (statsSaveTimer) return;
+  statsSaveTimer = setTimeout(function(){
+    statsSaveTimer = null;
+    const data = JSON.stringify(STATS);
+    try { fs.writeFileSync(STATS_PATH, data); } catch (_) {}
+    if (KV_ON && kvLoaded) kvChain = kvChain.then(function(){ return kvCall(['SET', KV_KEY, data]); }).catch(function(e){ console.warn('[stats] Upstash save failed: ' + e.message); });
+  }, 400);
+}
 function playerRec(name) { const k = String(name || 'guest').slice(0, 24); if (!STATS.players[k]) STATS.players[k] = { name: k, elo: 1000, wins: 0, losses: 0, draws: 0, games: 0 }; return STATS.players[k]; }
 // result: the winning room seat ('player1' | 'player2') or 'draw'.
 function recordResult(name0, name1, result) {
@@ -173,7 +207,7 @@ function startMatch(room, code){
 const server = http.createServer((req, res) => {
   if ((req.url || '').split('?')[0] === '/health') {   // cloud host ping, keep-warm, client build capture
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
-    res.end(JSON.stringify({ ok: true, service: 'rank-up-room-server', rooms: rooms.size, build: SERVER_BUILD }));
+    res.end(JSON.stringify({ ok: true, service: 'rank-up-room-server', rooms: rooms.size, build: SERVER_BUILD, ratings: KV_ON ? (kvLoaded ? 'redis' : 'redis-unavailable') : 'file' }));
     return;
   }
   if ((req.url || '').split('?')[0] === '/leaderboard') {   // ratings board (read-only)
@@ -412,4 +446,6 @@ function freeSeat(room, code, idx) {
   console.log(`[leave] room=${code} → reset; ${liveSockets(room).length} waiting`);
 }
 
-server.listen(PORT, () => console.log(`Rank Up! room server listening on http://localhost:${PORT}  (ws://localhost:${PORT})`));
+function listen() { server.listen(PORT, () => console.log(`Rank Up! room server listening on http://localhost:${PORT}  (ws://localhost:${PORT})`)); }
+if (KV_ON) kvLoad(3).then(listen);   // the stored ratings are in memory before the first match can end
+else listen();
