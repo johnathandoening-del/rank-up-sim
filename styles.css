@@ -504,7 +504,14 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
   .nc:hover{transform:none;}
 }
 
-/* Online: a prompt (modal) that belongs to the OTHER player is shown as a read-only mirror — dimmed, with a
-   "<name> is choosing…" banner, and its buttons can't be clicked (the owner's relayed choice resolves it). */
-#modal.ru-mirror-modal .mbr{opacity:.45;pointer-events:none;filter:grayscale(.3);}
-#modal.ru-mirror-modal .mbox::before{content:attr(data-waiting);display:block;margin:-.2rem 0 .6rem;padding:.35rem .5rem;border-radius:6px;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.35);color:var(--gold,#c9a84c);font-family:'Cinzel',serif;font-size:.68rem;letter-spacing:.04em;text-align:center;}
+/* Online: a prompt (modal or card picker) that belongs to the OTHER player is shown here only as a read-only
+   "<name> is choosing…" banner. Its contents stay hidden — a prompt can list the owner's private cards (hand,
+   Safeguards, Deck search) — and nothing in it can be clicked; the owner's relayed choice resolves it. */
+.mo.ru-mirror-modal h2,
+.mo.ru-mirror-modal #m-body,
+.mo.ru-mirror-modal .mbr,
+.mo.ru-mirror-modal #pk-range,
+.mo.ru-mirror-modal #pk-cards,
+.mo.ru-mirror-modal #pk-status{display:none !important;}
+.mo.ru-mirror-modal .mbox{pointer-events:none;}
+.mo.ru-mirror-modal .mbox::before{content:attr(data-waiting);display:block;margin:0;padding:.6rem .75rem;border-radius:6px;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.35);color:var(--gold,#c9a84c);font-family:'Cinzel',serif;font-size:.8rem;letter-spacing:.04em;text-align:center;}
