@@ -142,7 +142,7 @@ var BRAIN_CODE = `
   // Judgment noise (a weaker tier's skill): every position the bot judges is misjudged by a random amount (sd NOISE,
   // evaluation units), drawn from the bot's own stream — in its search and in its prompt answers alike. Wins and
   // losses are never misjudged.
-  var NOISE = 0, NR = null, OLDPLAN = false;
+  var NOISE = 0, NR = null;
   function gauss(){ var u = 0, v = 0; while (!u) u = NR(); v = NR(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
   function evaluate(w){
     var v = evaluate0(w);
@@ -322,7 +322,6 @@ var BRAIN_CODE = `
   // are compared by this action, across every world imagined — never by one world's continuation.
   function actionOf(inputs, mover){
     var out = [inputs[0]];
-    if (OLDPLAN) return out;
     for (var i = 1; i < inputs.length; i++) {
       var x = inputs[i];
       if ((x.s && x.s !== mover) || x.t === 'modal' || x.t === 'pick' || x.t === 'cancel' || isLeave(x)) break;
@@ -548,10 +547,9 @@ var BRAIN_CODE = `
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
     CUR = budget;
     NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
-    OLDPLAN = !!opts.oldPlan;
     // explain (debugging): think this decision afresh — not by the plan being followed — and keep that plan
     var kept = cache; if (opts.explain) cache = null;
-    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; NOISE = 0; NR = null; OLDPLAN = false; if (opts.explain) cache = kept; }
+    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; NOISE = 0; NR = null; if (opts.explain) cache = kept; }
   }
   function planWith(w, opts, N, cfg, budget, t0){
 
@@ -656,8 +654,7 @@ var BRAIN_CODE = `
     // is thought about again when it comes (the rest of this line was the best play in ONE imagined world, chosen
     // knowing that world's hidden cards: following it would be playing on a guess as if it were known).
     var act = line.action || [line.first];
-    cache = OLDPLAN ? { seat: w, turnNo: G._turnNo || 0, steps: line.steps, si: 0, ii: 1 }
-                    : { seat: w, turnNo: G._turnNo || 0, steps: [{ inputs: act, vis: null, opp: true }], si: 0, ii: 1 };
+    cache = { seat: w, turnNo: G._turnNo || 0, steps: [{ inputs: act, vis: null, opp: true }], si: 0, ii: 1 };
     return { move: bare(line.first), value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow,
       ranked: opts.explain ? explainRanked(agg) : undefined };
   }
