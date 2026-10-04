@@ -21,7 +21,7 @@ for (const m of plan) {
   const c = res ? res.counts : null;
   const entry = { name: m.name, A: m.A, B: m.B, counts: c, aShare: res ? res.aShare : null, sec: Math.round((Date.now() - t0) / 1000),
     errors: res ? res.results.flatMap((x) => x.errors || []).slice(0, 3) : [String(r.stderr || '').slice(0, 300)],
-    games: res ? res.results.map((x) => ({ w: x.winner, cls: x.cls, aSeat: x.aSeat, t: x.turns, reason: x.reason })) : [] };
+    games: res ? res.results.map((x) => ({ w: x.winner, seed: x.seed, first: x.firstSeat, cls: x.cls, aSeat: x.aSeat, t: x.turns, reason: x.reason, mp: x.mp, stop: x.stop })) : [] };
   const all = load(); all.push(entry); fs.writeFileSync(outFile, JSON.stringify(all, null, 1));
   console.log(`${m.name}: A ${c && c.A} B ${c && c.B} draw ${c && c.draw} unfinished ${c && c.unfinished} → A ${entry.aShare != null ? (100 * entry.aShare).toFixed(1) + '%' : '-'} (${entry.sec} s)`);
 }

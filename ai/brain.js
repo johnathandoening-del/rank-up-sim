@@ -4,14 +4,20 @@
  *  Moves & lines   A move is one input. Inputs that leave the position mid-way (attack mode, the mover's own prompt)
  *                  are finished on the spot (its own follow-ups chosen best-first, the other player's adversarially),
  *                  so every move is judged by where it lands. A LINE is a whole turn: moves until control passes.
- *  Turn search     One search per turn: a beam per FIRST move (every first move keeps its own best few
- *                  continuations), so no promising start is pruned by another start's lines.
- *  Lookahead N     The best line of each top first move is played on: the opponent's turn by the opponent's planner,
- *                  then its own, … N turns in all; the horizon is scored by evaluate().
+ *                  An ACTION is what the bot commits to at once: one input and the mover's own inputs completing it
+ *                  (attack mode → attacker → target) — up to the first prompt answer or the other player's input.
+ *  Turn search     The whole turn searched phase by phase (a beam per first action, so no promising start is pruned
+ *                  by another start's lines): which actions are worth comparing, and the best play after each.
  *  Hidden info     Never read. Every search runs in "worlds" where the opponent's hand, both deck orders and all future
  *                  random rolls are re-dealt at random from what the mover could actually know.
- *  Plans           The chosen line is kept and followed while what the bot can SEE matches what the line expected;
- *                  a draw, a random result or the opponent's answer that differs makes it think again.
+ *  Deciding        The turn search in one world FINDS the candidate actions (the best few + the best pass); then EVERY
+ *                  world SCORES every candidate (the action, the best rest of the turn in that world, N-1 more turns),
+ *                  each with an even share of the effort. Actions are compared world by world (paired), worlds added
+ *                  until the best is clearly ahead; one not clearly better than passing loses to passing.
+ *  Lookahead N     After an action and the rest of its turn, the turns that follow are played by each side's quick
+ *                  planner (develop and attack), N turns in all; the horizon is scored by evaluate().
+ *  Every decision  The bot commits to one action, then thinks again at its next decision — the rest of a line was
+ *                  the best play in ONE world, chosen knowing that world's hidden cards, so it is never followed.
  *  Mid-action      Prompts mid-action can't be copied (live callbacks), so the live game keeps its last quiet position
  *                  and the inputs since; an answer is judged by rewinding there, re-dealing, replaying, and trying it. */
 var BRAIN_CODE = `
@@ -136,7 +142,7 @@ var BRAIN_CODE = `
   // Judgment noise (a weaker tier's skill): every position the bot judges is misjudged by a random amount (sd NOISE,
   // evaluation units), drawn from the bot's own stream — in its search and in its prompt answers alike. Wins and
   // losses are never misjudged.
-  var NOISE = 0, NR = null;
+  var NOISE = 0, NR = null, OLDPLAN = false;
   function gauss(){ var u = 0, v = 0; while (!u) u = NR(); v = NR(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
   function evaluate(w){
     var v = evaluate0(w);
@@ -309,6 +315,21 @@ var BRAIN_CODE = `
   // turns). Returns the best complete line per first move, sorted by v (desc):
   // [{ first, steps:[{ inputs:[...], vis: visible sig after the step, opp: the other player answered in it }], v, end }]
   function isLeave(c){ return c.t === 'adv' || c.t === 'end' || c.t === 'sdDone'; }
+  // The ACTION a line starts with — what the bot commits to when it plays the line: the first input and the mover's
+  // own inputs that complete it before anything else happens (attack mode → the attacker → the target). It ends at
+  // the first prompt answer, the first input of another seat, or leaving a board mode: from there on, what happens
+  // depends on what is revealed (a Casualty Draw, the other player's answer), so it is decided again then. Lines
+  // are compared by this action, across every world imagined — never by one world's continuation.
+  function actionOf(inputs, mover){
+    var out = [inputs[0]];
+    if (OLDPLAN) return out;
+    for (var i = 1; i < inputs.length; i++) {
+      var x = inputs[i];
+      if ((x.s && x.s !== mover) || x.t === 'modal' || x.t === 'pick' || x.t === 'cancel' || isLeave(x)) break;
+      out.push(x);
+    }
+    return out;
+  }
   // Keep B positions: the best of the leading first-move groups first (so different starts survive), then by value.
   function beam(list, B){
     list = list.filter(function(x, i){ return list.indexOf(x) === i; });
@@ -329,9 +350,9 @@ var BRAIN_CODE = `
     var seen = new Set(); rewind(root); seen.add(ruStateSig());
     function record(n){
       var o = out.get(n.firstKey);
-      if (!o || n.v > o.v) out.set(n.firstKey, { first: n.first, steps: n.steps, v: n.v, rec: n.rec, end: null, done: true });
+      if (!o || n.v > o.v) out.set(n.firstKey, { first: n.first, fk: n.firstKey, action: n.action, steps: n.steps, v: n.v, rec: n.rec, end: null, done: true });
     }
-    var frontier = [{ snap: root, rec: null, steps: [], firstKey: null, first: null, v: evaluate(mover) }];
+    var frontier = [{ snap: root, rec: null, steps: [], firstKey: null, first: null, action: null, v: evaluate(mover) }];
     var unexpanded = [];        // positions still in the mover's turn that time did not let us search further
     for (var pg = 0; pg < 14 && frontier.length; pg++) {
       var leaving = [], layer = frontier, next = [];
@@ -369,7 +390,8 @@ var BRAIN_CODE = `
                 if (!G.gameOver && seen.has(sg)) return;         // reached before (a cycle, or a duplicate line)
                 seen.add(sg);
                 var step = { inputs: inputs, vis: visSig(mover), opp: inputs.some(function(x){ return x.s && x.s !== mover; }) };
-                var child = { snap: null, rec: rec, steps: node.steps.concat([step]), firstKey: node.firstKey || key(inputs[0]), first: node.first || inputs[0], v: evaluate(mover) };
+                var act = node.action || actionOf(inputs, mover);
+                var child = { snap: null, rec: rec, steps: node.steps.concat([step]), firstKey: node.firstKey || key(act.map(bare)), first: node.first || inputs[0], action: act, v: evaluate(mover) };
                 if (G.gameOver || isOver(d) || G.turn !== mover) record(child);
                 else if (G.phase !== ph0) leaving.push(child);
                 else next.push(child);
@@ -390,7 +412,7 @@ var BRAIN_CODE = `
     rest.forEach(function(n, idx){
       if (budget.evals >= budget.max || (budget.hard && NOW() > budget.hard) || (idx >= 2 && bnow(budget) > budget.end + (budget.fixed ? 30 : 50))) return;
       var fin = finishTurn(mover, n.snap || materialize(n.rec), budget);
-      if (fin) { var o = out.get(n.firstKey); if (!o || fin.v > o.v) out.set(n.firstKey, { first: n.first, steps: n.steps.concat(fin.steps), v: fin.v, rec: null, end: fin.end, done: true }); }
+      if (fin) { var o = out.get(n.firstKey); if (!o || fin.v > o.v) out.set(n.firstKey, { first: n.first, fk: n.firstKey, action: n.action, steps: n.steps.concat(fin.steps), v: fin.v, rec: null, end: fin.end, done: true }); }
     });
   }
   function turnSearch(mover, root, cfg, budget){
@@ -526,7 +548,10 @@ var BRAIN_CODE = `
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
     CUR = budget;
     NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
-    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; NOISE = 0; NR = null; }
+    OLDPLAN = !!opts.oldPlan;
+    // explain (debugging): think this decision afresh — not by the plan being followed — and keep that plan
+    var kept = cache; if (opts.explain) cache = null;
+    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; NOISE = 0; NR = null; OLDPLAN = false; if (opts.explain) cache = kept; }
   }
   function planWith(w, opts, N, cfg, budget, t0){
 
@@ -549,80 +574,73 @@ var BRAIN_CODE = `
     if (!quietNow && !live.quiet) return { move: fallback(w), why: 'no anchor' };
     var anchor = quietNow ? __S.snap() : live.quiet, path = quietNow ? [] : live.path.slice();
     var known = seenInHand;
-    // Worlds are added until the best first move is clearly ahead of the rest (paired: every world scores every first
-    // move, so differences come from the moves, not the deals). A move that is not clearly better than simply passing
-    // (Done / advance / end) loses to passing — acting on luck-noise is how a search talks itself into bad plays.
+    // How the bot thinks about a decision:
+    //  1. FIND the actions worth comparing: the whole turn searched in one imagined world — every action the bot could
+    //     take now, each completed by the best play after it — and the best few kept, with the best way to pass. (At a
+    //     prompt, the actions are simply its answers.)
+    //  2. SCORE every one of them in every world imagined (what w cannot see re-dealt each time): the action, then the
+    //     best play after it in that world, then N-1 more turns. Every world scores every action, each with an even
+    //     share of the thinking — so the actions are compared on the same deals (paired), never one action's lucky
+    //     world against another's ordinary ones, and no world spends the thinking the others need.
+    // Worlds are added until the best action is clearly ahead of the next best. An action that is not clearly better
+    // than simply passing (Done / advance / end) loses to passing — acting on luck-noise is how a search talks itself
+    // into bad plays.
     var minW = opts.worlds || 3, maxW = opts.maxWorlds || Math.max(minW, minW * 4);
-    var agg = new Map();             // first-move key → { sum, sq, n, line, vals:[per world] }
     var tStart = bnow(budget), total = budget.end - tStart;
-    // With lookahead, a world's time is split: its own turn first, then the rest of the time playing the best few
-    // lines on N-1 more turns.
     var ownFrac = N > 1 ? (opts.ownFrac || 0.45) : 1;
+    var disc = quietNow ? 1 : 0, share = total / (minW + disc);   // (finding the actions takes one share of its own)
+    var S = null, agg = new Map(), nW = 0;     // agg: action key → { act, line, vals: [its value in each world], sum, sq, n }
     for (var k = 0; k < maxW; k++) {
       if (k >= minW && bnow(budget) > tStart + total) break;
-      // each of the first minW worlds gets an even share of the thinking time (extra worlds use what is left)
-      var wEnd = k < minW ? tStart + total * (k + 1) / minW : tStart + total, wNow = bnow(budget);
-      budget.end = wNow + (wEnd - wNow) * ownFrac;
-      var seed = ((opts.seed >>> 0) || 1) * 7919 + k * 104729;
+      if (budget.evals >= budget.max || (budget.hard && NOW() > budget.hard)) break;
       // the real position (anchor + the inputs since), then everything w cannot see re-dealt
-      var mkWorld = function(){ rewind(anchor); for (var p = 0; p < path.length; p++) apply(path[p]); determinize(w, mb(seed), known); };
+      var mkWorld = (function(sd){ return function(){ rewind(anchor); for (var p = 0; p < path.length; p++) apply(path[p]); determinize(w, mb(sd), known); }; })(((opts.seed >>> 0) || 1) * 7919 + k * 104729);
       mkWorld();
       var dd = dec(); if (isOver(dd) || dd.seat !== w) continue;
-      var lines;
-      if (__S.quiet()) lines = turnSearch(w, __S.snap(), cfg.own, budget);
-      else {
-        // a prompt mid-action: each answer, finished, then the rest of the turn on
-        lines = [];
-        var C = __M.candidates(w);
-        for (var i = 0; i < C.length; i++) {
-          mkWorld(); apply(C[i]);
-          var ci = C[i];
-          var ans = __S.quiet() || G.gameOver ? [] : finishFlow(w, function(){ mkWorld(); apply(ci); }, budget);
-          if (!ans) continue;
-          var v = evaluate(w), end = __S.quiet() ? __S.snap() : null;
-          if (end && !G.gameOver && dec().seat === w && G.turn === w) { var rest = turnSearch(w, end, cfg.own, budget); if (rest.length) { v = rest[0].v; end = rest[0].end; } }
-          lines.push({ first: C[i], steps: [{ inputs: [C[i]].concat(ans), vis: null, opp: true }], v: v, end: end });
-        }
-      }
-      lines.sort(function(a, b){ return b.v - a.v; });
-      var topK = opts.topK || 6;
-      budget.end = wEnd;
-      for (var j = 0; j < lines.length; j++) {
-        var L = lines[j], val = L.v;
-        if (N > 1) {
-          // the best few lines are played on N-1 more turns (each an even share of the world's remaining time; the
-          // best two always); a line that could not be looked ahead ranks below every line that was
-          var la = null, nNow = bnow(budget);
-          if (j < topK && L.end && !(L.v >= 1e6 || L.v <= -1e6) && (j < 2 || nNow < wEnd)) {
-            var share = Math.max(10, (wEnd - nNow) / Math.max(1, Math.min(topK, lines.length) - j));
-            la = lookahead(w, L.end, N - 1, cfg, budget, nNow + share);
+      // this world's share of the thinking (on the plan's timeline; never less than most of a share)
+      var wEnd = Math.max(k < minW ? tStart + share * (k + 1 + disc) : 0, bnow(budget) + share * 0.6);
+      var vals = null;
+      if (!S) {
+        if (__S.quiet()) {
+          budget.end = tStart + share;
+          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6);
+          // this world scores them with the search's own lines (the best play after each, found by the larger search)
+          budget.end = wEnd; vals = [];
+          for (var i = 0; i < S.length; i++) {
+            var L = S[i].line, v = L.v, cNow = bnow(budget);
+            if (N > 1 && L.end && !(v >= 1e6 || v <= -1e6)) { var la = lookahead(w, L.end, N - 1, cfg, budget, cNow + Math.max(10, (wEnd - cNow) / (S.length - i))); if (la != null) v = la; }
+            vals.push(v);
           }
-          val = la != null ? la : (L.v >= 1e6 || L.v <= -1e6) ? L.v : L.v - 1e3;
+        } else {
+          S = __M.candidates(w).map(function(c){ return { kk: key(c), act: [c], line: { first: c, steps: [{ inputs: [c], vis: null, opp: true }] } }; });
         }
-        var kk = key(L.first), a = agg.get(kk) || { sum: 0, sq: 0, n: 0, line: L };
-        a.sum += val; a.sq += val * val; a.n++; agg.set(kk, a);
+        if (!S.length) break;
       }
-      if (k + 1 >= minW && agg.size > 1) {
-        var ranked = []; agg.forEach(function(a, kk){ ranked.push({ kk: kk, m: a.sum / a.n, a: a }); });
-        ranked.sort(function(x, y){ return y.m - x.m; });
-        var b1 = ranked[0].a, b2 = ranked[1].a;
-        var var1 = Math.max(0, b1.sq / b1.n - Math.pow(b1.sum / b1.n, 2)), var2 = Math.max(0, b2.sq / b2.n - Math.pow(b2.sum / b2.n, 2));
-        var se = Math.sqrt(var1 / b1.n + var2 / b2.n);
-        if (ranked[0].m - ranked[1].m > 2 * se) break;          // clearly ahead
+      if (!vals) {
+        budget.end = wEnd; vals = [];
+        for (var i2 = 0; i2 < S.length; i2++) {
+          var c2 = bnow(budget);
+          if (i2 > 0) mkWorld();
+          vals.push(scoreAction(w, S[i2].act, mkWorld, N, cfg, budget, c2 + Math.max(10, (wEnd - c2) / (S.length - i2)), ownFrac));
+        }
+      }
+      nW++;
+      for (var j = 0; j < S.length; j++) {
+        var a = agg.get(S[j].kk) || { act: S[j].act, line: S[j].line, vals: [], sum: 0, sq: 0, n: 0 };
+        a.vals.push(vals[j]); a.sum += vals[j]; a.sq += vals[j] * vals[j]; a.n++; agg.set(S[j].kk, a);
+      }
+      if (nW >= minW && agg.size > 1) {
+        var rk = ranked(agg), pd = paired(rk[0].a, rk[1].a);
+        if (pd.m > 2 * pd.se) break;          // clearly ahead
       }
     }
     // restore the real position
     rewind(anchor); for (var p2 = 0; p2 < path.length; p2++) apply(path[p2]);
-    var best = null, pass = null;
-    agg.forEach(function(a, kk){
-      var m = a.sum / a.n, sd = Math.sqrt(Math.max(0, a.sq / a.n - m * m)), se = sd / Math.sqrt(a.n);
-      var e = { m: m, se: se, kk: kk, line: a.line };
-      if (!best || m > best.m) best = e;
-      var t = a.line.first && a.line.first.t;
-      if ((t === 'sdDone' || t === 'adv' || t === 'end') && (!pass || m > pass.m)) pass = e;
-    });
-    if (!best) return { move: fallback(w), why: 'no lines' };
-    if (pass && pass !== best && best.m - pass.m <= Math.max(best.se, pass.se)) best = pass;   // not clearly better than holding
+    if (!agg.size) return { move: fallback(w), why: 'no lines' };
+    var rkd = ranked(agg), top1 = rkd[0], pass = null;
+    rkd.forEach(function(e){ var t = e.a.line.first && e.a.line.first.t; if (!pass && (t === 'sdDone' || t === 'adv' || t === 'end')) pass = e; });
+    if (pass && pass !== top1) { var bp = paired(top1.a, pass.a); if (bp.m <= bp.se) top1 = pass; }   // not clearly better than holding
+    var best = { m: top1.m, line: top1.a.line };
     // Skill: a lower tier does not always play its best line. 'temp' (in evaluation units) makes worse lines
     // proportionally less likely — near-equal lines get confused, clearly worse ones rarely. Drawn from the bot's own
     // stream (opts.seed), never the game's.
@@ -634,8 +652,65 @@ var BRAIN_CODE = `
       for (var q = 0; q < opts2.length; q++) { rr -= ws[q]; if (rr <= 0) { if (opts2[q].m < best.m) best = { m: opts2[q].m, line: opts2[q].line }; break; } }
     }
     var line = best.line;
-    cache = { seat: w, turnNo: G._turnNo || 0, steps: line.steps, si: 0, ii: 1 };
-    return { move: bare(line.first), value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow };
+    // The bot commits to the action it compared across the worlds — and only that: every later decision of the turn
+    // is thought about again when it comes (the rest of this line was the best play in ONE imagined world, chosen
+    // knowing that world's hidden cards: following it would be playing on a guess as if it were known).
+    var act = line.action || [line.first];
+    cache = OLDPLAN ? { seat: w, turnNo: G._turnNo || 0, steps: line.steps, si: 0, ii: 1 }
+                    : { seat: w, turnNo: G._turnNo || 0, steps: [{ inputs: act, vis: null, opp: true }], si: 0, ii: 1 };
+    return { move: bare(line.first), value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow,
+      ranked: opts.explain ? explainRanked(agg) : undefined };
+  }
+  // The actions to compare, from a searched turn: the best few (by the value of the best play after each), and the
+  // best way to pass.
+  function candidatesFrom(lines, n){
+    var out = [], pass = null;
+    lines.forEach(function(L){ var t = L.first && L.first.t; if (!pass && (t === 'sdDone' || t === 'adv' || t === 'end')) pass = L; });
+    for (var i = 0; i < lines.length && out.length < n; i++) out.push(lines[i]);
+    if (pass && out.indexOf(pass) < 0) out.push(pass);
+    return out.map(function(L){ return { kk: L.fk || key(L.first), act: L.action || [L.first], line: L }; });
+  }
+  // One action, in the world currently set up ('rebuild' sets it up again): the action's own inputs, whatever they open
+  // answered (w its best, the others their worst for w), the rest of w's turn played best, then N-1 more turns —
+  // its value for w.
+  function scoreAction(w, act, rebuild, N, cfg, budget, until, ownFrac){
+    var t0 = bnow(budget), done = [act[0]];
+    apply(act[0]);
+    for (var i = 1; i < act.length; i++) {
+      if (G.gameOver || !__S.quiet() || dec().seat !== w) break;   // something opened that the action's own inputs don't answer
+      apply(act[i]); done.push(act[i]);
+    }
+    if (!G.gameOver && !__S.quiet() && !finishFlow(w, function(){ rebuild(); for (var q = 0; q < done.length; q++) apply(done[q]); }, budget)) return evaluate(w);
+    var v = evaluate(w), end = !G.gameOver && __S.quiet() ? __S.snap() : null;
+    if (end && G.turn === w && dec().seat === w) {
+      var saved = budget.end; budget.end = t0 + (until - t0) * ownFrac;
+      var rest = turnSearch(w, end, cfg.own, budget);
+      budget.end = saved;
+      if (rest.length) { v = rest[0].v; end = rest[0].end; }
+    }
+    if (N > 1 && end && !(v >= 1e6 || v <= -1e6)) { var la = lookahead(w, end, N - 1, cfg, budget, until); if (la != null) v = la; }
+    return v;
+  }
+  function ranked(agg){ var r = []; agg.forEach(function(a, kk){ r.push({ kk: kk, m: a.sum / a.n, a: a }); }); r.sort(function(x, y){ return y.m - x.m; }); return r; }
+  // How much better action a scored than action b, world by world: the mean difference and its standard error.
+  function paired(a, b){
+    var n = Math.min(a.vals.length, b.vals.length), s = 0, s2 = 0;
+    for (var i = 0; i < n; i++) { var d = a.vals[i] - b.vals[i]; s += d; s2 += d * d; }
+    if (!n) return { m: 0, se: 0 };
+    var m = s / n;
+    return { m: m, se: n > 1 ? Math.sqrt(Math.max(0, s2 / n - m * m) / (n - 1)) : 0 };
+  }
+  // explain (debugging): every first move considered, best first — its mean value over the worlds, the standard error,
+  // how many worlds, and the line it stood for (the inputs of the turn as planned)
+  function explainRanked(agg){
+    var r2 = function(x){ return Math.round(x * 100) / 100; }, out = [];
+    agg.forEach(function(a){
+      var m = a.sum / a.n, sd = Math.sqrt(Math.max(0, a.sq / a.n - m * m));
+      out.push({ first: bare(a.line.first), m: r2(m), se: r2(sd / Math.sqrt(a.n)), n: a.n,
+        line: a.line.steps.map(function(st){ return st.inputs.map(function(i){ return i.t + (i.id ? ':' + i.id : '') + (i.z ? ':' + (i.o || '') + '/' + i.z : '') + (i.i != null ? ':' + i.i : ''); }).join('+'); }).join(' , ') });
+    });
+    out.sort(function(x, y){ return y.m - x.m; });
+    return out.slice(0, 20);
   }
 
   window.__B = { features: features, terms: terms, evaluate: evaluate, plan: plan, determinize: determinize, noteApplied: noteApplied,

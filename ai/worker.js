@@ -101,7 +101,8 @@ function think(m) {
   try { r = self.__B.plan(m.seat, m.opts || {}); } catch (e) { realConsole.error('[bot worker] plan', e); }
   var move = r && r.move;
   if (!move) { var C = self.__M.candidates(m.seat); move = C && C[0]; }
-  realPost({ type: 'move', id: m.id, move: move || null, why: r ? r.why : 'fallback', value: r && r.value, evals: r && r.evals, ms: Math.round(realNow() - t0), sig: sig, moveSig: moveSig });
+  realPost({ type: 'move', id: m.id, move: move || null, why: r ? r.why : 'fallback', value: r && r.value, evals: r && r.evals, ms: Math.round(realNow() - t0), sig: sig, moveSig: moveSig,
+    ranked: r && r.ranked, considered: r && r.considered });
 }
 
 self.onmessage = function (ev) {

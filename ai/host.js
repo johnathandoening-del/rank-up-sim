@@ -74,6 +74,8 @@
     var opts = window.RUAI && RUAI.tiers ? RUAI.tiers.planOpts(tier, G._turnNo || 0, (G._seed >>> 0) ^ (d.seat === 'player' ? 0x51 : 0xA7), 1, d) : { fixed: true, evals: 1000 };
     opts.seed = ((G._seed >>> 0) ^ Math.imul(id, 2654435761)) >>> 0;
     pending = { id: id, seat: d.seat, sig: sig, t0: performance.now(), game: gameId };
+    hist.push({ id: id, game: gameId, seat: d.seat, tier: tier, turnNo: G._turnNo || 0, phase: G.phase, opts: opts, anchor: track.anchor, path: track.path.slice(), sig: sig });
+    if (hist.length > HIST) hist.shift();
     shown();
     ensureWorker().postMessage({ type: 'think', id: id, seat: d.seat, opts: opts, anchor: track.anchor, path: track.path, sig: sig, base: base() });
   }
@@ -83,6 +85,8 @@
     if (m.type === 'ready') { ready = true; if (m.errors && m.errors.length) console.warn('[bots] worker load notes', m.errors); return; }
     if (m.type === 'error') { console.error('[bots]', m.msg); say('Bot error: ' + m.msg, 'dmg'); pending = null; return; }
     if (m.type === 'state') { var w = stateWaiters[m.id]; delete stateWaiters[m.id]; if (w) w(m); return; }
+    if (m.type === 'move' && explainWaiters[m.id]) { var xw = explainWaiters[m.id]; delete explainWaiters[m.id]; xw(m); return; }
+    if (m.type === 'move') hist.forEach(function (h) { if (h.id === m.id) { h.move = m.move; h.why = m.why; h.value = m.value; h.ms = m.ms; } });
     if (m.type !== 'move' || !pending || m.id !== pending.id) return;
     var p = pending;
     // a readable pace: a decision that took less than a moment still waits a moment
@@ -135,6 +139,20 @@
     timer = setInterval(tick, 120);
   }
 
+  // Debugging: the bots' recent decisions (what each was asked, and what it answered) — and any of them thought
+  // again, afresh, with every first move it considered listed with its value (RUBots.explain(k): k counts from the
+  // end, 1 = the last one).
+  var HIST = 40, hist = [], explainWaiters = {};
+  function history() { return hist.map(function (h, i) { return (hist.length - i) + ': ' + h.seat + ' ' + h.tier + ' t' + h.turnNo + ' ' + h.phase + ' -> ' + (h.move ? JSON.stringify(h.move) : '?') + ' (' + (h.why || '') + ')'; }); }
+  function explain(k, extra) {
+    var h = hist[hist.length - (k || 1)];
+    if (!h) return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      var id = ++seq; explainWaiters[id] = resolve;
+      var o = {}, q; for (q in h.opts) o[q] = h.opts[q]; o.explain = true; for (q in (extra || {})) o[q] = extra[q];
+      ensureWorker().postMessage({ type: 'think', id: id, seat: h.seat, opts: o, anchor: h.anchor, path: h.path, sig: h.sig, base: base() });
+    });
+  }
   // Debugging: rebuild the current position in the worker and list every field where its copy differs from this
   // page's game (resolves with the differences).
   var stateWaiters = {};
@@ -157,5 +175,6 @@
   }
 
   window.RUBots = { available: available, attach: attach, stop: stop, noteInput: noteInput, ready: function () { return ready; }, debugDiff: debugDiff,
-    thinking: function () { return pending ? pending.seat : null; }, lastDivergence: function () { return lastDiv; } };
+    thinking: function () { return pending ? pending.seat : null; }, lastDivergence: function () { return lastDiv; },
+    history: history, explain: explain, request: function (k) { return hist[hist.length - (k || 1)] || null; } };
 })();
