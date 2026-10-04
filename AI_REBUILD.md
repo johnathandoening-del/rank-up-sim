@@ -54,10 +54,13 @@ Verified finally by playing as a human in the real UI.
    checkpoint -> input* (`ai/match.js`, the worker and the bot's own simulation all do this).
 3. **The bot** (`ai/brain.js`): turn search phase by phase (every phase searched, Battle included; widening passes;
    unfinished positions always completed); prompts mid-action answered best-first for itself and worst-for-it for
-   others; hidden cards re-dealt per imagined world at the current point (what was seen stays); paired worlds with a
-   "don't act on noise" rule; lookahead N plays the best lines N-1 more turns; plans followed only while what the bot
-   sees matches (a planned prompt answer carries the prompt it was meant for). Effort is counted where work happens;
-   fixed-effort mode makes strength device-independent and games replayable. 2-4 seats (1v1v1 / Royale).
+   others; hidden cards re-dealt per imagined world at the current point (what was seen stays). Every decision: one
+   turn search FINDS the candidate actions (the best few + the best pass), then EVERY world SCORES every candidate (the
+   action, the best rest of the turn in that world, N-1 more turns by each side's quick develop-and-attack planner),
+   each with an even share of the effort; actions compared world by world, worlds added until the best is clearly
+   ahead, and one not clearly better than passing loses to passing. The bot commits to the action only (attack mode ->
+   attacker -> target) and thinks again at its next decision. Judgment noise / temperature for lower tiers. Effort is
+   counted where work happens; fixed-effort mode makes strength device-independent and games replayable. 2-4 seats.
 4. **Tiers** (`ai/tiers.js`): the user's N table + worlds, width, effort, temperature; Δ only from Talented 2.
 5. **Live game** (`ai/host.js` + `ai/worker.js`): solo matches of every mode run under the online lockstep rules with
    every bot seat input-driven (`G._soloNet`, `G._botSeats`). The page keeps the last quiet position (a plain-data
@@ -75,6 +78,8 @@ Verified finally by playing as a human in the real UI.
 - `arena.js` / `ladder.js` — mirrored-deal matches between policies, in parallel; a series of them unattended.
 - `selfplay.js` / `fit.js` — self-play data (positions + per-game Δ Decks) and evaluation fitting (split by game,
   rule-known weight signs).
+- `replay.js` — one arena game played again exactly (seed, classes, seats, bots): every input, why, and its log; the
+  bot's weighed candidates for chosen turns. In the browser: `RUBots.history()` / `RUBots.explain(k)`.
 
 ## Progress log
 
@@ -117,3 +122,15 @@ Verified finally by playing as a human in the real UI.
   effort 58.5%; N=2 vs N=1 at equal effort 40%; temperature 0 vs 1 49%, 1 vs 3 54.5%, 3 vs 8 60.7% (the strength curve
   is shallow: the evaluation is the bottleneck). Next: a better evaluation from 2,000 self-play games, Δ card values
   from the same games, then tier calibration.
+- **2026-10-03 (evening)** — Played full games against Distinguished 1 in the browser. Found and fixed by playing:
+  (1) the bot followed the rest of a line chosen in ONE imagined world — knowing that world's hidden cards (it
+  attacked an NP 0 Rank into NP 1 because its imagined casualty draws were good); (2) with lookahead, the first world
+  could spend the whole budget, so later worlds scored only "end turn" and an attack seen in 1 world beat a pass seen
+  in 5 — now candidates are found once and scored in every world (paired) and the bot re-thinks every decision;
+  (3) bot inputs skipped the phase rules the human UI enforces (Plus played in the Promotion Phase to unlock bigger
+  flanks; flanks in the Promotion Phase; Restorative 3 / Amalgamation at any time) — the input layer now holds every
+  input to the table's windows, and bots may also Stand Down / Relieve wherever a player can; (4) `tryFlank` treated
+  slot 'rear' as the Right Flank (any class) — the Extension Rear Flank is now its own placement for players and bots;
+  (5) Counterstrike's "+2 NP until end of your next turn" was wiped at the end of the turn it was used. Judgment
+  noise measured as the strongest strength dial (S0 vs S25 84.3%, S0 vs S60 92.7%); best (old planner, 3,000 evals)
+  vs random 97.4% of 266 decided (7 losses, 11 unfinished — now recorded with seeds for replay).
