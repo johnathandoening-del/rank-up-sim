@@ -25892,13 +25892,16 @@ window.ruSpecPace=function(base){
   function handCard(g,seat,id){ var p=g&&g[seat]; if(!p||!p.hand)return null; for(var i=0;i<p.hand.length;i++){ if(p.hand[i]&&p.hand[i].id===id)return {idx:i,card:p.hand[i]}; } return null; }
   // When a player's own-turn actions may be taken: exactly what the table offers in each phase (the buttons it shows,
   // the hand clicks it answers) — Advantageous Action Cards and Area Cards in the Main and Standby Phases; Flanking and
-  // Relieving in the Rally, Main and Standby Phases; Stand Down from the Promotion to the Battle Phase. An input
+  // Relieving in the Rally, Main and Standby Phases; Stand Down from the Promotion to the Battle Phase; Restorative 3
+  // from Drop/Deadzone in the Main and Standby Phases; the Δ Zone card's skill in the Draw, Main, Standby and Battle
+  // Phases; an Amalgamation Rank Up on one's own turn. An input
   // outside its window is refused like any illegal click, whoever sends it (a remote player's screen, a bot). Effects
   // that grant one of these at another time (e.g. Haste's opponent-turn window) run inside their own prompt, not as
   // one of these inputs. (Promotion, skills and attacks check their own timing.)
   var OWN_WINDOWS={playAction:{main:1,standby:1},activateArea:{main:1,standby:1},
     flank:{rally:1,main:1,standby:1},rearFlank:{rally:1,main:1,standby:1},relieveHand:{rally:1,main:1,standby:1},rvMode:{rally:1,main:1,standby:1},
-    sdMode:{promotion:1,rally:1,main:1,standby:1,battle:1}};
+    sdMode:{promotion:1,rally:1,main:1,standby:1,battle:1},rest3:{main:1,standby:1},amalgSkill:{draw:1,main:1,standby:1,battle:1},
+    amalgRank:{draw:1,promotion:1,rally:1,main:1,standby:1,battle:1,end:1}};
   var OWN_KIND={playAction:function(c){return c.type==='action'&&c.sub==='Advantageous';},activateArea:function(c){return c.type==='area';},
     flank:function(c){return c.type==='numeral'||c.type==='digit';},rearFlank:function(c){return c.type==='numeral';},relieveHand:function(c){return c.type==='numeral';}};
   function inWindow(g,seat,a){
