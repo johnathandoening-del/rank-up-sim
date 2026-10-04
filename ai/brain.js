@@ -601,7 +601,7 @@ var BRAIN_CODE = `
       if (!S) {
         if (__S.quiet()) {
           budget.end = tStart + share;
-          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6);
+          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6, dd.mode);
           // this world scores them with the search's own lines (the best play after each, found by the larger search)
           budget.end = wEnd; vals = [];
           for (var i = 0; i < S.length; i++) {
@@ -660,7 +660,11 @@ var BRAIN_CODE = `
   }
   // The actions to compare, from a searched turn: the best few (by the value of the best play after each), and the
   // best way to pass.
-  function candidatesFrom(lines, n){
+  var MODE_ENTRY = { atk: 'atkMode', standdown: 'sdMode', relievewait: 'rvMode' };
+  function candidatesFrom(lines, n, mode){
+    // (in a board mode, leaving it only to enter it again is the same plan as acting in it now — not a choice)
+    var again = MODE_ENTRY[mode];
+    if (again) lines = lines.filter(function(L){ var s2 = L.steps[1]; return !(L.first && L.first.t === 'cancel' && s2 && s2.inputs[0] && s2.inputs[0].t === again); });
     var out = [], pass = null;
     lines.forEach(function(L){ var t = L.first && L.first.t; if (!pass && (t === 'sdDone' || t === 'adv' || t === 'end')) pass = L; });
     for (var i = 0; i < lines.length && out.length < n; i++) out.push(lines[i]);
