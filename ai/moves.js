@@ -94,7 +94,7 @@ var MOVES_CODE = `
     (p.hand||[]).forEach(function(c){
       if (c.type === 'numeral') {
         out.push({ t:'promote', id:c.id, s:seat }); out.push({ t:'maxPromote', id:c.id, s:seat });
-        out.push({ t:'flank', id:c.id, slot:'left', s:seat }); out.push({ t:'flank', id:c.id, slot:'right', s:seat }); out.push({ t:'flank', id:c.id, slot:'rear', s:seat });
+        out.push({ t:'flank', id:c.id, slot:'left', s:seat }); out.push({ t:'flank', id:c.id, slot:'right', s:seat }); out.push({ t:'rearFlank', id:c.id, s:seat });
         out.push({ t:'relieveHand', id:c.id, s:seat });
       }
       if (c.type === 'action') out.push({ t:'playAction', id:c.id, s:seat });

@@ -3818,6 +3818,8 @@ function tryMaximumRankUp(card){
 // RALLY / FLANK
 // ═══════════════════════════════════════════
 function tryFlank(card,slot){
+  // a Flank Zone is the Left or the Right one (the Rear Flank Zone is its own placement: tryRearFlank)
+  if(slot!=='left'&&slot!=='right')return false;
   // Seven Heaven: "a Numeral 7 need not Relieve a Rank 2 Numeral 4+ to be used as a Flank" --
   // i.e. Numeral 7 flanks as if it were Rank 2 or lower (bypassing the Rank 3+ Chief-Flank-only
   // restriction below), even though its own printed Rank is usually 3. The NP bound still applies
@@ -6436,6 +6438,17 @@ function animateDrawnCards(container){
 // ═══════════════════════════════════════════
 // HAND CLICKS
 // ═══════════════════════════════════════════
+// The Rear Flank Zone (Extension): an Extension Numeral of Rank 0-2 (never Extension 8, whose own text bans it) with NP
+// no higher than the Rank Zone's, once the Rank Zone and both Flank Zones hold Extension cards and the Rear is empty.
+function ruCanRearFlank(p,card){return !!(p&&card&&card.type==='numeral'&&card.class==='extension'&&p.class==='extension'&&!p.rearFlank&&p.rankZone&&p.leftFlank&&p.rightFlank&&[p.rankZone,p.leftFlank,p.rightFlank].every(c=>c&&c.class==='extension')&&(card.rank||0)<3&&card.numeral!==8&&(card.numeral||0)<=(p.rankZone.currentNP||p.rankZone.numeral||0));}
+function tryRearFlank(card){
+  const me=ruActor(),p=G[me];
+  if(G.turn!==me||G.gameOver||!ruCanRearFlank(p,card))return false;
+  const hi=p.hand.indexOf(card);if(hi===-1)return false;
+  p.hand.splice(hi,1);p.rearFlank=card;card.attacksLeft=1;
+  log(`${sideSubjectLabel(me)}: ${card.name} placed in Rear Flank Zone.`,'heal');renderAll();return true;
+}
+window.tryRearFlank=tryRearFlank;
 function handClick(idx,card){
   const me=ruActor();
   if(G.turn!==me||G.gameOver)return;
@@ -6450,10 +6463,10 @@ function handClick(idx,card){
     const pRear=G[me];
     // Extension 8's own printed text is "Cannot be played in Rear Flank" -- an outright ban,
     // unlike the mill-5 penalty other non-Flank entries get. Exclude it from this offer entirely.
-    const canRear=pRear.class==='extension'&&!pRear.rearFlank&&pRear.rankZone&&pRear.leftFlank&&pRear.rightFlank&&[pRear.rankZone,pRear.leftFlank,pRear.rightFlank].every(c=>c&&c.class==='extension')&&(card.rank||0)<3&&card.numeral!==8&&(card.numeral||0)<=(pRear.rankZone.currentNP||pRear.rankZone.numeral||0);
+    const canRear=ruCanRearFlank(pRear,card);
     if(canRear){
       openModal(`Flank ${card.name}`, '<p>Place this Extension Numeral in which zone?</p>', [
-        {label:'Rear Flank',cls:'mb-skill',fn:()=>{closeModal();const hi=pRear.hand.indexOf(card);if(hi===-1)return;pRear.hand.splice(hi,1);pRear.rearFlank=card;card.attacksLeft=1;log(`${sideSubjectLabel(me)}: ${card.name} placed in Rear Flank Zone.`,'heal');renderAll();}},
+        {label:'Rear Flank',cls:'mb-skill',fn:()=>{closeModal();tryRearFlank(card);}},
         {label:'Normal Flank',fn:()=>{closeModal();handClickBase(idx,card);}},
         {label:'Cancel',fn:()=>closeModal()}
       ]);
@@ -25884,10 +25897,10 @@ window.ruSpecPace=function(base){
   // that grant one of these at another time (e.g. Haste's opponent-turn window) run inside their own prompt, not as
   // one of these inputs. (Promotion, skills and attacks check their own timing.)
   var OWN_WINDOWS={playAction:{main:1,standby:1},activateArea:{main:1,standby:1},
-    flank:{rally:1,main:1,standby:1},relieveHand:{rally:1,main:1,standby:1},rvMode:{rally:1,main:1,standby:1},
+    flank:{rally:1,main:1,standby:1},rearFlank:{rally:1,main:1,standby:1},relieveHand:{rally:1,main:1,standby:1},rvMode:{rally:1,main:1,standby:1},
     sdMode:{promotion:1,rally:1,main:1,standby:1,battle:1}};
   var OWN_KIND={playAction:function(c){return c.type==='action'&&c.sub==='Advantageous';},activateArea:function(c){return c.type==='area';},
-    flank:function(c){return c.type==='numeral'||c.type==='digit';},relieveHand:function(c){return c.type==='numeral';}};
+    flank:function(c){return c.type==='numeral'||c.type==='digit';},rearFlank:function(c){return c.type==='numeral';},relieveHand:function(c){return c.type==='numeral';}};
   function inWindow(g,seat,a){
     var w=a&&OWN_WINDOWS[a.t]; if(!w) return true;
     if(!g||g.turn!==seat||!w[g.phase]) return false;
@@ -25931,6 +25944,7 @@ window.ruSpecPace=function(base){
   wrap('tryPromote',     function(card){ return (card&&card.id)?{t:'promote', id:card.id}:null; });
   wrap('tryMaximumRankUp',function(card){ return (card&&card.id)?{t:'maxPromote', id:card.id}:null; });
   wrap('tryFlank',       function(card,slot){ return (card&&card.id)?{t:'flank', id:card.id, slot:slot}:null; });
+  wrap('tryRearFlank',   function(card){ return (card&&card.id)?{t:'rearFlank', id:card.id}:null; });
   wrap('tryRelieveFromHand',function(idx,card){ return (card&&card.id)?{t:'relieveHand', id:card.id}:null; });
   wrap('activateArea',   function(idx,card){ return (card&&card.id)?{t:'activateArea', id:card.id}:null; });
   wrap('playAction',     function(idx,card){ return (card&&card.id)?{t:'playAction', id:card.id}:null; });
@@ -26049,6 +26063,7 @@ window.ruSpecPace=function(base){
       case 'promote': { var hp=handCard(g,seat,a.id); if(hp&&window.tryPromote) window.tryPromote(hp.card); break; }
       case 'maxPromote': { var hm=handCard(g,seat,a.id); if(hm&&window.tryMaximumRankUp) window.tryMaximumRankUp(hm.card); break; }
       case 'flank': { var hf=handCard(g,seat,a.id); if(hf&&window.tryFlank) window.tryFlank(hf.card,a.slot); break; }
+      case 'rearFlank': { var hrf=handCard(g,seat,a.id); if(hrf&&window.tryRearFlank) window.tryRearFlank(hrf.card); break; }
       case 'relieveHand': { var hr=handCard(g,seat,a.id); if(hr&&window.tryRelieveFromHand) window.tryRelieveFromHand(hr.idx,hr.card); break; }
       case 'activateArea': { var ha=handCard(g,seat,a.id); if(ha&&window.activateArea) window.activateArea(ha.idx,ha.card); break; }
       case 'playAction': { var hpa=handCard(g,seat,a.id); if(hpa&&window.playAction) window.playAction(hpa.idx,hpa.card); break; }
