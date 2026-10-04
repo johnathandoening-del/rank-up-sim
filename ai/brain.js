@@ -610,9 +610,26 @@ var BRAIN_CODE = `
             vals.push(v);
           }
         } else {
-          S = __M.candidates(w).map(function(c){ return { kk: key(c), act: [c], line: { first: c, steps: [{ inputs: [c], vis: null, opp: true }] } }; });
+          // a prompt: the actions are its answers — with many, a quick look at each in this world (the answer, what
+          // it opens finished) keeps the best few, and the way to decline when there is one
+          var C0 = __M.candidates(w), nc = opts.cands || opts.topK || 6;
+          if (C0.length > nc) {
+            var dq = dec(), declines = function(c){ return c.t === 'pick' ? !(c.ix || []).length : PASSY.test(String((dq.labels || [])[c.i] || '').trim()); };
+            var quick = C0.map(function(c, i){
+              if (i > 0) mkWorld(); apply(c);
+              var ok = __S.quiet() || G.gameOver || finishFlow(w, function(){ mkWorld(); apply(c); }, budget, true);
+              return { c: c, v: ok ? evaluate(w) : -1e9 };
+            });
+            quick.sort(function(a, b){ return b.v - a.v; });
+            var keep = quick.slice(0, nc).map(function(q){ return q.c; }), dc = C0.filter(declines)[0];
+            if (dc && keep.indexOf(dc) < 0) keep.push(dc);
+            C0 = keep; mkWorld();
+          }
+          S = C0.map(function(c){ return { kk: key(c), act: [c], line: { first: c, steps: [{ inputs: [c], vis: null, opp: true }] } }; });
         }
         if (!S.length) break;
+        // one action worth considering: nothing to compare it with
+        if (S.length === 1) { agg.set(S[0].kk, { act: S[0].act, line: S[0].line, vals: [0], sum: 0, sq: 0, n: 1 }); break; }
       }
       if (!vals) {
         budget.end = wEnd; vals = [];

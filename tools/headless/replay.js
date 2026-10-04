@@ -14,7 +14,7 @@ const short = (a) => a.t + (a.id ? ':' + a.id : '') + (a.z ? ':' + (a.o || '') +
 const res = play({ seed: Number(seedA), cls0, cls1, firstSeat: Number(firstA), aSeat, polA: JSON.parse(polAJ), polB: JSON.parse(polBJ), maxMs: 60 * 60000 }, {
   explain: (step, x) => inTurns(x.turn),
   onInput: (x) => {
-    const p = x.plan, why = p ? ` (${p.why}${p.value != null ? ' ' + p.value.toFixed(1) : ''}${p.considered ? ', ' + p.considered + ' weighed' : ''})` : '';
+    const p = x.plan, why = p ? ` (${p.why}${p.value != null ? ' ' + p.value.toFixed(1) : ''}${p.considered ? ', ' + p.considered + ' weighed' : ''}${p.evals ? ', ' + Math.round(p.evals) + ' evals ' + p.ms + ' ms' : ''})` : '';
     console.log(`t${x.turn} ${x.phase} ${x.seat}=${x.who}: ${short(x.move)}${why}`);
     if (p && p.ranked) p.ranked.forEach((c) => console.log(`      ${String(c.m).padStart(8)} ±${c.se} n${c.n}  ${c.line}`));
     x.log.forEach((l) => console.log('    | ' + l));
