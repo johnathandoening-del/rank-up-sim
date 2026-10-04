@@ -116,8 +116,10 @@ var MOVES_CODE = `
       try { window.findAmalgamationOptionsAI1(seat).forEach(function(o){ var ids = (o.combo||[]).map(function(x){ return x.card && x.card.id; }).filter(Boolean); if (ids.length) out.push({ t:'amalgRank', evoCardId:o.evo.id, evoId:o.evo.baseId || o.evo.id, elementIds:ids, s:seat }); }); } catch(e) {}
     }
     if (ph === 'battle') { out.push({ t:'atkMode', s:seat }); out.push({ t:'direct', s:seat }); }
-    if (ph === 'rally') { out.push({ t:'sdMode', s:seat }); out.push({ t:'rvMode', s:seat }); out.push({ t:'maxFlank', s:seat }); }
-    return out;
+    out.push({ t:'sdMode', s:seat }); out.push({ t:'rvMode', s:seat });
+    if (ph === 'rally' || ph === 'main' || ph === 'standby') out.push({ t:'maxFlank', s:seat });
+    // only what the table offers a player now (the same windows every input is held to)
+    return window.ruInputInWindow ? out.filter(function(m){ return window.ruInputInWindow(seat, m); }) : out;
   }
 
   // Probe candidates on a snapshot; keep the ones the engine accepts.

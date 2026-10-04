@@ -2977,6 +2977,9 @@ function beginPhaseBase(ph){
     [p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,(p.delta&&p.delta[0])].forEach(resetC);
     if(G._bfNP){G._bfNP.player=0;G._bfNP.ai=0;} if(G._bfRP){G._bfRP.player=0;G._bfRP.ai=0;}
     livingOpponentsOf(G.turn).forEach(function(ow){const opp=G[ow];if(opp)[opp.rankZone,opp.leftFlank,opp.rightFlank,opp.rearFlank,(opp.delta&&opp.delta[0])].forEach(resetC);});
+    // NP gains that last "until the end of your next turn" (Counterstrike) survive the reset above, on their owner's
+    // Rank Zone, and end with their owner's next turn
+    if(G._durableNP&&G._durableNP.length)G._durableNP=G._durableNP.filter(function(b){if(b.who===G.turn&&(G._turnNo||0)>b.turnNo)return false;const c=G[b.who]&&G[b.who].rankZone;if(c)c.currentNP=(c.currentNP!=null?c.currentNP:(c.numeral||0))+b.np;return true;});
     if(p.noCasDmgTurns>0)p.noCasDmgTurns--;
     if(G._noAttackTurns>0)G._noAttackTurns--;
     if(G._sjNoAtk&&G._sjNoAtk.who===G.turn){G._sjNoAtk.turns--;if(G._sjNoAtk.turns<=0)G._sjNoAtk=null;}
@@ -11491,7 +11494,11 @@ function useRetL2(idx,card){
   }
   if(nm==='Strike'){if(!commit())return;ai.mp-=2;casDraw(_foe);log(`Strike: ${sideVerbLabel(_foe,'lose','loses')} 2 MP and ${isLocalHumanSeat(_foe)?'take':'takes'} 1 Casualty Draw.`,'dmg');}
   else if(nm==='Counterattack'){if(!commit())return;log('Counterattack: Rank Zone makes an immediate avenging attack.','info');doCounterAttack(0);}
-  else if(nm==='Counterstrike'){if(!commit())return;buffNP(p.rankZone,2);log('Counterstrike: Rank Zone +2 NP until next turn, then counterattacks.','heal');doCounterAttack(0);}
+  else if(nm==='Counterstrike'){if(!commit())return;
+    // "Rank Zone gains 2 NP until end of your next turn": the gain outlasts this turn's End Phase reset (G._durableNP)
+    const rz=p.rankZone,np0=rz?(rz.currentNP!=null?rz.currentNP:(rz.numeral||0)):0;buffNP(rz,2);
+    if(rz)(G._durableNP=G._durableNP||[]).push({who:me,np:(rz.currentNP!=null?rz.currentNP:(rz.numeral||0))-np0,turnNo:G._turnNo||0});
+    logAs(me,'Counterstrike: {your} Rank Zone +2 NP until the end of {your} next turn, then counterattacks.','heal');doCounterAttack(0);}
   else if(nm==='Deckstroy'){if(!commit())return;acDropTop(_foe,3,'discard');log('Deckstroy: opponent drops top 3 cards of Deck.','dmg');}
   else if(nm==='Discard'){if(!commit())return;const n=Math.max(0,p.cas);let h=0;while(h<n&&ai.hand.length){ai.discard.push(ai.hand.shift());h++;}if(h<n)acDropTop(_foe,n-h,'discard');log(`Discard: ${sideVerbLabel(_foe,'drop','drops')} ${n} card(s) from hand/deck based on ${sidePossLower(me)} Casualties.`, 'dmg');}
   else if(nm==='Burning Star'){if(!commit())return;const hi=Math.max(0,...acNumerals(ai).map(acNP));ai.mp-=hi;buffNP(p.rankZone,hi);log(`Burning Star: opponent loses ${hi} MP; Rank Zone gains ${hi} NP and counterattacks.`, 'dmg');doCounterAttack(0);}
@@ -25870,6 +25877,24 @@ window.ruSpecPace=function(base){
   }
   function me(){ return localSeat(); }
   function handCard(g,seat,id){ var p=g&&g[seat]; if(!p||!p.hand)return null; for(var i=0;i<p.hand.length;i++){ if(p.hand[i]&&p.hand[i].id===id)return {idx:i,card:p.hand[i]}; } return null; }
+  // When a player's own-turn actions may be taken: exactly what the table offers in each phase (the buttons it shows,
+  // the hand clicks it answers) — Advantageous Action Cards and Area Cards in the Main and Standby Phases; Flanking and
+  // Relieving in the Rally, Main and Standby Phases; Stand Down from the Promotion to the Battle Phase. An input
+  // outside its window is refused like any illegal click, whoever sends it (a remote player's screen, a bot). Effects
+  // that grant one of these at another time (e.g. Haste's opponent-turn window) run inside their own prompt, not as
+  // one of these inputs. (Promotion, skills and attacks check their own timing.)
+  var OWN_WINDOWS={playAction:{main:1,standby:1},activateArea:{main:1,standby:1},
+    flank:{rally:1,main:1,standby:1},relieveHand:{rally:1,main:1,standby:1},rvMode:{rally:1,main:1,standby:1},
+    sdMode:{promotion:1,rally:1,main:1,standby:1,battle:1}};
+  var OWN_KIND={playAction:function(c){return c.type==='action'&&c.sub==='Advantageous';},activateArea:function(c){return c.type==='area';},
+    flank:function(c){return c.type==='numeral'||c.type==='digit';},relieveHand:function(c){return c.type==='numeral';}};
+  function inWindow(g,seat,a){
+    var w=a&&OWN_WINDOWS[a.t]; if(!w) return true;
+    if(!g||g.turn!==seat||!w[g.phase]) return false;
+    if(!OWN_KIND[a.t]) return true;
+    var hc=handCard(g,seat,a.id); return !!(hc&&OWN_KIND[a.t](hc.card));
+  }
+  window.ruInputInWindow=function(seat,a){ return inWindow(G_(),seat,a); };
   function sideCardById(g,who,id,preferred){
     var p=g&&g[who];if(!p||!id)return null;
     function one(source,card,idx){ return card&&card.id===id?{source:source,card:card,idx:idx}:null; }
@@ -26012,6 +26037,7 @@ window.ruSpecPace=function(base){
 
   // ── apply one recorded input (a relayed one from another player, or a local replay) AS ITS SEAT ──
   function dispatch(g,seat,a){
+    if(!inWindow(g,seat,a)) return;          // outside the action's window: refused, like an illegal click
     switch(a.t){
       case 'adv': window.advPhase(); break;
       case 'end': window.endTurnNow(); break;
