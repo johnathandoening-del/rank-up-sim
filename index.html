@@ -4189,7 +4189,7 @@ function cancelAll(){
   if(SF){SF=null;}
   G._oppZoneCb=null;
   clearHL();hide('btn-can');setHint('');
-  document.querySelectorAll('.hcw').forEach(e=>e.classList.remove('hsel','hgreen'));renderAll();
+  clearHandHL();renderAll();
   refreshV10Buttons();
 }
 // Highlight the acting seat's eligible attackers (on that seat's own board).
@@ -4293,6 +4293,7 @@ function hlAddon(attackerZone){
   ['rank','left-flank','right-flank','rear-flank','delta'].forEach(z=>chk(z,zId(me,z)));
 }
 function clearHL(){document.querySelectorAll('.zone').forEach(z=>z.classList.remove('hs','ht','hk','ha'));}
+function clearHandHL(){document.querySelectorAll('.hcw').forEach(e=>e.classList.remove('hsel','hgreen'));}
 
 // ═══════════════════════════════════════════
 // ZONE CLICK DISPATCH

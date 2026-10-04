@@ -10,6 +10,8 @@ var PAINTERS = [
   'refreshV10Buttons', 'renderDeltaZoneRA2', 'updateDeltaElementBarsRA4', 'updateModeButtonsRA7', 'ruSyncTurnControls', 'ruFitRadial', 'fitBoard',
   // visual effects / overlays
   'ruAreaFX', 'showBracket', 'showVersusIntro', 'hideOldBracket', 'applyHandFan', 'markShadowVersusRA8',
+  // board highlights, action-bar buttons, the hint line and the phase rail (only ever written, never read by a rule)
+  'clearHL', 'clearHandHL', 'hlSel', 'hlTgt', 'hlAddon', 'show', 'hide', 'setHint', 'renderPhaseRail',
 ];
 var NOPAINT_CODE = `
 (function(){
