@@ -61,7 +61,8 @@ Verified finally by playing as a human in the real UI.
    ahead, and one not clearly better than passing loses to passing. The bot commits to the action only (attack mode ->
    attacker -> target) and thinks again at its next decision. Judgment noise / temperature for lower tiers. Effort is
    counted where work happens; fixed-effort mode makes strength device-independent and games replayable. 2-4 seats.
-4. **Tiers** (`ai/tiers.js`): the user's N table + worlds, width, effort, temperature; Δ only from Talented 2.
+4. **Tiers** (`ai/tiers.js`): strength from judgment noise on a measured schedule (0 for Distinguished 4 .. 84 for
+   Inept, evenly spaced in strength), the user's N table, worlds, width, effort per decision; Δ only from Talented 2.
 5. **Live game** (`ai/host.js` + `ai/worker.js`): solo matches of every mode run under the online lockstep rules with
    every bot seat input-driven (`G._soloNet`, `G._botSeats`). The page keeps the last quiet position (a plain-data
    copy) + the inputs since; the worker restores it, replays and plans; the move returns through the input layer at a
@@ -134,3 +135,15 @@ Verified finally by playing as a human in the real UI.
   (5) Counterstrike's "+2 NP until end of your next turn" was wiped at the end of the turn it was used. Judgment
   noise measured as the strongest strength dial (S0 vs S25 84.3%, S0 vs S60 92.7%); best (old planner, 3,000 evals)
   vs random 97.4% of 266 decided (7 losses, 11 unfinished — now recorded with seeds for replay).
+- **2026-10-09** — Noise ladder on the paired planner (N 1, 1,200 per decision, 40 games each): noise 0 > 4 76.9%,
+  4 > 8 76.3%, 8 > 14 78.9%, 14 > 22 65.8%, 22 > 35 63.2%, 35 > 55 55.3%, 55 > 90 56.8%, 90 vs random 51.4%; noise 0
+  vs random 40-0 — about 5.4 logits from the best play to random (the old planner: ~3.4). Tiers rebuilt on it (evenly
+  spaced: ~60/40 adjacent, ~89/11 five apart, ~99.5/0.5 end to end — the user's 85/15-adjacent matrix needs ~22
+  logits, which the game's luck does not leave room for). Paired planner vs the previous one at equal settings: 50% (T1),
+  48% (D1). Every unfinished arena game investigated (seeds now recorded): game deadlocks fixed — a Casualty Draw on an
+  empty Deck froze the draw queue forever; the must-attack rule and the attack declaration disagreed about attack locks;
+  the empty-Rank stand-in was treated as a card (endless Stand Down, phantom Discard/Deadzone cards; a Rank Zone left
+  empty); the Haste opponent-turn window offered Haste 8 with no usable skill and its dialog a do-nothing button. Bot:
+  no empty moves when the search ran out before its root, no do-nothing prompt answers, no prompt circles (use a skill
+  -> cancel -> the same window), declining wins ties at prompts too. Cleanup: plan following reduced to the rest of the
+  committed action; unused machinery removed.
