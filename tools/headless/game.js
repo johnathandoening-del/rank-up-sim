@@ -3,7 +3,7 @@
  * look at one game again. A game is reproducible from its job (seed, classes, first seat, policies): the bots think in
  * fixed effort and draw their randomness from their own seeds.
  *   job:   { seed, cls0, cls1, firstSeat, aSeat, polA, polB, maxMs, evo }
- *   hooks: { onInput(info) }  — after every input: { step, seat, who, turn, phase, move, plan, log }
+ *   hooks: { onInput(info, eng) }  — after every input: { step, seat, who, turn, phase, prompt, move, plan, log } (+ engine)
  *          { explain(step, info) } — return true to have the bot also list every candidate it weighed at this step
  *          (thought again afresh, after the real decision; the game itself is not changed by it)
  * Policies: {"kind":"random"} | {"kind":"brain", N, worlds, width, evals, fixed, ...} | {"kind":"tier", key, scale};
@@ -46,7 +46,7 @@ function play(job, hooks) {
       move = L[Math.floor(rnd() * L.length)];
       const adv = L.find((x) => x.t === 'adv' || x.t === 'sdDone'); if (adv && rnd() < 0.3) move = adv;
     } else {
-      // a tier policy turns into this turn's thinking settings (N with its occasional bump, worlds, width, time, temp)
+      // a tier policy turns into this turn's thinking settings (N with its occasional bump, worlds, width, effort, noise)
       const opts = pol.kind === 'tier' ? require('./tiers').planOpts(pol.key, eng.run('G._turnNo||0'), job.seed * 7 + (who === 'A' ? 1 : 2), pol.scale || 1, d) : pol;
       // each side thinks with its own evaluation weights (null = the built-in starting weights)
       const BN = brains[pol.brainFile || ''];
@@ -65,7 +65,7 @@ function play(job, hooks) {
     if (hooks.onInput) eng.run('__logRing.length = 0');            // (the bot's own simulations wrote there too)
     eng.run('__H.apply(' + JSON.stringify(move) + ')'); eng.settle(10000);
     allB('.noteApplied(' + JSON.stringify(move) + ')');
-    if (hooks.onInput) hooks.onInput({ step: steps, seat: d.seat, who, turn: before.turn, phase: before.phase, move, plan: r, log: eng.run('__logRing.slice()') });
+    if (hooks.onInput) hooks.onInput({ step: steps, seat: d.seat, who, turn: before.turn, phase: before.phase, prompt: d.kind === 'modal' || d.kind === 'pick' ? d : null, move, plan: r, log: eng.run('__logRing.slice()') }, eng);
     steps++;
     const sg = eng.run('ruStateSig()'); if (sg === last) { if (++stale > 200) { stop = 'stuck: 200 inputs changed nothing (' + JSON.stringify(eng.run('__M.decider()')).slice(0, 160) + ')'; break; } } else { stale = 0; last = sg; }
   }

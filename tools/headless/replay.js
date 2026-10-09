@@ -15,6 +15,7 @@ const res = play({ seed: Number(seedA), cls0, cls1, firstSeat: Number(firstA), a
   explain: (step, x) => inTurns(x.turn),
   onInput: (x) => {
     const p = x.plan, why = p ? ` (${p.why}${p.value != null ? ' ' + p.value.toFixed(1) : ''}${p.considered ? ', ' + p.considered + ' weighed' : ''}${p.evals ? ', ' + Math.round(p.evals) + ' evals ' + p.ms + ' ms' : ''})` : '';
+    if (x.prompt) console.log(`  ? ${x.prompt.kind} "${x.prompt.title || ''}"${x.prompt.labels ? ' [' + x.prompt.labels.join(' / ') + ']' : ''}`);
     console.log(`t${x.turn} ${x.phase} ${x.seat}=${x.who}: ${short(x.move)}${why}`);
     if (p && p.ranked) p.ranked.forEach((c) => console.log(`      ${String(c.m).padStart(8)} ±${c.se} n${c.n}  ${c.line}`));
     x.log.forEach((l) => console.log('    | ' + l));
