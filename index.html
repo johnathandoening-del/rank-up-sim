@@ -12093,7 +12093,11 @@ function useRetL2(idx,card){
     sel.innerHTML=opts;
     wrap.style.display='';
   };
-  window.ruLogSub=function(){ try{ var d=window.ruEffectiveDepth?window.ruEffectiveDepth().base:0; var dz=window.ruDeltaSizeForLevel?window.ruDeltaSizeForLevel():0; log('AI Level: '+window.RU_AI_LEVEL_KEY+' '+window.RU_AI_LEVEL_NUM+' \u2014 search depth '+d+', \u0394 Deck '+dz+' card'+(dz===1?'':'s')+'.','info'); }catch(e){} };
+  // What the player is told about a bot seat's thinking: the thinking bot's lookahead (its tier's N, turns) when it
+  // plays here; the old bot's search depth otherwise (no Web Worker available).
+  window.ruThinkText=function(w,legacyDepth){ var k=window.ru14KeyFor&&window.ru14KeyFor(w), t=k&&window.RUAI&&RUAI.tiers&&RUAI.tiers.TIERS[k];
+    if(t&&window.RUBots&&RUBots.available()) return 'looks '+t.N+' turn'+(t.N===1?'':'s')+' ahead'; return 'search depth '+legacyDepth; };
+  window.ruLogSub=function(){ try{ var d=window.ruEffectiveDepth?window.ruEffectiveDepth().base:0; var dz=window.ruDeltaSizeForLevel?window.ruDeltaSizeForLevel():0; log('AI Level: '+window.RU_AI_LEVEL_KEY+' '+window.RU_AI_LEVEL_NUM+' \u2014 '+window.ruThinkText('ai',d)+', \u0394 Deck '+dz+' card'+(dz===1?'':'s')+'.','info'); }catch(e){} };
 
   // Haste is built around opponent-turn timing. The old menu gate only allowed skills on the player's own turn.
   // Expand Haste timing so startSkill can legally run from the opponent-turn windows below.
@@ -14535,7 +14539,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     let opts='';for(let i=1;i<=max;i++)opts+='<option value="'+i+'" '+(i===cur?'selected':'')+'>'+i+'</option>';
     sel.innerHTML=opts;wrap.style.display='';
   };
-  window.ruLogSubA=function(){try{const d=window.ruEffectiveDepthFor?window.ruEffectiveDepthFor('player').base:0;log('AI A Level: '+window.RU_AI_LEVEL_KEY_A+' '+window.RU_AI_LEVEL_NUM_A+' — search depth '+d+'.','info');}catch(e){}};
+  window.ruLogSubA=function(){try{const d=window.ruEffectiveDepthFor?window.ruEffectiveDepthFor('player').base:0;log('AI A Level: '+window.RU_AI_LEVEL_KEY_A+' '+window.RU_AI_LEVEL_NUM_A+' — '+window.ruThinkText('player',d)+'.','info');}catch(e){}};
   // AI 2's own proficiency slot (the third seat in 1v1v1) -- 'ai2' reads this instead of the
   // unsuffixed global (which stays 'ai''s alone) or _A (which stays 'player''s alone, used only
   // when the human seat is bot-controlled in AI-vs-AI watch mode). Mirrors the _A block above.
@@ -14550,7 +14554,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     let opts='';for(let i=1;i<=max;i++)opts+='<option value="'+i+'" '+(i===cur?'selected':'')+'>'+i+'</option>';
     sel.innerHTML=opts;wrap.style.display='';
   };
-  window.ruLogSubB=function(){try{const d=window.ruEffectiveDepthFor?window.ruEffectiveDepthFor('ai2').base:0;log('AI 2 Level: '+window.RU_AI_LEVEL_KEY_B+' '+window.RU_AI_LEVEL_NUM_B+' — search depth '+d+'.','info');}catch(e){}};
+  window.ruLogSubB=function(){try{const d=window.ruEffectiveDepthFor?window.ruEffectiveDepthFor('ai2').base:0;log('AI 2 Level: '+window.RU_AI_LEVEL_KEY_B+' '+window.RU_AI_LEVEL_NUM_B+' — '+window.ruThinkText('ai2',d)+'.','info');}catch(e){}};
   function classOptions(selected){
     return Object.keys(CM).map(k=>'<option value="'+k+'" '+(k===selected?'selected':'')+'>'+CM[k].icon+' '+CM[k].name+'</option>').join('');
   }
