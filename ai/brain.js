@@ -202,14 +202,6 @@ var BRAIN_CODE = `
     });
     lastPublic = publicIds();
   }
-  // What seat w can SEE (public zones, its own hand, counts of hidden things, the pending decision).
-  function visSig(w){
-    var me = G[w];
-    function ids(a){ return (a||[]).map(function(c){ return c && (c.id + ':' + npOf(c) + ':' + rpOf(c)); }).join(','); }
-    function pub(p){ return [p.mp, p.cas, ids([p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank]), ids(p.discard), ids(p.deadzone), (p.bank||[]).length, (p.deck||[]).length, (p.hand||[]).length, (p.delta||[]).length].join('|'); }
-    var d = __M.decider();
-    return [G.turn, G.phase, G.mode, G._turnNo || 0, pub(me), ids(me.hand)].concat(opps(w).map(function(o){ return o + ':' + pub(G[o]); })).concat([d.kind, d.seat || '', d.n || 0]).join('#');
-  }
 
   // ── engine stepping ──
   function settle(){ if (window.__settle) window.__settle(); }
@@ -233,10 +225,6 @@ var BRAIN_CODE = `
   // A prompt situation seen before in this flow means an answer led round in a circle (choose a skill → cancel → the
   // same window again): answers that lead back to a seen situation are skipped, so the flow always moves on.
   function promptKey(){ var d = dec(); return d.kind + '|' + (d.seat || '') + '|' + (d.title || '') + '|' + (d.labels || []).join('/') + '|' + ruStateSig(); }
-  // What a prompt looks like to the seat answering it (kind, title, buttons / picker size). A planned answer carries
-  // the prompt it was chosen for (pk) and is only ever given to that same prompt.
-  function promptSig(d){ d = d || dec(); return d.kind === 'modal' ? 'm|' + (d.title || '') + '|' + (d.labels || []).join('/') : d.kind === 'pick' ? 'p|' + (d.title || '') + '|' + (d.n || 0) + '|' + (d.min || 0) + '-' + (d.max || 0) : ''; }
-  function tagPrompt(a, d){ if (a && (a.t === 'modal' || a.t === 'pick')) a.pk = promptSig(d); return a; }
   var PASSY = /^(Pass|Skip|Decline|No|Close|Cancel|Keep|Continue|Done)/i;
   function finishFlow(w, rebuild, budget, cheap){
     var seq = [], seen = new Set(), atPrompt = true;      // atPrompt: the live position is rebuild + seq (no trial applied)
@@ -254,7 +242,7 @@ var BRAIN_CODE = `
         var pi = (d.labels || []).findIndex(function(l){ return PASSY.test(String(l).trim()); });
         if (pi >= 0) choice = { t: 'modal', i: pi, s: d.seat };
       }
-      if (choice) { seq.push(tagPrompt(choice, d)); apply(choice); continue; }
+      if (choice) { seq.push(choice); apply(choice); continue; }
       var best = null, bestV = 0, bestIdx = -1;
       if (bnow(budget) > budget.end) L = L.slice(0, Math.min(L.length, 2));
       for (var i = 0; i < L.length; i++) {
@@ -267,7 +255,7 @@ var BRAIN_CODE = `
       if (!best) { best = L[L.length - 1]; bestIdx = L.length - 1; }   // every answer circles: take the last (Pass / Cancel sit last)
       // the live position is already "seq + best" when the best was the last answer tried; otherwise rebuild it
       if (!(bestIdx === L.length - 1 && !atPrompt)) { back(); apply(best); }
-      seq.push(tagPrompt(best, d)); atPrompt = true;   // live = rebuild + seq again
+      seq.push(best); atPrompt = true;   // live = rebuild + seq again
     }
     return __S.quiet() ? seq : null;
   }
@@ -313,7 +301,7 @@ var BRAIN_CODE = `
   // moves within the phase (a few deep), and every position reached may leave the phase; the best positions that
   // left it start the next phase. Passes widen while time remains (the first pass is quick and always finishes
   // turns). Returns the best complete line per first move, sorted by v (desc):
-  // [{ first, steps:[{ inputs:[...], vis: visible sig after the step, opp: the other player answered in it }], v, end }]
+  // [{ first, steps:[{ inputs:[...] }], v, end }]
   function isLeave(c){ return c.t === 'adv' || c.t === 'end' || c.t === 'sdDone'; }
   // The ACTION a line starts with — what the bot commits to when it plays the line: the first input and the mover's
   // own inputs that complete it before anything else happens (attack mode → the attacker → the target). It ends at
@@ -388,9 +376,9 @@ var BRAIN_CODE = `
                 var sg = ruStateSig();
                 if (!G.gameOver && seen.has(sg)) return;         // reached before (a cycle, or a duplicate line)
                 seen.add(sg);
-                var step = { inputs: inputs, vis: visSig(mover), opp: inputs.some(function(x){ return x.s && x.s !== mover; }) };
+                var step = { inputs: inputs };
                 var act = node.action || actionOf(inputs, mover);
-                var child = { snap: null, rec: rec, steps: node.steps.concat([step]), firstKey: node.firstKey || key(act.map(bare)), first: node.first || inputs[0], action: act, v: evaluate(mover) };
+                var child = { snap: null, rec: rec, steps: node.steps.concat([step]), firstKey: node.firstKey || key(act), first: node.first || inputs[0], action: act, v: evaluate(mover) };
                 if (G.gameOver || isOver(d) || G.turn !== mover) record(child);
                 else if (G.phase !== ph0) leaving.push(child);
                 else next.push(child);
@@ -455,15 +443,15 @@ var BRAIN_CODE = `
         }
         if (!bestM) return null;
         rewind(materialize(bestM.rec));
-        steps.push({ inputs: bestM.inputs, vis: visSig(mover), opp: bestM.inputs.some(function(x){ return x.s && x.s !== mover; }) });
+        steps.push({ inputs: bestM.inputs });
         continue;
       }
       if (!__S.quiet() && !G.gameOver) {
         var cs = cur, aa = a;
         var ans = finishFlow(mover, function(){ rewind(cs); apply(aa); }, budget, true);
         if (!ans) return null;
-        steps.push({ inputs: [a].concat(ans), vis: visSig(mover), opp: true });
-      } else steps.push({ inputs: [a], vis: visSig(mover), opp: false });
+        steps.push({ inputs: [a].concat(ans) });
+      } else steps.push({ inputs: [a] });
     }
     return { steps: steps, v: evaluate(mover), end: __S.quiet() ? __S.snap() : null };
   }
@@ -491,35 +479,19 @@ var BRAIN_CODE = `
 
   // ── live bookkeeping and the decision ──
   var live = { quiet: null, path: [] }, cache = null;
-  // The next input of the kept plan, if the position is still the one the plan expected; otherwise drop the plan.
+  // The rest of the action the bot committed to (attack mode -> attacker -> target), while it still fits the position.
   function followPlan(w){
-    if (!cache || cache.seat !== w || cache.turnNo !== (G._turnNo || 0)) { cache = null; return null; }
-    var st = cache.steps[cache.si];
-    if (!st) { cache = null; return null; }
-    if (cache.ii < st.inputs.length) {
-      var nx = st.inputs[cache.ii];
-      if (nx.s && nx.s !== w) { cache = null; return null; }       // the plan expected the other player to answer here
-      if (!cardThere(w, nx)) { cache = null; return null; }        // planned in a world where a different card was there
-      if (!fits(nx, dec())) { cache = null; return null; }         // what opened (or didn't) differs from the plan's world
-      cache.ii++; return bare(nx);
-    }
-    // the step is complete: continue only if nobody else had a say and the bot sees what the plan expected
-    if (st.opp || st.vis == null || st.vis !== visSig(w)) { cache = null; return null; }
-    cache.si++; cache.ii = 0;
-    var ns = cache.steps[cache.si];
-    if (!ns || !ns.inputs.length || (ns.inputs[0].s && ns.inputs[0].s !== w)) { cache = null; return null; }
-    if (!cardThere(w, ns.inputs[0]) || !fits(ns.inputs[0], dec())) { cache = null; return null; }
-    cache.ii = 1; return bare(ns.inputs[0]);
+    if (!cache || cache.seat !== w || cache.turnNo !== (G._turnNo || 0) || !cache.rest.length) { cache = null; return null; }
+    var nx = cache.rest.shift();
+    if ((nx.s && nx.s !== w) || !cardThere(w, nx) || !fits(nx, dec())) { cache = null; return null; }
+    return nx;
   }
-  // Does a planned input fit the decision actually in front of the bot? A prompt answer only fits the same prompt.
+  // Does a planned input fit the decision actually in front of the bot? (Actions are the bot's own turn inputs.)
   function fits(a, d){
-    if (!a || !d) return false;
-    if (a.t === 'modal' || a.t === 'pick') return d.kind === (a.t === 'modal' ? 'modal' : 'pick') && !!a.pk && a.pk === promptSig(d);
-    if (d.kind !== 'turn') return false;
+    if (!a || !d || d.kind !== 'turn') return false;
     if (a.t === 'sd' || a.t === 'sdDone') return d.mode === 'switchdraw';
     return true;
   }
-  function bare(a){ if (!a || a.pk == null) return a; var c = {}; for (var k in a) if (k !== 'pk') c[k] = a[k]; return c; }
   // Does the card an input names actually exist on the mover's side right now?
   function cardThere(w, a){
     if (!a || !a.id || a.t === 'areaFx') return true;
@@ -625,7 +597,7 @@ var BRAIN_CODE = `
             if (dc && keep.indexOf(dc) < 0) keep.push(dc);
             C0 = keep; mkWorld();
           }
-          S = C0.map(function(c){ return { kk: key(c), act: [c], line: { first: c, steps: [{ inputs: [c], vis: null, opp: true }] } }; });
+          S = C0.map(function(c){ return { kk: key(c), act: [c], line: { first: c, steps: [{ inputs: [c] }] } }; });
         }
         if (!S.length) break;
         // one action worth considering: nothing to compare it with
@@ -671,8 +643,8 @@ var BRAIN_CODE = `
     // is thought about again when it comes (the rest of this line was the best play in ONE imagined world, chosen
     // knowing that world's hidden cards: following it would be playing on a guess as if it were known).
     var act = line.action || [line.first];
-    cache = { seat: w, turnNo: G._turnNo || 0, steps: [{ inputs: act, vis: null, opp: true }], si: 0, ii: 1 };
-    return { move: bare(line.first), value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow,
+    cache = { seat: w, turnNo: G._turnNo || 0, rest: act.slice(1) };
+    return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow,
       ranked: opts.explain ? explainRanked(agg) : undefined };
   }
   // The actions to compare, from a searched turn: the best few (by the value of the best play after each), and the
@@ -724,7 +696,7 @@ var BRAIN_CODE = `
     var r2 = function(x){ return Math.round(x * 100) / 100; }, out = [];
     agg.forEach(function(a){
       var m = a.sum / a.n, sd = Math.sqrt(Math.max(0, a.sq / a.n - m * m));
-      out.push({ first: bare(a.line.first), m: r2(m), se: r2(sd / Math.sqrt(a.n)), n: a.n,
+      out.push({ first: a.line.first, m: r2(m), se: r2(sd / Math.sqrt(a.n)), n: a.n,
         line: a.line.steps.map(function(st){ return st.inputs.map(function(i){ return i.t + (i.id ? ':' + i.id : '') + (i.z ? ':' + (i.o || '') + '/' + i.z : '') + (i.i != null ? ':' + i.i : ''); }).join('+'); }).join(' , ') });
     });
     out.sort(function(x, y){ return y.m - x.m; });
@@ -732,12 +704,7 @@ var BRAIN_CODE = `
   }
 
   window.__B = { features: features, terms: terms, evaluate: evaluate, plan: plan, determinize: determinize, noteApplied: noteApplied,
-    visSig: visSig, setWeights: function(x){ W = x; }, resetPlan: function(){ cache = null; }, live: live,
-    // debugging: one turn search from the live position (no worlds), summarised
-    _ts: function(w, cfgx, ms){ var t0 = NOW(); var b = { evals: 0, max: 1e9, end: NOW() + (ms || 8000), trace: [], t0: t0 }; var root = __S.snap(); CUR = b;
-      var out = turnSearch(w, root, cfgx || { width: 2, maxDepth: 18 }, b); rewind(root); CUR = null;
-      return { lines: out.map(function(l){ return { first: l.first, v: Math.round(l.v * 100) / 100, moves: l.steps.map(function(st){ return st.inputs.map(function(i){ return i.t + (i.z ? ':' + i.o + '/' + i.z : '') + (i.slot ? ':' + i.slot : ''); }).join('+'); }).join(' , '), end: !!l.end }; }), evals: b.evals, ms: NOW() - t0, trace: b.trace }; },
-    _finishTurnDebug: function(w){ var b = { evals: 0, max: 1e9, end: NOW() + 8000 }; var root = __S.snap(); var r = finishTurn(w, root, b); var res = r ? { v: r.v, steps: r.steps.map(function(s){ return s.inputs.map(function(i){ return i.t; }).join('+'); }), end: !!r.end } : null; var after = { turn: G.turn, phase: G.phase, quiet: __S.quiet(), dec: __M.decider() }; rewind(root); return { res: res, after: after }; } };
+    setWeights: function(x){ W = x; }, resetPlan: function(){ cache = null; }, live: live };
 })();
 `;
 
