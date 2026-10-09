@@ -226,6 +226,13 @@ var BRAIN_CODE = `
   // same window again): answers that lead back to a seen situation are skipped, so the flow always moves on.
   function promptKey(){ var d = dec(); return d.kind + '|' + (d.seat || '') + '|' + (d.title || '') + '|' + (d.labels || []).join('/') + '|' + ruStateSig(); }
   var PASSY = /^(Pass|Skip|Decline|No|Close|Cancel|Keep|Continue|Done)/i;
+  // Is input a a way of declining / moving on (Done, advance, end; a prompt's Pass / Skip / Cancel...; an empty pick)?
+  function declines(a, d){
+    if (!a) return false;
+    if (a.t === 'sdDone' || a.t === 'adv' || a.t === 'end') return true;
+    if (a.t === 'pick') return !(a.ix || []).length;
+    return a.t === 'modal' && !!d && PASSY.test(String((d.labels || [])[a.i] || '').trim());
+  }
   function finishFlow(w, rebuild, budget, cheap){
     var seq = [], seen = new Set(), atPrompt = true;      // atPrompt: the live position is rebuild + seq (no trial applied)
     cheap = cheap || budget.cheap;
@@ -399,7 +406,12 @@ var BRAIN_CODE = `
     rest.forEach(function(n, idx){
       if (budget.evals >= budget.max || (budget.hard && NOW() > budget.hard) || (idx >= 2 && bnow(budget) > budget.end + (budget.fixed ? 30 : 50))) return;
       var fin = finishTurn(mover, n.snap || materialize(n.rec), budget);
-      if (fin) { var o = out.get(n.firstKey); if (!o || fin.v > o.v) out.set(n.firstKey, { first: n.first, fk: n.firstKey, action: n.action, steps: n.steps.concat(fin.steps), v: fin.v, rec: null, end: fin.end, done: true }); }
+      if (!fin) return;
+      var steps = n.steps.concat(fin.steps);
+      if (!steps.length || !steps[0].inputs.length) return;              // (nothing was played: no line)
+      // the root itself (time ran out before it was searched): the line's first action is the one finishing played
+      var first = n.first || steps[0].inputs[0], action = n.action || actionOf(steps[0].inputs, mover), fk = n.firstKey || key(action);
+      var o = out.get(fk); if (!o || fin.v > o.v) out.set(fk, { first: first, fk: fk, action: action, steps: steps, v: fin.v, rec: null, end: fin.end, done: true });
     });
   }
   function turnSearch(mover, root, cfg, budget){
@@ -521,9 +533,17 @@ var BRAIN_CODE = `
     NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
     // explain (debugging): think this decision afresh — not by the plan being followed — and keep that plan
     var kept = cache; if (opts.explain) cache = null;
-    try { return planWith(w, opts, N, cfg, budget, t0); } finally { CUR = null; NOISE = 0; NR = null; if (opts.explain) cache = kept; }
+    if (__S.quiet()) answered = {};                     // a chain of prompts ends at a quiet position
+    var sit = __S.quiet() ? null : promptKey(), r;
+    try { r = planWith(w, opts, N, cfg, budget, t0, sit); } finally { CUR = null; NOISE = 0; NR = null; if (opts.explain) cache = kept; }
+    if (sit && r && r.move && !opts.explain) (answered[sit] = answered[sit] || {})[key(r.move)] = 1;
+    return r;
   }
-  function planWith(w, opts, N, cfg, budget, t0){
+  // In a chain of prompts, every prompt situation (the prompt and the exact game state) with the answers given to it: an
+  // answer that led back to the very same situation went round in a circle (use a skill -> cancel it -> the same window)
+  // and is not given again — the same rule finishFlow keeps in the bot's own simulations, kept in live play.
+  var answered = {};
+  function planWith(w, opts, N, cfg, budget, t0, sit){
 
     // 1) follow the current plan while what it expected is what the bot sees
     var follow = followPlan(w); if (follow) return { move: follow, why: 'plan', evals: 0 };
@@ -584,16 +604,21 @@ var BRAIN_CODE = `
         } else {
           // a prompt: the actions are its answers — with many, a quick look at each in this world (the answer, what
           // it opens finished) keeps the best few, and the way to decline when there is one
-          var C0 = __M.candidates(w), nc = opts.cands || opts.topK || 6;
+          var C0 = __M.candidates(w), nc = opts.cands || opts.topK || 6, gone = sit && answered[sit];
+          if (gone && C0.some(function(c){ return !gone[key(c)]; })) C0 = C0.filter(function(c){ return !gone[key(c)]; });
+          // an answer that leaves the prompt and the game exactly as they were is not a choice (answering it again and
+          // again would go nowhere)
+          var k0 = promptKey(), real = C0.filter(function(c, i){ if (i > 0) mkWorld(); apply(c); return G.gameOver || __S.quiet() || promptKey() !== k0; });
+          mkWorld(); if (real.length) C0 = real;
           if (C0.length > nc) {
-            var dq = dec(), declines = function(c){ return c.t === 'pick' ? !(c.ix || []).length : PASSY.test(String((dq.labels || [])[c.i] || '').trim()); };
+            var dq = dec();
             var quick = C0.map(function(c, i){
               if (i > 0) mkWorld(); apply(c);
               var ok = __S.quiet() || G.gameOver || finishFlow(w, function(){ mkWorld(); apply(c); }, budget, true);
               return { c: c, v: ok ? evaluate(w) : -1e9 };
             });
             quick.sort(function(a, b){ return b.v - a.v; });
-            var keep = quick.slice(0, nc).map(function(q){ return q.c; }), dc = C0.filter(declines)[0];
+            var keep = quick.slice(0, nc).map(function(q){ return q.c; }), dc = C0.filter(function(c){ return declines(c, dq); })[0];
             if (dc && keep.indexOf(dc) < 0) keep.push(dc);
             C0 = keep; mkWorld();
           }
@@ -624,20 +649,10 @@ var BRAIN_CODE = `
     // restore the real position
     rewind(anchor); for (var p2 = 0; p2 < path.length; p2++) apply(path[p2]);
     if (!agg.size) return { move: fallback(w), why: 'no lines' };
-    var rkd = ranked(agg), top1 = rkd[0], pass = null;
-    rkd.forEach(function(e){ var t = e.a.line.first && e.a.line.first.t; if (!pass && (t === 'sdDone' || t === 'adv' || t === 'end')) pass = e; });
+    var rkd = ranked(agg), top1 = rkd[0], pass = null, dReal = dec();
+    rkd.forEach(function(e){ if (!pass && declines(e.a.line.first, dReal)) pass = e; });
     if (pass && pass !== top1) { var bp = paired(top1.a, pass.a); if (bp.m <= bp.se) top1 = pass; }   // not clearly better than holding
     var best = { m: top1.m, line: top1.a.line };
-    // Skill: a lower tier does not always play its best line. 'temp' (in evaluation units) makes worse lines
-    // proportionally less likely — near-equal lines get confused, clearly worse ones rarely. Drawn from the bot's own
-    // stream (opts.seed), never the game's.
-    if (opts.temp > 0 && agg.size > 1) {
-      var opts2 = []; agg.forEach(function(a, kk){ opts2.push({ m: a.sum / a.n, line: a.line }); });
-      var top = Math.max.apply(null, opts2.map(function(o){ return o.m; }));
-      var ws = opts2.map(function(o){ return Math.exp(Math.max(-50, (o.m - top) / opts.temp)); }), tot = ws.reduce(function(x, y){ return x + y; }, 0);
-      var rr = mb(((opts.seed >>> 0) || 1) * 2654435761 >>> 0)() * tot;
-      for (var q = 0; q < opts2.length; q++) { rr -= ws[q]; if (rr <= 0) { if (opts2[q].m < best.m) best = { m: opts2[q].m, line: opts2[q].line }; break; } }
-    }
     var line = best.line;
     // The bot commits to the action it compared across the worlds — and only that: every later decision of the turn
     // is thought about again when it comes (the rest of this line was the best play in ONE imagined world, chosen
@@ -655,7 +670,7 @@ var BRAIN_CODE = `
     var again = MODE_ENTRY[mode];
     if (again) lines = lines.filter(function(L){ var s2 = L.steps[1]; return !(L.first && L.first.t === 'cancel' && s2 && s2.inputs[0] && s2.inputs[0].t === again); });
     var out = [], pass = null;
-    lines.forEach(function(L){ var t = L.first && L.first.t; if (!pass && (t === 'sdDone' || t === 'adv' || t === 'end')) pass = L; });
+    lines.forEach(function(L){ if (!pass && declines(L.first)) pass = L; });
     for (var i = 0; i < lines.length && out.length < n; i++) out.push(lines[i]);
     if (pass && out.indexOf(pass) < 0) out.push(pass);
     return out.map(function(L){ return { kk: L.fk || key(L.first), act: L.action || [L.first], line: L }; });
