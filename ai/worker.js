@@ -11,11 +11,13 @@
  *
  * Messages from the page:
  *   { type:'init', base }                       load the game from the page's folder (base URL)
- *   { type:'think', id, seat, opts, anchor, path, sig }
+ *   { type:'think', id, seat, opts, anchor, path, sig }   (opts.explain: also list every candidate weighed)
+ *   { type:'state', id, anchor, path }                    debugging: the position this worker rebuilds, as plain data
  * Replies:
  *   { type:'ready', ms }  { type:'error', msg }
- *   { type:'move', id, move, why, value, evals, ms, sig }   (sig: the worker's fingerprint before the move — it
- *                                                           must equal the page's, or the two games differ)
+ *   { type:'move', id, move, why, value, evals, ms, sig, moveSig, ranked, considered }   (sig: the worker's fingerprint
+ *       before the move — it must equal the page's, or the two games differ; moveSig: after the pre-input checkpoint)
+ *   { type:'state', id, sig, G, quiet, decider }
  * The bot reads only what its seat could know: the hidden cards in the copy it gets are re-dealt in every
  * world it imagines (brain.js determinize), never looked at. */
 
@@ -112,7 +114,6 @@ self.onmessage = function (ev) {
     load(m.base || '../').then(function () { try { think(m); } catch (e) { fail('think: ' + (e && e.stack || e)); } });
     return;
   }
-  if (m.type === 'reset') { if (realm) self.__B.resetPlan(); return; }
   // debugging: the position this worker rebuilds from an anchor + path, as plain data (to diff with the page's)
   if (m.type === 'state') {
     load(m.base || '../').then(function () { position(m.anchor, m.path || []); realPost({ type: 'state', id: m.id, sig: self.ruStateSig(), G: JSON.parse((0, eval)('JSON.stringify(G)')), quiet: self.__S.quiet(), decider: self.__M.decider() }); });

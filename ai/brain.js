@@ -415,7 +415,7 @@ var BRAIN_CODE = `
     });
   }
   function turnSearch(mover, root, cfg, budget){
-    var out = new Map(), tMain = bnow(budget), tReal = NOW();
+    var out = new Map(), tMain = bnow(budget);
     var passes = cfg.greedy ? [[1, 2]] : [[2, 2], [4, 3], [Math.max(6, (cfg.width || 2) * 3), 4], [Math.max(10, (cfg.width || 2) * 5), 5]];
     for (var k = 0; k < passes.length; k++) {
       if (k > 0 && bover(budget)) break;
@@ -425,7 +425,6 @@ var BRAIN_CODE = `
       searchPass(mover, root, passes[k][0], passes[k][1], budget, out, !!cfg.quick);
       budget.end = saved;
     }
-    if (budget.tm) { budget.tm.main += NOW() - tReal; budget.tm.calls++; }
     var lines = [];
     out.forEach(function(l){ if (!l.end) l.end = l.rec ? materialize(l.rec) : null; lines.push(l); });
     lines.sort(function(a, b){ return b.v - a.v; });
@@ -526,8 +525,8 @@ var BRAIN_CODE = `
     var cfg = { own: { width: opts.width || 3, maxDepth: opts.maxDepth || 18 }, future: { width: opts.futureWidth || 1, maxDepth: opts.maxDepth || 18, greedy: true, quick: opts.quickFuture !== false } };
     var fixed = !!opts.fixed;
     var budget = fixed
-      ? { fixed: true, evals: 0, end: opts.evals || 3000, max: 3 * (opts.evals || 3000) + 2000, hard: t0 + (opts.safetyMs || 60000), tm: { main: 0, fin: 0, calls: 0, groups: 0, worlds: 0, flow: 0 } }
-      : { evals: 0, max: opts.maxEvals || 20000, end: t0 + (opts.ms || 20000), tm: { main: 0, fin: 0, calls: 0, groups: 0, worlds: 0, flow: 0 } };
+      ? { fixed: true, evals: 0, end: opts.evals || 3000, max: 3 * (opts.evals || 3000) + 2000, hard: t0 + (opts.safetyMs || 60000) }
+      : { evals: 0, max: opts.maxEvals || 20000, end: t0 + (opts.ms || 20000) };
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
     CUR = budget;
     NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
@@ -659,7 +658,7 @@ var BRAIN_CODE = `
     // knowing that world's hidden cards: following it would be playing on a guess as if it were known).
     var act = line.action || [line.first];
     cache = { seat: w, turnNo: G._turnNo || 0, rest: act.slice(1) };
-    return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search', tm: budget.tm, quietNow: quietNow,
+    return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search',
       ranked: opts.explain ? explainRanked(agg) : undefined };
   }
   // The actions to compare, from a searched turn: the best few (by the value of the best play after each), and the
@@ -719,7 +718,7 @@ var BRAIN_CODE = `
   }
 
   window.__B = { features: features, terms: terms, evaluate: evaluate, plan: plan, determinize: determinize, noteApplied: noteApplied,
-    setWeights: function(x){ W = x; }, resetPlan: function(){ cache = null; }, live: live };
+    setWeights: function(x){ W = x; } };
 })();
 `;
 
