@@ -226,10 +226,11 @@ var BRAIN_CODE = `
   // same window again): answers that lead back to a seen situation are skipped, so the flow always moves on.
   function promptKey(){ var d = dec(); return d.kind + '|' + (d.seat || '') + '|' + (d.title || '') + '|' + (d.labels || []).join('/') + '|' + ruStateSig(); }
   var PASSY = /^(Pass|Skip|Decline|No|Close|Cancel|Keep|Continue|Done)/i;
-  // Is input a a way of declining / moving on (Done, advance, end; a prompt's Pass / Skip / Cancel...; an empty pick)?
+  // Is input a a way of declining / moving on (Done, advance, end; leaving a board mode — in attack mode, stopping is
+  // 'cancel'; a prompt's Pass / Skip / Cancel...; an empty pick)?
   function declines(a, d){
     if (!a) return false;
-    if (a.t === 'sdDone' || a.t === 'adv' || a.t === 'end') return true;
+    if (a.t === 'sdDone' || a.t === 'adv' || a.t === 'end' || a.t === 'cancel') return true;
     if (a.t === 'pick') return !(a.ix || []).length;
     return a.t === 'modal' && !!d && PASSY.test(String((d.labels || [])[a.i] || '').trim());
   }
