@@ -35,6 +35,7 @@ function play(job, hooks) {
   const wcache = {};
   const t0 = Date.now(), stat = { A: { n: 0, ms: 0 }, B: { n: 0, ms: 0 } };
   let steps = 0, last = '', stale = 0, stop = null;     // stop: why an unfinished game ended
+  const seen = new Map();                                // how often each exact position came back (a cycle)
   while (steps < 6000 && Date.now() - t0 < job.maxMs) {
     const d = eng.run('__M.decider()');
     if (d.kind === 'over' || d.kind === 'none') break;
@@ -68,6 +69,8 @@ function play(job, hooks) {
     if (hooks.onInput) hooks.onInput({ step: steps, seat: d.seat, who, turn: before.turn, phase: before.phase, prompt: d.kind === 'modal' || d.kind === 'pick' ? d : null, move, plan: r, log: eng.run('__logRing.slice()') }, eng);
     steps++;
     const sg = eng.run('ruStateSig()'); if (sg === last) { if (++stale > 200) { stop = 'stuck: 200 inputs changed nothing (' + JSON.stringify(eng.run('__M.decider()')).slice(0, 160) + ')'; break; } } else { stale = 0; last = sg; }
+    const nSeen = (seen.get(sg) || 0) + 1; seen.set(sg, nSeen);
+    if (nSeen > 40) { stop = 'cycle: the same position came back 40 times (' + JSON.stringify(eng.run('__M.decider()')).slice(0, 160) + ')'; break; }
   }
   if (!stop && steps >= 6000) stop = '6000 inputs'; else if (!stop && Date.now() - t0 >= job.maxMs) stop = 'time limit';
   const w = eng.run('G.__winner || null'), over = eng.run('!!G.gameOver');

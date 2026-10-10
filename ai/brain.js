@@ -533,16 +533,18 @@ var BRAIN_CODE = `
     NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
     // explain (debugging): think this decision afresh — not by the plan being followed — and keep that plan
     var kept = cache; if (opts.explain) cache = null;
-    if (__S.quiet()) answered = {};                     // a chain of prompts ends at a quiet position
-    var sit = __S.quiet() ? null : promptKey(), r;
+    if ((G._turnNo || 0) !== answeredTurn) { answered = {}; answeredTurn = G._turnNo || 0; }
+    var sit = situation(w), r;
     try { r = planWith(w, opts, N, cfg, budget, t0, sit); } finally { CUR = null; NOISE = 0; NR = null; if (opts.explain) cache = kept; }
-    if (sit && r && r.move && !opts.explain) (answered[sit] = answered[sit] || {})[key(r.move)] = 1;
+    if (r && r.move && r.why !== 'plan' && !opts.explain) (answered[sit] = answered[sit] || {})[r.kk || key(r.move)] = 1;
     return r;
   }
-  // In a chain of prompts, every prompt situation (the prompt and the exact game state) with the answers given to it: an
-  // answer that led back to the very same situation went round in a circle (use a skill -> cancel it -> the same window)
-  // and is not given again — the same rule finishFlow keeps in the bot's own simulations, kept in live play.
-  var answered = {};
+  // This turn's situations (the exact game state and the decision in front of the bot) with the action or answer the bot
+  // chose in each: being back in the very same situation means that choice went round in a circle (start a skill ->
+  // cancel it -> the same position; use a skill -> cancel -> the same window), so it is not chosen again — the same rule
+  // the bot's own simulations keep (a position reached before is not searched again), kept in live play.
+  var answered = {}, answeredTurn = -1;
+  function situation(w){ return __S.quiet() ? 'q|' + w + '|' + G.phase + '|' + (G.mode || '') + '|' + ruStateSig() : promptKey(); }
   function planWith(w, opts, N, cfg, budget, t0, sit){
 
     // 1) follow the current plan while what it expected is what the bot sees
@@ -563,6 +565,15 @@ var BRAIN_CODE = `
     var quietNow = __S.quiet();
     if (!quietNow && !live.quiet) return { move: fallback(w), why: 'no anchor' };
     var anchor = quietNow ? __S.snap() : live.quiet, path = quietNow ? [] : live.path.slice();
+    // At a prompt: an answer that brings the game back to a situation already left this turn (cancel the skill just
+    // started: the position, every card, exactly as before) undoes the bot's own decision there with nothing new to go
+    // on — not a choice while others remain. (Tried on the real position, only to recognise that same situation.)
+    var undo = {};
+    if (!quietNow) {
+      var CR = __M.candidates(w);
+      if (CR.length > 1) CR.forEach(function(c){ rewind(anchor); for (var q = 0; q < path.length; q++) apply(path[q]); apply(c); if (!G.gameOver && __S.quiet() && answered[situation(w)]) undo[key(c)] = 1; });
+      rewind(anchor); for (var q2 = 0; q2 < path.length; q2++) apply(path[q2]);
+    }
     var known = seenInHand;
     // How the bot thinks about a decision:
     //  1. FIND the actions worth comparing: the whole turn searched in one imagined world — every action the bot could
@@ -593,7 +604,7 @@ var BRAIN_CODE = `
       if (!S) {
         if (__S.quiet()) {
           budget.end = tStart + share;
-          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6, dd.mode);
+          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6, dd.mode, answered[sit]);
           // this world scores them with the search's own lines (the best play after each, found by the larger search)
           budget.end = wEnd; vals = [];
           for (var i = 0; i < S.length; i++) {
@@ -606,6 +617,7 @@ var BRAIN_CODE = `
           // it opens finished) keeps the best few, and the way to decline when there is one
           var C0 = __M.candidates(w), nc = opts.cands || opts.topK || 6, gone = sit && answered[sit];
           if (gone && C0.some(function(c){ return !gone[key(c)]; })) C0 = C0.filter(function(c){ return !gone[key(c)]; });
+          if (C0.some(function(c){ return !undo[key(c)]; })) C0 = C0.filter(function(c){ return !undo[key(c)]; });
           // an answer that leaves the prompt and the game exactly as they were is not a choice (answering it again and
           // again would go nowhere)
           var k0 = promptKey(), real = C0.filter(function(c, i){ if (i > 0) mkWorld(); apply(c); return G.gameOver || __S.quiet() || promptKey() !== k0; });
@@ -659,13 +671,15 @@ var BRAIN_CODE = `
     // knowing that world's hidden cards: following it would be playing on a guess as if it were known).
     var act = line.action || [line.first];
     cache = { seat: w, turnNo: G._turnNo || 0, rest: act.slice(1) };
-    return { move: line.first, value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search',
+    return { move: line.first, kk: top1.kk, value: best.m, considered: agg.size, evals: budget.evals, ms: NOW() - t0, why: 'search',
       ranked: opts.explain ? explainRanked(agg) : undefined };
   }
   // The actions to compare, from a searched turn: the best few (by the value of the best play after each), and the
   // best way to pass.
   var MODE_ENTRY = { atk: 'atkMode', standdown: 'sdMode', relievewait: 'rvMode' };
-  function candidatesFrom(lines, n, mode){
+  function candidatesFrom(lines, n, mode, gone){
+    // (an action already taken from this very situation this turn led back here: not again — while others remain)
+    if (gone) { var fresh = lines.filter(function(L){ return !gone[L.fk || key(L.first)]; }); if (fresh.length) lines = fresh; }
     // (in a board mode, leaving it only to enter it again is the same plan as acting in it now — not a choice)
     var again = MODE_ENTRY[mode];
     if (again) lines = lines.filter(function(L){ var s2 = L.steps[1]; return !(L.first && L.first.t === 'cancel' && s2 && s2.inputs[0] && s2.inputs[0].t === again); });
