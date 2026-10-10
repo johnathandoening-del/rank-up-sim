@@ -10039,7 +10039,14 @@ ADEFS['Seven Heaven']={
       slots=slots.concat((p.hand||[]).filter(c=>c&&c.type==='numeral').map(c=>({zone:'hand',card:c,fromHand:true})));
     }
     const out=[];
-    p.evolutions.forEach((evo,ei)=>{combos(slots,3).forEach(combo=>{if(materialOK(evo,combo))out.push({evo,ei,combo});});});
+    p.evolutions.forEach((evo,ei)=>{
+      // Only Numerals that can be part of this Evolution's material (its value — or NP 0 for amalg-unknown-0) are
+      // combined: every combination of every slot grew with the cube of a big hand (Amalgamation Nation lets hand
+      // Numerals in) and made late games crawl. Same options, same order.
+      const z0=(evo.baseId||evo.id)==='amalg-unknown-0';
+      const fit=slots.filter(x=>x.card&&(x.card.numeral===evo.numeral||(z0&&(x.card.currentNP??x.card.numeral??0)===0)));
+      combos(fit,3).forEach(combo=>{if(materialOK(evo,combo))out.push({evo,ei,combo});});
+    });
     return out;
   }
   window.findAmalgamationOptionsAI1=findAmalgamationOptions;
