@@ -174,3 +174,15 @@ does need touching:
   no empty moves when the search ran out before its root, no do-nothing prompt answers, no prompt circles (use a skill
   -> cancel -> the same window), declining wins ties at prompts too. Cleanup: plan following reduced to the rest of the
   committed action; unused machinery removed.
+- **2026-10-09/10** — Finishing pass (baseline for the coming classes, mode and evolution). Bot: the circle rule now
+  spans the whole turn (start Restorative 3's skill -> cancel -> the same position, for ever) and an answer that just
+  undoes the bot's own decision is not a choice; noise is a misjudgment of the positions judged while LOOKING for
+  options plus one per option when CHOOSING (noise on every evaluation averaged away over strong tiers' worlds — D3 vs
+  D2 46%); cancel counts as passing in attack mode. Engine: Amalgamation options combined every 3-subset of every slot
+  (5-12 ms a call with big hands; bot decisions took minutes late in games) — now only matching Numerals; the
+  must-attack rule counted Advantageous cards DROPPED AS A COST (Wildfire) as used, forcing an attack that the bot's
+  search could not even see — it now reads the use record; the state fingerprint now includes attacks left, used
+  skills, freezes and each side's attack record (a 0-damage attack changed the game but not the fingerprint). Tools:
+  one class list read from the engine (CM) — new classes are tested automatically; the arena stops a cycling game.
+  Tier ordering (2-3 tiers apart, 24 games): 67% / 65% / 63% / 79% / 88% / 79%, higher tier always ahead. Full suite
+  green: parity, leak test, smoke/determinism, move generation, card integrity, page<->worker 1v1 / 1v1v1 / Royale.

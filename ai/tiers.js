@@ -1,10 +1,13 @@
 'use strict';
 /* The 14 bot tiers -> thinking settings for the bot's plan(). Strength comes ONLY from thinking — every tier gets the
  * same cards and the same luck:
- *   noise   how much the tier misjudges each position it weighs (evaluation units, sd of a Gaussian; 0 = sees it as it
- *           is). The dial that separates the tiers: measured on the paired planner, noise 0 beats noise 4 77%, 4 beats
- *           8 76%, 8 beats 14 79%, 14 beats 22 66%, 22 beats 35 63% ... 90 plays about like random moves. The schedule
- *           spaces the 14 tiers evenly in strength (logits of win odds) from about random to the best the bot plays.
+ *   noise   how much the tier misjudges (evaluation units, sd of a Gaussian; 0 = sees positions as they are): the
+ *           positions it judges while looking for its options, and each option it weighs (brain.js NOISE). Measured
+ *           (N 1, 1,200 effort): noise 0 beats 4 78%, 4 beats 8 72%, 8 beats 14 56%, 14 beats 22 60%; above ~22 it plays
+ *           about like random moves. The lower tiers also think less (effort, worlds, N), which separates them further.
+ *           Ordering check of the whole table (2-3 tiers apart, 24 games each): Basic > Inept 67%, Skilled 1 > Basic
+ *           65%, Talented 1 > Skilled 1 63%, D-Candidate 1 > Talented 1 79%, Distinguished 1 > D-Candidate 1 88%,
+ *           Distinguished 4 > Distinguished 1 79%.
  *   N       lookahead (turns played forward — the user's table, including the occasional deeper/shallower turn);
  *   worlds, maxWorlds  hidden-information worlds imagined (at least / at most); width  search width;
  *   evals   effort per decision, counted in positions (fixed: the same thought on every device; a slow one just takes
