@@ -82,6 +82,33 @@ Verified finally by playing as a human in the real UI.
 - `replay.js` — one arena game played again exactly (seed, classes, seats, bots): every input, why, and its log; the
   bot's weighed candidates for chosen turns. In the browser: `RUBots.history()` / `RUBots.explain(k)`.
 
+## Adding new content (classes, evolutions, features, modes)
+
+The bots play the real rules through the same inputs a human makes, so most new content needs no bot code. What
+does need touching:
+
+- **New class** — its `CM` entry (`data.js`, or added in `index.html` like Fission/Extension) is the registry: every
+  headless tool reads the class list from it (`tools/headless/classes.js`), so tests and arena deals include the
+  new class automatically. Add a `CLASS_STATS` entry (the bots' Evolution-deck choice uses it; defaults otherwise).
+- **New card effects** — offer choices as prompts the owning seat answers (`openModal` / the picker, owned by that
+  seat), never "if a bot, pick X": in solo games every bot seat is input-driven and decides through those prompts
+  (`ruBotControlledSeat` shortcuts only serve the old fallback bot). A prompt button must do something (a button
+  that changes nothing is a dead end for bots and players alike); unavailable options belong in the text.
+- **New player action** (a new button / click that changes the game) — wrap it in the input layer (`wrap(...)` near
+  `function dispatch` in `index.html`) with a `dispatch` case, give it its phase window in `OWN_WINDOWS` if it is an
+  own-turn action the UI only offers in some phases, and generate it in `ai/moves.js` `candidates()` so bots can use
+  it. `tools/headless/movestest.js` and `hostsim.js` check that the bots' moves apply identically page vs worker.
+- **New evolution type** (not an Amalgamation) — its Rank-Up needs its own input + `moves.js` candidate (as
+  `amalgRank` is), and the bots' Δ-deck choice (`randomValidDeltaDeckFor`, which draws from
+  `AMALGAMATION_LIBRARY` by class alignment) has to include it. The evaluation's `delta` / `deltaNP` features count
+  any card in the Δ Zone already.
+- **New game mode** — add it to `ruSoloBotConfig`'s mode list (seats, tiers, turn order); 3-4 seat modes use the
+  `order` / `classes` / `mode` match options (see `hostsim.js` `MODE=`).
+- **After any change** run: `node tools/headless/dupcheck.js 25` (no card in two places, no empty Rank Zone),
+  `parity.js 3 1200` (no-paint mode plays the same game), `hostsim.js 2 basic-1 skilled-1` and with `MODE=1v1v1` /
+  `MODE=royale4` (page and bot worker stay in step), `movestest.js`; for an engine refactor that must not change
+  any game, `reftrace.js record` before and `check` after. Replay any odd arena game with `replay.js`.
+
 ## Progress log
 
 - **2026-10-03** — Diagnosis of the old bot (text-regex scoring, combat-only toy search, mistake dice, bots
