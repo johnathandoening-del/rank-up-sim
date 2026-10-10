@@ -139,16 +139,13 @@ var BRAIN_CODE = `
   // Value of the position for w: in a 1v1, w against its opponent; with more seats, the mean of w against each other
   // seat (an eliminated opponent is a pair already won), so every opponent's strength counts. w eliminated = lost.
   var PAIR_WON = 400;
-  // Judgment noise (a weaker tier's skill): every position the bot judges is misjudged by a random amount (sd NOISE,
-  // evaluation units), drawn from the bot's own stream — in its search and in its prompt answers alike. Wins and
-  // losses are never misjudged.
+  // Judgment noise (a weaker tier's skill): at every decision, the bot misjudges what each option it weighs is worth by
+  // a random amount (sd NOISE, evaluation units), drawn from its own stream — one misjudgment per option, after all its
+  // worlds are weighed (so it means the same whatever the tier's worlds and effort: noise added to every position
+  // judged would average away over a strong tier's many worlds). A won or lost game is never misjudged.
   var NOISE = 0, NR = null;
   function gauss(){ var u = 0, v = 0; while (!u) u = NR(); v = NR(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
   function evaluate(w){
-    var v = evaluate0(w);
-    return (NOISE && v > -1e5 && v < 1e5) ? v + NOISE * gauss() : v;
-  }
-  function evaluate0(w){
     if (G.gameOver) { var win = G.__winner; return win === w ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
     if (out(w)) return -1e6;
     var wt = (W && W.w) || W0, all = seats().filter(function(s){ return s !== w; }), sum = 0;
@@ -661,9 +658,13 @@ var BRAIN_CODE = `
     // restore the real position
     rewind(anchor); for (var p2 = 0; p2 < path.length; p2++) apply(path[p2]);
     if (!agg.size) return { move: fallback(w), why: 'no lines' };
-    var rkd = ranked(agg), top1 = rkd[0], pass = null, dReal = dec();
+    var rkd = ranked(agg), pass = null, dReal = dec();
+    // the tier's misjudgment of each option (see NOISE)
+    rkd.forEach(function(e){ e.nz = (NOISE && e.m > -1e5 && e.m < 1e5) ? NOISE * gauss() : 0; });
+    rkd.sort(function(x, y){ return (y.m + y.nz) - (x.m + x.nz); });
+    var top1 = rkd[0];
     rkd.forEach(function(e){ if (!pass && declines(e.a.line.first, dReal)) pass = e; });
-    if (pass && pass !== top1) { var bp = paired(top1.a, pass.a); if (bp.m <= bp.se) top1 = pass; }   // not clearly better than holding
+    if (pass && pass !== top1) { var bp = paired(top1.a, pass.a); if (bp.m + top1.nz - pass.nz <= bp.se) top1 = pass; }   // not clearly better than holding
     var best = { m: top1.m, line: top1.a.line };
     var line = best.line;
     // The bot commits to the action it compared across the worlds — and only that: every later decision of the turn
