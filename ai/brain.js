@@ -139,13 +139,22 @@ var BRAIN_CODE = `
   // Value of the position for w: in a 1v1, w against its opponent; with more seats, the mean of w against each other
   // seat (an eliminated opponent is a pair already won), so every opponent's strength counts. w eliminated = lost.
   var PAIR_WON = 400;
-  // Judgment noise (a weaker tier's skill): at every decision, the bot misjudges what each option it weighs is worth by
-  // a random amount (sd NOISE, evaluation units), drawn from its own stream — one misjudgment per option, after all its
-  // worlds are weighed (so it means the same whatever the tier's worlds and effort: noise added to every position
-  // judged would average away over a strong tier's many worlds). A won or lost game is never misjudged.
-  var NOISE = 0, NR = null;
+  // Judgment noise (a weaker tier's skill, sd NOISE in evaluation units, drawn from the bot's own stream). A weaker
+  // player overlooks good moves and misjudges the ones it considers:
+  //  - while it LOOKS for the moves worth considering (the one-world search of the turn, the quick look at a prompt's
+  //    many answers), every position it judges is misjudged;
+  //  - when it CHOOSES, each option it weighed is misjudged once, after all its worlds are weighed.
+  // Neither depends on how many worlds the tier imagines, so a noise value means the same at every tier (noise added
+  // to every position judged in every world would average away over a strong tier's many worlds). A won or lost game
+  // is never misjudged.
+  var NOISE = 0, NR = null, LOOKING = false;
   function gauss(){ var u = 0, v = 0; while (!u) u = NR(); v = NR(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
   function evaluate(w){
+    var v = worth(w);
+    return (LOOKING && NOISE && v > -1e5 && v < 1e5) ? v + NOISE * gauss() : v;
+  }
+  // What the position is worth to w, exactly (no misjudgment).
+  function worth(w){
     if (G.gameOver) { var win = G.__winner; return win === w ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
     if (out(w)) return -1e6;
     var wt = (W && W.w) || W0, all = seats().filter(function(s){ return s !== w; }), sum = 0;
@@ -532,7 +541,7 @@ var BRAIN_CODE = `
     var kept = cache; if (opts.explain) cache = null;
     if ((G._turnNo || 0) !== answeredTurn) { answered = {}; answeredTurn = G._turnNo || 0; }
     var sit = situation(w), r;
-    try { r = planWith(w, opts, N, cfg, budget, t0, sit); } finally { CUR = null; NOISE = 0; NR = null; if (opts.explain) cache = kept; }
+    try { r = planWith(w, opts, N, cfg, budget, t0, sit); } finally { CUR = null; NOISE = 0; NR = null; LOOKING = false; if (opts.explain) cache = kept; }
     if (r && r.move && r.why !== 'plan' && !opts.explain) (answered[sit] = answered[sit] || {})[r.kk || key(r.move)] = 1;
     return r;
   }
@@ -601,7 +610,9 @@ var BRAIN_CODE = `
       if (!S) {
         if (__S.quiet()) {
           budget.end = tStart + share;
+          LOOKING = true;
           S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6, dd.mode, answered[sit]);
+          LOOKING = false;
           // this world scores them with the search's own lines (the best play after each, found by the larger search)
           budget.end = wEnd; vals = [];
           for (var i = 0; i < S.length; i++) {
@@ -621,11 +632,13 @@ var BRAIN_CODE = `
           mkWorld(); if (real.length) C0 = real;
           if (C0.length > nc) {
             var dq = dec();
+            LOOKING = true;
             var quick = C0.map(function(c, i){
               if (i > 0) mkWorld(); apply(c);
               var ok = __S.quiet() || G.gameOver || finishFlow(w, function(){ mkWorld(); apply(c); }, budget, true);
               return { c: c, v: ok ? evaluate(w) : -1e9 };
             });
+            LOOKING = false;
             quick.sort(function(a, b){ return b.v - a.v; });
             var keep = quick.slice(0, nc).map(function(q){ return q.c; }), dc = C0.filter(function(c){ return declines(c, dq); })[0];
             if (dc && keep.indexOf(dc) < 0) keep.push(dc);
