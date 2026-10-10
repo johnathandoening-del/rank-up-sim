@@ -3572,13 +3572,6 @@ function beginPhaseL35(ph){
       // (was L34 after) settle anything the new phase's setup forced
       try{ window.RUfinalizeWin(); }catch(e){}
     }
-    // (was L35 after) Advantageous-card baseline snapshot at draw -- runs even on the L34 game-over path
-    try{
-      if(ph==='draw'&&G&&G.turn){
-        var p=G[G.turn];
-        if(p)p._ru171AdvBaseline=window.advDiscardCountRBP35(p);
-      }
-    }catch(e){}
     return r;
   }
 
@@ -24857,19 +24850,12 @@ window.ruSpecPace=function(base){
   // version of this rule at all except botBattle's own (previously unconditional) forced-swing
   // fallback, which is fixed separately just above this block.
   //
-  // Rather than chase a "commit" flag through a dozen historical playAction/useAdv/autoRunAction
-  // reassignment layers, observe the OUTCOME every one of them must produce: every Advantageous
-  // card's E1 text starts with "Drop this card," so a successful use always lands the card in
-  // discard. Snapshot each side's Advantageous-card discard count at the start of their turn; if
-  // it has grown since, an Adv E1 was used this turn -- regardless of which historical code path
-  // actually resolved it.
-  function advDiscardCount(p){
-    return (p&&p.discard||[]).filter(function(c){return c&&c.sub==='Advantageous';}).length;
-  }
-  window.advDiscardCountRBP35=advDiscardCount;
+  // Did this side USE an Advantageous card this turn? Read from the record every use writes at the moment it
+  // resolves (_advCardsThisTurn: playActionBase and useAdv, reset at the Main Phase). Counting Advantageous cards
+  // that reached the Discard (as this used to) also counted ones dropped there as a COST (e.g. Wildfire's "Drop 1
+  // card from hand") — which forced an attack that could not be made: the turn could neither attack nor end.
   function usedAdvE1ThisTurn(p){
-    if(!p)return false;
-    return advDiscardCount(p)>(p._ru171AdvBaseline||0);
+    return !!(p&&p._advCardsThisTurn&&p._advCardsThisTurn.length);
   }
   window.ru171UsedAdvE1ThisTurn=usedAdvE1ThisTurn;
 
@@ -25808,7 +25794,9 @@ window.ruSpecPace=function(base){
   // only once its own state has the same fingerprint — i.e. once its own engine flow (timed continuations,
   // queued Casualty Draws, the prompt that input answers) has caught up to exactly where the sender was.
   // A fingerprint that never matches means the games have diverged (reported, never silently ignored).
-  function cid(c){ return c?(c.id+':'+(c.currentNP!=null?c.currentNP:'')+':'+(c.currentRP!=null?c.currentRP:'')):'-'; }
+  // (a card's attacks left, used skill and freeze are game state like its NP: an input that changes only those — a
+  // 0-damage attack — still changed the game)
+  function cid(c){ return c?(c.id+':'+(c.currentNP!=null?c.currentNP:'')+':'+(c.currentRP!=null?c.currentRP:'')+':'+(c.attacksLeft!=null?c.attacksLeft:'')+(c.usedSkill?'u':'')+(c.frozen?'f':'')):'-'; }
   function ids(a){ return (a||[]).map(function(c){ return c&&c.id; }).join(','); }
   function stateSig(){
     var g=G_(); if(!g) return '';
@@ -25816,7 +25804,8 @@ window.ruSpecPace=function(base){
     (g.sideOrder||['player','ai']).forEach(function(w){ var p=g[w]; if(!p) return;
       // full ordered contents (not just counts): a different card in a hand or deck order is a desync too
       parts.push(w,p.mp,p.cas,ids(p.hand),ids(p.deck),ids(p.discard),ids(p.deadzone),(p.bank||[]).length,
-        (p.delta||[]).length,cid(p.rankZone),cid(p.leftFlank),cid(p.rightFlank),cid(p.rearFlank),cid(p.delta&&p.delta[0]),p.actUsed||0);
+        (p.delta||[]).length,cid(p.rankZone),cid(p.leftFlank),cid(p.rightFlank),cid(p.rearFlank),cid(p.delta&&p.delta[0]),p.actUsed||0,
+        Object.keys(p.attacksUsed||{}).sort().join(','),p._attackedThisTurn?1:0);
     });
     var m=modalEl(), pk=pickerEl();
     parts.push(sharedOpen(m)?('M:'+(m._ruOwner||'')+':'+(m._ruStash?m._ruStash.btns.length:(document.getElementById('m-btns')||{children:[]}).children.length)):'M-');
