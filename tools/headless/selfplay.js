@@ -5,7 +5,7 @@
  *   node tools/headless/selfplay.js <games> <out.jsonl> '<policy json>' [workers=14] [weights.json] */
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const fs = require('fs'); const os = require('os');
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 
 function game(job) {
   const { createEngine } = require('./engine'); const { newMatch } = require('./match');
@@ -51,7 +51,7 @@ if (isMainThread) {
   const AMALG = [...new Set((fs.readFileSync(require('path').join(__dirname, '..', '..', 'index.html'), 'utf8').match(/"id": "amalg-[a-z]+-\d+"/g) || []).map((x) => x.slice(7, -1)))];
   let rs = (base * 2654435761) >>> 0; const rnd = () => { rs = (rs + 0x6D2B79F5) >>> 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const randDeck = () => { const n = Math.floor(rnd() * 4), out = []; while (out.length < n) { const id = AMALG[Math.floor(rnd() * AMALG.length)]; if (out.indexOf(id) === -1) out.push(id); } return out; };
-  const jobs = Array.from({ length: games }, (_, k) => { const evo = k % 4 !== 0; return { seed: base + k * 17, cls0: CLASSES[(base + k * 7) % 15], cls1: CLASSES[(base + k * 11 + 4) % 15], firstSeat: k % 2, evo, dd0: evo ? randDeck() : [], dd1: evo ? randDeck() : [], ddClass: !!pol.ddClass, pol, weights, maxMs: 25 * 60000 }; });
+  const jobs = Array.from({ length: games }, (_, k) => { const evo = k % 4 !== 0; return { seed: base + k * 17, cls0: CLASSES[(base + k * 7) % CLASSES.length], cls1: CLASSES[(base + k * 11 + 4) % CLASSES.length], firstSeat: k % 2, evo, dd0: evo ? randDeck() : [], dd1: evo ? randDeck() : [], ddClass: !!pol.ddClass, pol, weights, maxMs: 25 * 60000 }; });
   console.log(`${AMALG.length} Δ cards in the library`);
   let next = 0, live = 0, done = 0, rows = 0; const t0 = Date.now();
   const spawn = () => {

@@ -54,11 +54,11 @@ function playOne(seed, cls0, cls1) {
 }
 
 const games = Number(process.argv[2] || 5), base = Number(process.argv[3] || 1);
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 const t0 = Date.now();
 let totalSteps = 0, finished = 0;
 for (let g = 0; g < games; g++) {
-  const seed = base + g, c0 = CLASSES[seed % 15], c1 = CLASSES[(seed * 7 + 3) % 15];
+  const seed = base + g, c0 = CLASSES[seed % CLASSES.length], c1 = CLASSES[(seed * 7 + 3) % CLASSES.length];
   const t = Date.now(), r = playOne(seed, c0, c1);
   totalSteps += r.steps; if (r.winner) finished++;
   console.log(`game ${seed} ${c0} vs ${c1}: ${r.steps} inputs, turn ${r.turns}, winner=${r.winner}, ${Date.now() - t} ms` + (r.errors.length ? `\n   errors: ${r.errors.map((e) => e.slice(0, 200)).join('\n           ')}` : ''));

@@ -5,7 +5,7 @@
  *   node tools/headless/dupcheck.js [games=40] */
 const P = './';
 const { createEngine } = require(P+'engine'); const { newMatch } = require(P+'match'); const nopaint=require(P+'nopaint'); const moves=require(P+'moves');
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 function mb(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 const CHECK = `(function(){
   var where = new Map(), ids = new Map(), out = [];
@@ -28,7 +28,7 @@ const CHECK = `(function(){
 const games = Number(process.argv[2] || 40); let found = 0;
 for (let g = 0; g < games && found < 6; g++) {
   const seed = 9000 + g, rnd = mb(seed);
-  const c0 = CLASSES[g % 15], c1 = CLASSES[(g * 7 + 4) % 15];
+  const c0 = CLASSES[g % CLASSES.length], c1 = CLASSES[(g * 7 + 4) % CLASSES.length];
   const eng = createEngine({ seed }); nopaint.install(eng);
   const m = newMatch({ engine: eng, seed, cls0: c0, cls1: c1, firstSeat: g % 2, evo: g % 2 === 0 });
   moves.install(eng);

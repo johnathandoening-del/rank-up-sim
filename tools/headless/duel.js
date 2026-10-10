@@ -8,13 +8,13 @@ const { newMatch } = require('./match');
 const nopaint = require('./nopaint');
 const brain = require('./brain');
 function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 
 function playMatch(seed, polA, polB, opts) {
   opts = opts || {};
   const eng = createEngine({ seed }); nopaint.install(eng);
   const aSeat = seed % 2 === 0 ? 'player' : 'ai';                  // alternate seats
-  const c0 = opts.cls0 || CLASSES[(seed * 7) % 15], c1 = opts.cls1 || CLASSES[(seed * 11 + 3) % 15];
+  const c0 = opts.cls0 || CLASSES[(seed * 7) % CLASSES.length], c1 = opts.cls1 || CLASSES[(seed * 11 + 3) % CLASSES.length];
   const m = newMatch({ engine: eng, seed, cls0: c0, cls1: c1, firstSeat: Math.floor(seed / 2) % 2 });
   brain.install(eng);
   eng.run('__B.noteApplied(null)');

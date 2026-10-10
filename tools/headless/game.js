@@ -8,7 +8,7 @@
  *          (thought again afresh, after the real decision; the game itself is not changed by it)
  * Policies: {"kind":"random"} | {"kind":"brain", N, worlds, width, evals, fixed, ...} | {"kind":"tier", key, scale};
  * any brain policy may name another bot version (brainFile: a module exporting BRAIN_CODE) or weights (weightsFile). */
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 
 function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
@@ -78,6 +78,6 @@ function play(job, hooks) {
 }
 
 // The arena's deals: deal k is the same seed, classes and first seat in every arena run.
-function deal(k, clsA, clsB) { return { seed: 50000 + k * 13, cls0: clsA || CLASSES[(k * 7 + 3) % 15], cls1: clsB || CLASSES[(k * 11 + 5) % 15], firstSeat: k % 2 }; }
+function deal(k, clsA, clsB) { return { seed: 50000 + k * 13, cls0: clsA || CLASSES[(k * 7 + 3) % CLASSES.length], cls1: clsB || CLASSES[(k * 11 + 5) % CLASSES.length], firstSeat: k % 2 }; }
 
 module.exports = { play, deal, CLASSES, mulberry32 };

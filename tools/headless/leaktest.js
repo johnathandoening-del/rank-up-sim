@@ -8,7 +8,7 @@ const { newMatch } = require('./match');
 const nopaint = require('./nopaint');
 const state = require('./state');
 function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 const ZONES = ['rank', 'left-flank', 'right-flank', 'rear-flank'];
 function nextInput(m, rnd) {
   const p = m.pending(), pick = (a) => a[Math.floor(rnd() * a.length)];
@@ -31,7 +31,7 @@ const games = Number(process.argv[2] || 6), checks = Number(process.argv[3] || 8
 let pass = 0, fail = 0, snaps = 0, restoreMs = 0, snapMs = 0;
 for (let g = 0; g < games; g++) {
   const seed = 500 + g, eng = createEngine({ seed }); nopaint.install(eng); state.install(eng);
-  const m = newMatch({ engine: eng, seed, cls0: CLASSES[(seed * 5) % 15], cls1: CLASSES[(seed * 3 + 1) % 15], firstSeat: seed % 2 });
+  const m = newMatch({ engine: eng, seed, cls0: CLASSES[(seed * 5) % CLASSES.length], cls1: CLASSES[(seed * 3 + 1) % CLASSES.length], firstSeat: seed % 2 });
   const rnd = mulberry32(seed + 77);
   let done = 0, steps = 0;
   while (done < checks && steps < 6000) {

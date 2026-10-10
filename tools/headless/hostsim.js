@@ -10,14 +10,14 @@ const { newMatch } = require('./match');
 const nopaint = require('./nopaint');
 const brain = require('./brain');
 const { planOpts } = require('../../ai/tiers');
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 
 function game(g, tierA, tierB) {
-  const seed = process.env.SEED ? Number(process.env.SEED) : 31000 + g * 17, c0 = process.env.CLS0 || CLASSES[(g * 4 + 1) % 15], c1 = process.env.CLS1 || CLASSES[(g * 9 + 6) % 15];
+  const seed = process.env.SEED ? Number(process.env.SEED) : 31000 + g * 17, c0 = process.env.CLS0 || CLASSES[(g * 4 + 1) % CLASSES.length], c1 = process.env.CLS1 || CLASSES[(g * 9 + 6) % CLASSES.length];
   const page = createEngine({ seed }); nopaint.install(page);
   // MODE=1v1v1 / royale4: three or four bot seats in a turn order drawn from the game number
   const mode = process.env.MODE || null, seatList = mode === 'royale4' ? ['player', 'ai', 'ai2', 'ai3'] : mode === '1v1v1' ? ['player', 'ai', 'ai2'] : null;
-  const classes = seatList ? Object.fromEntries(seatList.map((w, i) => [w, CLASSES[(g * 4 + 1 + i * 5) % 15]])) : null;
+  const classes = seatList ? Object.fromEntries(seatList.map((w, i) => [w, CLASSES[(g * 4 + 1 + i * 5) % CLASSES.length]])) : null;
   const order = seatList ? seatList.slice().sort((a, b) => ((a.charCodeAt(a.length - 1) * (g + 3)) % 7) - ((b.charCodeAt(b.length - 1) * (g + 3)) % 7)) : null;
   const bots = seatList ? Object.fromEntries(seatList.map((w) => [w, w === 'player' ? tierA : tierB])) : { player: tierA, ai: tierB };
   newMatch({ engine: page, seed, cls0: classes ? classes.player : c0, cls1: classes ? classes.ai : c1, firstSeat: process.env.FIRST != null ? Number(process.env.FIRST) : g % 2,

@@ -7,7 +7,7 @@ const { newMatch } = require('./match');
 const nopaint = require('./nopaint');
 
 function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 const ZONES = ['rank', 'left-flank', 'right-flank', 'rear-flank'];
 
 function nextInput(m, rnd) {
@@ -54,7 +54,7 @@ function play(seed, c0, c1, n, noPaint) {
 const games = Number(process.argv[2] || 3), n = Number(process.argv[3] || 1500);
 let allSame = true;
 for (let g = 0; g < games; g++) {
-  const seed = 101 + g, c0 = CLASSES[(seed * 3) % 15], c1 = CLASSES[(seed * 11 + 5) % 15];
+  const seed = 101 + g, c0 = CLASSES[(seed * 3) % CLASSES.length], c1 = CLASSES[(seed * 11 + 5) % CLASSES.length];
   const full = play(seed, c0, c1, n, false), fast = play(seed, c0, c1, n, true);
   let firstDiff = -1; const len = Math.min(full.trace.length, fast.trace.length);
   for (let i = 0; i < len; i++) if (full.trace[i] !== fast.trace[i]) { firstDiff = i; break; }

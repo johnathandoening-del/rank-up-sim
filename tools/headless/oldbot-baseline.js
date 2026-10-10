@@ -5,7 +5,7 @@
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const os = require('os');
 
-const CLASSES = ['light', 'inferno', 'blizzard', 'shadow', 'maximum', 'deckstructive', 'negative', 'restorative', 'haste', 'astute', '7th', 'zero', 'phantom', 'fission', 'extension'];
+const CLASSES = require('./classes')();   // every class the game knows (the engine's registry)
 
 function playGame(cfg, idx) {
   const { createEngine } = require('./engine');
@@ -13,7 +13,7 @@ function playGame(cfg, idx) {
   const eng = createEngine({ seed: cfg.seed0 + idx * 7919 });
   nopaint.install(eng);
   const strongSeat = idx % 2 === 0 ? 'player' : 'ai', weakSeat = strongSeat === 'player' ? 'ai' : 'player';
-  const c0 = CLASSES[(cfg.seed0 + idx * 13) % 15], c1 = CLASSES[(cfg.seed0 * 7 + idx * 5 + 3) % 15];
+  const c0 = CLASSES[(cfg.seed0 + idx * 13) % CLASSES.length], c1 = CLASSES[(cfg.seed0 * 7 + idx * 5 + 3) % CLASSES.length];
   const setTier = (seat, t, n) => seat === 'player' ? `RU_AI_LEVEL_KEY_A=${JSON.stringify(t)};RU_AI_LEVEL_NUM_A=${n};` : `RU_AI_LEVEL_KEY=${JSON.stringify(t)};RU_AI_LEVEL_NUM=${n};`;
   eng.run(`
     (function(){ var o=window.endGameImmediate; window.endGameImmediate=function(w,r){ if(G&&!G.gameOver) G.__winner=w||'draw'; return o.apply(this,arguments); }; })();
