@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
 /* Custom class-icon font (Private Use Area): U+E001 = Light sun, U+E000 = Phantom hooded figure.
    Subset to only those two glyphs, so prepending it to any font stack is inert for all normal text. */
-@font-face{font-family:'RU Classic Icons';src:url('RU_Classic_Icons.ttf?v=2') format('truetype');font-display:swap;}
+@font-face{font-family:'RU Classic Icons';src:url('RU_Classic_Icons.ttf?v=3') format('truetype');font-display:swap;}
 .cemblem,.ccls,.nc .crs{font-family:'RU Classic Icons','Cinzel',serif;}
 :root{
   --gold:#c9a84c;--gold-dark:#7a5f1a;--bg-deep:#0a0a0f;--bg-panel:#0e0e16;
@@ -67,6 +67,11 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .t-restorative h3{color:#FF6699;}.t-restorative .atag{color:#FF6699;}.t-haste h3{color:#FFE600;}.t-haste .atag{color:#FFE600;}
 .t-astute h3{color:#940094;}.t-astute .atag{color:#940094;}.t-7th h3{color:#B0C4DE;}.t-7th .atag{color:#B0C4DE;}
 .t-zero h3{color:#8B6666;}.t-zero .atag{color:#8B6666;}.t-phantom h3{color:#2B3E34;}.t-phantom .atag{color:#2B3E34;}
+.t-fission h3{color:#42082B;}.t-fission .atag{color:#42082B;}
+.t-extension h3{color:#E67E22;}.t-extension .atag{color:#E67E22;}
+.t-ochre h3{color:#69431E;}.t-ochre .atag{color:#69431E;}.t-temporal h3{color:#5CE6C4;}.t-temporal .atag{color:#5CE6C4;}
+.t-kismet h3{color:#A67F5B;}.t-kismet .atag{color:#A67F5B;}
+.t-celestial h3{color:#0A0041;text-shadow:0 0 .5px rgba(170,160,255,.35),0 0 1.75px rgba(170,160,255,.35);}.t-celestial .atag{color:#0A0041;text-shadow:0 0 .5px rgba(120,110,220,.95),0 0 1.75px rgba(120,110,220,.95);}
 #game-screen{flex-direction:row;height:100vh;overflow:hidden;background:radial-gradient(115% 95% at 50% 42%,rgba(140,102,58,.40) 0%,rgba(66,48,28,.12) 50%,rgba(0,0,0,0) 74%),linear-gradient(180deg,#1e160d 0%,#2a1f12 50%,#140d07 100%);}
 .game-main{flex:1;min-width:0;display:flex;flex-direction:column;height:100vh;overflow:hidden;}
 /* Opponent hand: fanned face-down "Rank Up!" backs; count = AI's real hand size (renderOppHand). */
@@ -304,13 +309,18 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .nc-maximum-max{background:linear-gradient(135deg,#221b06,#151000);border:1px solid #B9921E;color:#B9921E;}
 .nc-deckstructive{background:linear-gradient(135deg,#04261c,#011712);border:1px solid #04825B;color:#1fbf8c;}
 .nc-negative{background:linear-gradient(135deg,#1c0e26,#120618);border:1px solid #3F1D53;color:#b083d0;}
-/* ── New classes (color foundation; playable once card data is added) ── */
 .nc-restorative{background:linear-gradient(135deg,#2a121b,#1a0a11);border:1px solid #FF6699;color:#ff8fb3;}
 .nc-haste{background:linear-gradient(135deg,#26240a,#161500);border:1px solid #FFE600;color:#ffee4d;}
 .nc-astute{background:linear-gradient(135deg,#260826,#170117);border:1px solid #940094;color:#d24dd2;}
 .nc-7th{background:linear-gradient(135deg,#181d24,#0e1116);border:1px solid #b0c4de;color:#b0c4de;}
 .nc-zero{background:linear-gradient(135deg,#1f1414,#140c0c);border:1px solid #8B6666;color:#c39a9a;}
 .nc-phantom{background:linear-gradient(135deg,#0e1611,#08100b);border:1px solid #2B3E34;outline:1px solid #3a5246;color:#7fa890;}
+.nc-fission{background:linear-gradient(135deg,#260317,#11010a);border:1px solid #42082B;color:#c878a4;}
+.nc-extension{background:linear-gradient(135deg,#2c1504,#160900);border:1px solid #E67E22;color:#ffb166;}
+.nc-ochre{background:linear-gradient(135deg,#21150a,#130c05);border:1px solid #69431E;color:#c08a55;}
+.nc-temporal{background:linear-gradient(135deg,#0a2620,#051713);border:1px solid #5CE6C4;color:#8ff0d8;}
+.nc-kismet{background:linear-gradient(135deg,#251b12,#16100a);border:1px solid #A67F5B;color:#d4ae88;}
+.nc-celestial{background:linear-gradient(135deg,#0b0826,#05031a);border:1px solid #0A0041;outline:1px solid #2c2577;color:#a49cf0;}
 .nc-classless{background:linear-gradient(135deg,#1a1a1a,#111111);border:1px solid #808080;color:#a8a8a8;}
 .nc-adv{background:linear-gradient(135deg,#161a10,#0e1208);border:1px solid rgba(120,180,80,.4);color:#a0d060;}
 .nc-safe{background:linear-gradient(135deg,#101620,#08101a);border:1px solid rgba(80,140,220,.4);color:#80b0e8;}
@@ -414,12 +424,6 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 @keyframes areaBannerIn{0%{opacity:0;transform:translateX(-50%) translateY(-14px) scale(.96);}12%,70%{opacity:1;transform:translateX(-50%) translateY(0) scale(1);}100%{opacity:0;transform:translateX(-50%) translateY(-8px) scale(.98);}}
 .area-particle{position:absolute;width:4px;height:4px;border-radius:50%;pointer-events:none;opacity:0;z-index:1;box-shadow:0 0 8px currentColor;animation:areaParticleFly var(--dur,.95s) ease-out forwards;}
 @keyframes areaParticleFly{0%{opacity:0;transform:translate(0,0) scale(.4);}14%{opacity:.95;}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(1.1);}}
-
-
-.t-fission h3{color:#42082B;}.t-fission .atag{color:#42082B;}
-.t-extension h3{color:#E67E22;}.t-extension .atag{color:#E67E22;}
-.nc-fission{background:linear-gradient(135deg,#260317,#11010a);border:1px solid #42082B;color:#c878a4;}
-.nc-extension{background:linear-gradient(135deg,#2c1504,#160900);border:1px solid #E67E22;color:#ffb166;}
 
 
 /* V11.6.5 layout corrections: Rear Flank behind Rank/Bank, Δ Elements bank */

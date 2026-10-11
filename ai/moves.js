@@ -32,7 +32,7 @@ var MOVES_CODE = `
       var b = modalButtons(m);
       return { kind: 'modal', seat: m._ruOwner || G.turn, n: b.length, enabled: b.map(function(x){ return !x.disabled; }), labels: b.map(function(x){ return x.textContent; }), title: m._ruStash ? m._ruStash.title : ((document.getElementById('m-title')||{}).textContent || '') };
     }
-    return { kind: 'turn', seat: G.turn, phase: G.phase, mode: G.mode || 'normal' };
+    return { kind: 'turn', seat: (window.ruModeOwner && ruModeOwner()) || G.turn, phase: G.phase, mode: G.mode || 'normal' };
   }
 
   function npOf(c){ return c ? (c.currentNP != null ? c.currentNP : (c.numeral || 0)) : 0; }

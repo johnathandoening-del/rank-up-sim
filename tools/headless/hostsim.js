@@ -4,7 +4,8 @@
  * restores the page's last quiet position, replays the inputs since and plans). Checks every request: the worker's
  * rebuilt position must equal the page's, and every bot input must be applied. A regression test for ai/host.js +
  * ai/worker.js without a browser.
- *   node tools/headless/hostsim.js [games=4] [tierA=basic-1] [tierB=basic-1] */
+ *   node tools/headless/hostsim.js [games=4] [tierA=basic-1] [tierB=basic-1]
+ *   env: CLS0 / CLS1 classes, SEED, FIRST, MODE=1v1v1|royale4, WATCH=1 (AI vs AI watch mode) */
 const { createEngine } = require('./engine');
 const { newMatch } = require('./match');
 const nopaint = require('./nopaint');
@@ -23,6 +24,8 @@ function game(g, tierA, tierB) {
   newMatch({ engine: page, seed, cls0: classes ? classes.player : c0, cls1: classes ? classes.ai : c1, firstSeat: process.env.FIRST != null ? Number(process.env.FIRST) : g % 2,
     solo: { bots }, mode: mode || undefined, order: order || undefined, classes: classes || undefined });
   if (seatList) console.log(`  ${mode}: order ${order.join(' > ')}, classes ${seatList.map((w) => classes[w]).join('/')}`);
+  // WATCH=1: the AI vs AI watch mode (its mode flag switches on watch-only code paths, which must not act outside inputs)
+  if (process.env.WATCH) page.run("G.ruMode = 'ai-vs-ai'");
   brain.install(page);                                  // (the page uses only __S / __M read-only helpers from it)
   const worker = createEngine({ seed: 1 }); nopaint.install(worker); brain.install(worker);
   // the page's bookkeeping (host.js): last quiet position before an input + the inputs since

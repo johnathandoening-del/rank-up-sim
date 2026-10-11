@@ -25,7 +25,7 @@ var MATCH_CODE = `
         var btns = m._ruStash ? m._ruStash.btns : [].slice.call(document.getElementById('m-btns').children);
         return { kind: 'modal', owner: m._ruOwner || G.turn, n: btns.length, title: (m._ruStash ? m._ruStash.title : (document.getElementById('m-title') || {}).textContent) || '', labels: btns.map(function(b){ return b.textContent; }) };
       }
-      return { kind: 'turn', owner: G.turn, phase: G.phase, mode: G.mode };
+      return { kind: 'turn', owner: (window.ruModeOwner && ruModeOwner()) || G.turn, phase: G.phase, mode: G.mode };
     },
     // (the order every screen applies an input in: what the table was waiting for, the pre-input checkpoint, the input)
     apply: function(a){ if (window.ruCanApplyNow) window.ruCanApplyNow({}); return window.ruApplyAction(a); },

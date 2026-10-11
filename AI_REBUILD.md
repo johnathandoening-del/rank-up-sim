@@ -87,9 +87,13 @@ Verified finally by playing as a human in the real UI.
 The bots play the real rules through the same inputs a human makes, so most new content needs no bot code. What
 does need touching:
 
-- **New class** — its `CM` entry (`data.js`, or added in `index.html` like Fission/Extension) is the registry: every
-  headless tool reads the class list from it (`tools/headless/classes.js`), so tests and arena deals include the
-  new class automatically. Add a `CLASS_STATS` entry (the bots' Evolution-deck choice uses it; defaults otherwise).
+- **New class** — every class lives in the same tables in `data.js`: `CM` (name, alignment, Area, icon — a glyph of
+  `RU_Classic_Icons.ttf`), `AIPAIR`, `CLASS_COLORS` (the only colour table), `CLASS_STATS` (the bots' Evolution-deck
+  choice uses it), `ND` (Numerals), `DECK_AC` (Action Cards), `AREA_TEXT`, and its class Star in `AC`. Its skills,
+  Area and new Action Card effects go in `SDEFS` / `ADEFS` / `ACDEFS` (`index.html`); its menu and card colours are the
+  `.t-<class>` / `.nc-<class>` rules in `styles.css`; `GAUNTLET_MAP` (`index.html`) holds its Gauntlet opponents. `CM`
+  is the registry: every headless tool reads the class list from it (`tools/headless/classes.js`), so tests and arena
+  deals include the new class automatically.
 - **New card effects** — offer choices as prompts the owning seat answers (`openModal` / the picker, owned by that
   seat), never "if a bot, pick X": in solo games every bot seat is input-driven and decides through those prompts
   (`ruBotControlledSeat` shortcuts only serve the old fallback bot). A prompt button must do something (a button
@@ -186,3 +190,21 @@ does need touching:
   one class list read from the engine (CM) — new classes are tested automatically; the arena stops a cycling game.
   Tier ordering (2-3 tiers apart, 24 games): 67% / 65% / 63% / 79% / 88% / 79%, higher tier always ahead. Full suite
   green: parity, leak test, smoke/determinism, move generation, card integrity, page<->worker 1v1 / 1v1v1 / Royale.
+- **2026-10-10** — Every class in one set of tables (data.js): Fission/Extension's data, the class icons (RU Classic
+  Icons font glyphs in CM; the override list and the duplicate colour tables are gone). Celestial-class added (its block
+  `celestial-class` in index.html; hooks `window.celestial*` at resolveAtkL28, ruDeclareAttack, beginPhase, tryPromote,
+  ruIsLegalAttackTarget, resolveSafeguard, useRet, applyE2). New general rules it needed, usable by any card: `fromN` on a
+  Numeral (must be Ranked Up from Numeral N+; Haste 9 uses it too), an Area's `canEnter`/`enterText` (its condition to be
+  sent to the Deadzone), an Action Card's `check` (refused before it is committed), `G._skipStartDraw[seat]`,
+  `G._drawToDrop[seat]`, a card-bound `G._durableNP` entry (`id`), and response cards (Safeguard/Retaliatory) by their own
+  type instead of a hand-kept name list. Scenario tests for every Celestial rule pass; suite green with Celestial in it.
+  AI vs AI watch (a lockstep match): the old watch-mode safety net still auto-clicked every dialog and auto-picked every
+  picker on a timer, outside the inputs and with no owner — one seat's Area card landed in the other seat's Deadzone while
+  staying in its hand — and the old bot's first-turn switchdraw ran there too; both now apply only to non-lockstep play.
+  `hostsim.js` WATCH=1 runs the page<->worker check in that mode (the old behaviour stalls there with runaway timers).
+  Then (user's rulings): Advantageous E2 = "Dead Draw"; "defeated in battle" = attacked and did not win (G._battleResult,
+  recorded by resolveAtkBase), Rank Zone included; card targets are clicked on the board (any player's zone, the pick
+  owned by G._oppZoneOwner — ruModeOwner and both deciders read it); Celestial 9 = promoted from a Rank³. Engine: "another
+  attack" grants added to 1 instead of to the attacks LEFT (a card that had attacked got 2 more; 36 places, now
+  atkLeft(c)+n); a Retaliatory card counted its Action slot twice (the window and its own commit); custom class glyphs
+  past U+E010 (Celestial) were drawn at the small non-glyph emblem size.
