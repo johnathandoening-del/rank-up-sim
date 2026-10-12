@@ -205,7 +205,7 @@ function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor((window.ruR
 function mkNum(base,cls){
   const c={id:uid(),type:'numeral',class:cls,
     name:cls==='classless'?`Numeral ${base.n}`:`${cls.charAt(0).toUpperCase()+cls.slice(1)} ${base.n}`,
-    numeral:base.n,rank:base.r,A:base.A,M:base.M,S:base.S,fromN:(base.fromN!=null?base.fromN:null),
+    numeral:base.n,rank:base.r,A:base.A,M:base.M,S:base.S,fromN:(base.fromN!=null?base.fromN:null),W:(base.W!=null?base.W:null),noRemove:!!base.noRemove,
     isRankMax:(cls==='maximum'&&base.n>=10),
     canAttack:base.ca,skillType:base.st,skillCost:base.sc||null,skillText:base.sk,
     currentNP:base.n,currentRP:base.r,attacksLeft:1,'№':1,usedSkill:false,frozen:false};
@@ -2830,7 +2830,7 @@ function applyE2L27(who,card){
 // ---- L28 -> applyE2 ----
 function applyE2(who,card){
       var _r;
-      if(window.celestialE2&&window.celestialE2(who,card))return;   // the Celestial deck's Action Cards
+      if(window.ruE2Hook&&window.ruE2Hook(who,card))return;   // a class's own Action Cards
       if(card && card.name === 'Seventh Star'){
         var p = window.sideRAE28(who);
         window.addMRAE28(who,card);
@@ -3583,7 +3583,7 @@ function beginPhaseL35(ph){
 // ---- L36 -> beginPhase ----
 function beginPhase(ph){
       // "After the Battle Phase" effects that need a choice (Shooting Star) resolve before the End Phase hands the turn on
-      if(ph==='end'&&window.celestialBeforeEnd&&window.celestialBeforeEnd(function(){beginPhase('end');}))return;
+      if(ph==='end'&&window.ruBeforeEnd&&window.ruBeforeEnd(function(){beginPhase('end');}))return;
       var r=beginPhaseL35.apply(this,arguments);
       try{
         if(ph==='draw'&&G&&G.turn){
@@ -3595,7 +3595,7 @@ function beginPhase(ph){
           }
         }
       }catch(e){}
-      try{ if(window.celestialPhaseBegan&&G&&!G.gameOver)window.celestialPhaseBegan(ph); }catch(e){console.error(e);}
+      try{ if(window.ruPhaseBegan&&G&&!G.gameOver)window.ruPhaseBegan(ph); }catch(e){console.error(e);}
       return r;
     }
 
@@ -3730,6 +3730,7 @@ function ruRankUpFromOK(card){
 }
 window.ruRankUpFromOK=ruRankUpFromOK;
 function tryPromote(card){
+  {const why=window.ruPromoteBlocked&&window.ruPromoteBlocked(ruActor(),card);if(why){ruNotice(ruActor(),why,'dmg');return false;}}   // a card's own Rank Up rule
   if(!ruRankUpFromOK(card)){
     try{log(card.name+' can only be Ranked Up from a Numeral '+card.fromN+' or higher.','dmg');}catch(e){}
     return false;
@@ -3741,7 +3742,7 @@ function tryPromote(card){
   const beforeRankId=mp&&mp.rankZone&&mp.rankZone.id;
   const beforeRank=mp&&mp.rankZone&&!mp.rankZone._empty?{numeral:mp.rankZone.numeral,rank:mp.rankZone.rank}:null;
   const r=tryPromoteCore(card);
-  if(r&&mp&&mp.rankZone&&mp.rankZone.id!==beforeRankId&&window.celestialRankedUp)window.celestialRankedUp(me,beforeRank,mp.rankZone);
+  if(r&&mp&&mp.rankZone&&mp.rankZone.id!==beforeRankId&&window.ruRankedUp)window.ruRankedUp(me,beforeRank,mp.rankZone);
   if(r&&mp&&mp.rankZone&&mp.rankZone.id!==beforeRankId&&mp.rankZone.class==='haste'){
     mp._rankedToHasteThisTurn=true;
     try{log('Fast Track: Haste Rank Up is eligible for the 8 MP burst this turn.','info');}catch(e){}
@@ -3879,11 +3880,12 @@ function standDownMode(){
   if(G.turn!==me||G.gameOver)return;
   G.mode='standdown';clearHL();
   const p=G[me],hk=function(sfx){const e=el(sideZoneId(me,sfx));if(e)e.classList.add('hk');};
-  if(p.leftFlank)hk('lf');
-  if(p.rightFlank)hk('rf');
-  if(p.rankZone&&p.rankZone.numeral>0)hk('rz');
-  if(p.rearFlank)hk('rear');
-  if(p.delta&&p.delta[0])hk('delta');
+  const ok=function(c,z){return c&&!(window.ruUnremovable&&window.ruUnremovable(c,me,z,true));};   // a card that cannot be removed cannot be Stood Down
+  if(ok(p.leftFlank,'left-flank'))hk('lf');
+  if(ok(p.rightFlank,'right-flank'))hk('rf');
+  if(ok(p.rankZone,'rank')&&p.rankZone.numeral>0)hk('rz');
+  if(ok(p.rearFlank,'rear-flank'))hk('rear');
+  if(ok(p.delta&&p.delta[0],'delta'))hk('delta');
   show('btn-can');setHint('Click a card on your field (Rank, Flank, Rear, or \u0394) to Stand Down.');renderAll();
 }
 
@@ -3949,7 +3951,13 @@ function doRelieve(handIdx,card){
 // the existing Flank card first. Rank²-and-lower cards can relieve either occupied Flank with no
 // ordering rule relative to the card being stood down (a Numeral 3 may relieve a Numeral 8, etc.);
 // Rank³ Numerals 7-9 require Chief Flank (Rank², numeral >= this card's numeral - 3).
+// Relieving / Chief Flanking Stands Down the Flank it replaces: a Flank card that cannot be removed is never a target.
 function eligibleRelieveTargets(p,card){
+  const r=eligibleRelieveTargetsBy(p,card);
+  if(r.targets&&r.targets.length&&window.ruUnremovable){const keep=r.targets.filter(z=>!window.ruUnremovable(window.zCard(p,z),null,null,true));if(!keep.length)return {targets:[],reason:'Your Flank Zone cards cannot be removed.'};r.targets=keep;}
+  return r;
+}
+function eligibleRelieveTargetsBy(p,card){
   const rNP=p.rankZone?(p.rankZone.currentNP||p.rankZone.numeral||0):0;
   if((card.numeral||0)>rNP)return {targets:[],reason:`${card.name} (NP${card.numeral}) must be ≤ Rank Zone NP (${rNP}).`};
   const rRP=p.rankZone?(p.rankZone.currentRP!=null?p.rankZone.currentRP:(p.rankZone.rank||0)):0;
@@ -4243,7 +4251,7 @@ window.hasLegalAttack=hasLegalAttack;
 const RU_ATTACK_TARGET_ZONES=['rank','left-flank','right-flank','delta'];
 function ruIsLegalAttackTarget(me,owner,zone){
   if(!G||!G[owner]||owner===me||livingOpponentsOf(me).indexOf(owner)===-1)return false;
-  if(window.celestialTargetBlocked&&window.celestialTargetBlocked(me,owner,zone))return false;   // Gravitate
+  if(window.ruTargetBlocked&&window.ruTargetBlocked(me,owner,zone))return false;   // a class rule (Gravitate)
   return RU_ATTACK_TARGET_ZONES.indexOf(zone)!==-1&&!!window.zCard(G[owner],zone);
 }
 function ruIsLegalAddon(me,zone){
@@ -4266,7 +4274,7 @@ window.ruIsLegalAttackTarget=ruIsLegalAttackTarget;window.ruIsLegalAddon=ruIsLeg
 // prompt. A BOT defender reacts for itself inside resolveAtk. `afterResolve` runs once the attack is spent.
 function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve){
   // An attacker's own "when you attack" skill (Celestial 5) is answered first; the declaration goes on after it.
-  if(window.celestialBeforeAttack&&window.celestialBeforeAttack(aw,aZone,dw,dZone,function(){ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve);}))return;
+  if(window.ruBeforeAttack&&window.ruBeforeAttack(aw,aZone,dw,dZone,function(){ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve);}))return;
   const AP=G[aw],att=window.zCard(AP,aZone);
   // What happens after the attack (attacks left, mode, hints) is the ATTACKER's flow — run it as the attacker
   // even when the defender's answer (a Safeguard, a reactive skill) is the input that completed the attack.
@@ -4289,7 +4297,7 @@ function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve){
       if(G._reactiveNegateAtk){G._reactiveNegateAtk=false;G._defState={};done();retaliate();return;}
       let rt=G._reactiveRedirect||tgt;G._reactiveRedirect=null;
       if(!window.zCard(G[dw],rt.zone))rt=tgt;
-      if(window.celestialForcedTarget)rt=window.celestialForcedTarget(aw,dw,rt);
+      if(window.ruForcedTarget)rt=window.ruForcedTarget(aw,dw,rt);
       resolveAtk(aw,aZone,dw,rt.zone,addonNP);
       G._defState={};
       done();retaliate();
@@ -4439,7 +4447,7 @@ function zoneClickL1(owner,zone){
       if(card&&mine)showCardModal(card);return;
     }
     if(G.mode==='standdown'){
-      if(!card||card._empty){ruNotice(me,'No card to Stand Down.');cancelAll();return;}const slot=zone==='rank'?'rankZone':zone==='left-flank'?'leftFlank':zone==='right-flank'?'rightFlank':zone==='delta'?'delta':null;if(card.isDigit){ruNotice(me,'Digits cannot be Stood Down by the player that placed them until their protection expires.');return;}if(card._enteredTurnNo!=null&&card._enteredTurnNo===(G._turnNo||0)){log(`${card.name} cannot be Stood Down the same turn it entered the Battlefield.`,'dmg');return;}p.discard.push(card);window.zSet(p,zone,null);if(zone==='rank'){if(p.bank.length){p.rankZone=p.bank.shift();log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. ${p.rankZone.name} restored from Bank.`);}else{p.rankZone=ruEmptyRank('p-sd-'+uid());log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. Rank Zone is now empty.`);}}else log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name} from ${zone.replace('-',' ')}.`);G.mode='normal';clearHL();hide('btn-can');renderAll();return;
+      if(!card||card._empty){ruNotice(me,'No card to Stand Down.');cancelAll();return;}const slot=zone==='rank'?'rankZone':zone==='left-flank'?'leftFlank':zone==='right-flank'?'rightFlank':zone==='delta'?'delta':null;if(card.isDigit){ruNotice(me,'Digits cannot be Stood Down by the player that placed them until their protection expires.');return;}if(window.ruRefuseRemoval&&window.ruRefuseRemoval(card,me,zone)){G.mode='normal';clearHL();hide('btn-can');renderAll();return;}if(card._enteredTurnNo!=null&&card._enteredTurnNo===(G._turnNo||0)){log(`${card.name} cannot be Stood Down the same turn it entered the Battlefield.`,'dmg');return;}p.discard.push(card);window.zSet(p,zone,null);if(zone==='rank'){if(p.bank.length){p.rankZone=p.bank.shift();log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. ${p.rankZone.name} restored from Bank.`);}else{p.rankZone=ruEmptyRank('p-sd-'+uid());log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name}. Rank Zone is now empty.`);}}else log(`${sideVerbLabel(me,'stand','stands')} Down ${card.name} from ${zone.replace('-',' ')}.`);G.mode='normal';clearHL();hide('btn-can');renderAll();return;
     }
     if(G.mode==='chiefpick'){
       const pick=G._chiefFlankPick;
@@ -4504,6 +4512,7 @@ function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
     }
     function destroyDef(){
       const rd=Math.max(0,aRP-dRP);
+      if(dZone!=='rank'&&window.ruSurvivesBattle&&window.ruSurvivesBattle(dWho,dZone,def,'defender',(G._battleResult||{}).winner))return;
       // Protect (protectCas) + Zero 2 / Restorative 3 (checkSkillFlags) reduce the DEFENDER's casualty
       // draws, exactly as they already did for the Rank Zone — now applied to Flank/Delta draws too.
       const casFlags=function(n){if(ds.protectCas){n=Math.max(0,n-ds.protectCas);log(`Protect: ${ds.protectCas} fewer Casualty Draw(s).`,'heal');}return checkSkillFlags_casualtyCalc(aWho,dWho,att,def,n);};
@@ -4520,15 +4529,16 @@ function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
     }
     function destroyAtt(){
       const rd=Math.max(0,dRP-aRP);
+      if(aZone!=='rank'&&window.ruSurvivesBattle&&window.ruSurvivesBattle(aWho,aZone,att,'attacker',(G._battleResult||{}).winner))return;
       if(rd>0)log(`+${rd} extra Casualty Draw(s) from Rank advantage.`,'info');
       if(aZone==='rank'){applyDefeatCasualty(aWho,'rank',att,1+rd);return;}
       if(aZone==='delta'){applyDefeatCasualty(aWho,'delta',att,rd);return;}
       applyDefeatCasualty(aWho,aZone,att,rd);
     }
     G._battleResult={aWho:aWho,dWho:dWho,attId:att.id,defId:def.id,winner:aNP>dNP?'attacker':(dNP>aNP?'defender':'tie')};
-    if(aNP>dNP){let diff=aNP-dNP;diff=checkSkillFlags_moraleCalc(aWho,dWho,att,def,diff);if(ds.halveMorale){diff=Math.ceil(diff/2);log('Divide: Morale Damage halved.','heal');}if(ds.noMorale){diff=0;log('No Morale Damage from this attack.','heal');}ruSetLastMoraleTo(dWho,diff);DP.mp-=diff;log(`${sideVerbLabel(dWho,'lose')} ${diff} MP. (${sidePossessiveLabel(dWho)} MP: ${DP.mp})`,'dmg');destroyDef();}
-    else if(dNP>aNP){const diff=dNP-aNP;AP.mp-=diff;log(`${sideVerbLabel(aWho,'lose')} ${diff} MP. (${sidePossessiveLabel(aWho)} MP: ${AP.mp})`,'dmg');destroyAtt();}
-    else{AP.mp-=aNP;DP.mp-=aNP;log(`Tie! Both take ${aNP} Morale Damage.`,'dmg');if(aZone!=='rank')destroyAtt();if(dZone!=='rank')destroyDef();}
+    if(aNP>dNP){let diff=aNP-dNP;diff=checkSkillFlags_moraleCalc(aWho,dWho,att,def,diff);if(ds.halveMorale){diff=Math.ceil(diff/2);log('Divide: Morale Damage halved.','heal');}if(ds.noMorale){diff=0;log('No Morale Damage from this attack.','heal');}if(window.ruShieldDamage)diff=window.ruShieldDamage(dWho,diff);ruSetLastMoraleTo(dWho,diff);DP.mp-=diff;log(`${sideVerbLabel(dWho,'lose')} ${diff} MP. (${sidePossessiveLabel(dWho)} MP: ${DP.mp})`,'dmg');destroyDef();}
+    else if(dNP>aNP){let diff=dNP-aNP;if(window.ruShieldDamage)diff=window.ruShieldDamage(aWho,diff);AP.mp-=diff;log(`${sideVerbLabel(aWho,'lose')} ${diff} MP. (${sidePossessiveLabel(aWho)} MP: ${AP.mp})`,'dmg');destroyAtt();}
+    else{const aD=window.ruShieldDamage?window.ruShieldDamage(aWho,aNP):aNP,dD=window.ruShieldDamage?window.ruShieldDamage(dWho,aNP):aNP;AP.mp-=aD;DP.mp-=dD;log(`Tie! Both take ${aNP} Morale Damage.`,'dmg');if(aZone!=='rank')destroyAtt();if(dZone!=='rank')destroyDef();}
     checkWin();
   }
 
@@ -5038,10 +5048,10 @@ function resolveAtkL27(aWho,aZone,dWho,dZone,addonNP){
     }
 
 function resolveAtkL28(aWho,aZone,dWho,dZone,addonNP){
-      // Celestial: what the battle did (defeats, the Rank Zone's attack, attacked players) drives its skills
-      var snap=window.celestialAttackSnap?window.celestialAttackSnap(aWho,aZone,dWho,dZone):null;
+      // what the battle did (defeats, removals, attacked players) drives the class rules (RU_HOOKS.attackResolved)
+      var snap=window.ruAttackSnap?window.ruAttackSnap(aWho,aZone,dWho,dZone):null;
       var r=resolveAtkL27.apply(this,arguments);
-      if(snap)window.celestialAttackResolved(snap);
+      if(snap)window.ruAttackResolved(snap);
       return r;
     }
 
@@ -5393,7 +5403,7 @@ function _aiBase(ph){
           let rt=G._reactiveRedirect||realTgt;G._reactiveRedirect=null;
           // The redirect target may now be in a different zone; verify it still exists.
           if(rt.zone!=='rank'&&!G.player[rt.zone==='left-flank'?'leftFlank':'rightFlank'])rt=realTgt;
-          if(window.celestialForcedTarget)rt=window.celestialForcedTarget('ai','player',rt);
+          if(window.ruForcedTarget)rt=window.ruForcedTarget('ai','player',rt);
           resolveAtk('ai',zone,'player',rt.zone,addonNP);
           G._defState={};
           card.attacksLeft=Math.max(0,atkLeft(card)-1);if(card.attacksLeft<=0)ai.attacksUsed[card.id]=true;
@@ -5954,6 +5964,7 @@ function renderAll(){
   }
   if(eng)window.applyHigherGroundPassiveRA16();
   if(eng&&window.ruRankKeeper)window.ruRankKeeper();   // an emptied Rank Zone takes the top Bank card
+  if(eng&&window.ruFieldWatch)window.ruFieldWatch();   // removals this turn; a card that cannot be removed goes back
   // Point of view lives in sideChrome/ruViewSeat: every render function paints each seat onto that seat's
   // own board, so this screen's seat is at the bottom without ever touching the game state.
   var r=renderAllL15();
@@ -6387,7 +6398,7 @@ function buildCard(card){
   const S=window.ruSDisp(card);
   const al=Math.max(card['№']||1, card.attacksLeft||1);const alStr=al>1?`<span style="font-size:.32rem;color:var(--morale)">×${al}</span>`:'';
   const sk=card.skillType!=='Basic'&&!card.usedSkill&&!(S==='㎁'&&/has no skill/i.test(card.skillText||''))?'<span style="font-size:.28rem;color:#d4b060;">◆</span>':'';
-  d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">${stars}</span><div class="cnp">${np}${alStr}</div><div class="csb">A:${ruADisp(A)}<br>M:${M}<br>S:${S}</div></div><div class="cname">${card.name}${sk}</div><div class="ctag">${card.skillType||''}</div>`;
+  d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">${stars}</span><div class="cnp">${np}${alStr}</div><div class="csb">A:${ruADisp(A)}<br>M:${M}<br>S:${S}${card.W!=null?'<br>W:'+ruADisp(window.ruW?window.ruW(card):card.W):''}</div></div><div class="cname">${card.name}${sk}</div><div class="ctag">${card.skillType||''}</div>`;
   return d;
 }
 function rz(id,card,owner,zone){
@@ -6610,7 +6621,7 @@ function useSafe(idx,card){
   checkWin();renderAll();
 }
 function useRet(idx,card){
-  if(window.celestialRetaliatory&&window.celestialRetaliatory(idx,card))return;   // Vex, Neo Strike Star
+  if(window.ruRetaliatoryHook&&window.ruRetaliatoryHook(idx,card))return;   // a class's own Retaliatory cards
   if(card && ['Counterattack','Counterstrike','Burning Star','Haunting Star','Drop Star'].indexOf(card.name) !== -1 && (typeof areaIn==='function' && (G.sideOrder||['player','ai']).some(function(w){return areaIn(w,'The Library');}))){
     G._libraryRetaliatoryUser = ruActor();
   }
@@ -6705,7 +6716,7 @@ function showCardModal(card,handIdx,extraBtns){
       body+=`<div class="cdn">${card.name}</div>`;
       if(card.type==='numeral'||card.type==='digit'){
         const np=card.currentNP!==undefined?card.currentNP:card.numeral;
-        body+=`<div class="cds">NP: ${np} | Rank: ${ruRDisp(card)} | A: ${ruADisp(card.A)} | M: ${ruMDisp(card)} | S: ${ruSDisp(card)}</div>`;
+        body+=`<div class="cds">NP: ${np} | Rank: ${ruRDisp(card)} | A: ${ruADisp(card.A)} | M: ${ruMDisp(card)} | S: ${ruSDisp(card)}${card.W!=null?' | W: '+ruADisp(window.ruW?window.ruW(card):card.W):''}</div>`;
         if(card.skillCost)body+=`<div class="cdt"><strong>Cost:</strong> ${card.skillCost}</div>`;
         body+=`<div class="cdt"><strong>Skill:</strong> ${card.skillText||'No skill.'}</div>`;
       } else if(card.type==='action'){
@@ -7184,7 +7195,7 @@ function execStepBase(step){
           if(step.to==='discard')p.discard.push(c);else if(step.to==='deadzone'){dzAdd(p,c);}else if(step.to==='bank')bankInsert(p,c);});
         ctx.handPicks.push(...picks);if(picks.length)log(`Dropped from hand: ${picks.map(c=>c.name).join(', ')}.`,'info');renderAll();runStep();});break;}
     case 'pick_bank':{
-      const pool=step.filter?p.bank.filter(step.filter):p.bank;
+      const pool=(step.filter?p.bank.filter(step.filter):p.bank).filter(c=>!c.noRemove);   // a card that cannot be removed stays
       if(!pool.length){if(step.optional){runStep();return;}log('No eligible cards in Bank. Skill cancelled.','dmg');SF=null;renderAll();return;}
       ruOwnedPicker(who,`Your Bank — ${step.label}`,pool,step.max||step.count||1,step.min||step.count||1,step.optional||false,(picks)=>{
         picks.forEach(c=>{const i=p.bank.indexOf(c);if(i!==-1)p.bank.splice(i,1);
@@ -7268,8 +7279,9 @@ function execStepBase(step){
       else if(dest==='deck_bottom')p.deck.push(card);else if(dest==='hand')p.hand.push(card);
       log(`${card.name} → ${dest}.`,'info');renderAll();runStep();break;}
     case 'auto_random_bank':{
-      if(!p.bank.length){log('No cards in Bank for this cost. Skill cancelled.','dmg');SF=null;renderAll();return;}
-      const i=window.ruRandInt(p.bank.length);const c=p.bank.splice(i,1)[0];
+      const _rb=p.bank.filter(c=>!c.noRemove);   // a card that cannot be removed stays in the Bank
+      if(!_rb.length){log('No cards in Bank for this cost. Skill cancelled.','dmg');SF=null;renderAll();return;}
+      const c=_rb[window.ruRandInt(_rb.length)];p.bank.splice(p.bank.indexOf(c),1);
       const dest=step.to||'deadzone';if(dest==='deadzone'){dzAdd(p,c);}else if(dest==='discard')p.discard.push(c);
       ctx.randomBankCard=c;log(`Random Bank card → ${dest}: ${c.name} (NP:${c.numeral||0}).`,'info');renderAll();runStep();break;}
     case 'pick_hand_nptotal':{
@@ -8896,7 +8908,7 @@ function resolveSafeguardL8(idx,card,atkInfo,onDone){
   return resolveSafeguardL7.apply(this,arguments);
 }
 function resolveSafeguard(idx,card,atkInfo,onDone){
-  if(window.celestialSafeguard&&window.celestialSafeguard(idx,card,atkInfo,onDone))return;   // Gravitate
+  if(window.ruSafeguardHook&&window.ruSafeguardHook(idx,card,atkInfo,onDone))return;   // a class's own Safeguards
   var UNRELATED={Recover:1,Return:1,Revive:1};
   function isPhantom7(c){return !!(c&&c.class==='phantom'&&c.numeral===7);}
   var blocked=!!(card&&!UNRELATED[card.name]&&isPhantom7(atkInfo&&atkInfo.attacker));
@@ -23655,37 +23667,50 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 </script>
 
 
-<script id="celestial-class">
+<script id="field-rules">
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-// CELESTIAL-CLASS — its Numeral skills, Asteroid Field and its Action Cards (Shooting Star, Gravitate, Vex,
-// Thrash Star, Neo Strike Star). The card data is in data.js; the engine calls the window.celestial* hooks below
-// from its attack (resolveAtkL28, ruDeclareAttack), phase (beginPhase), Promotion (tryPromote), target
-// (ruIsLegalAttackTarget), Safeguard, Retaliatory and Dead Draw (applyE2) points.
-// Every choice is a prompt the owning seat answers (bot seats answer them too); `!isHumanSeat` branches only serve
-// the old fallback bot.
+// FIELD RULES shared by every class.
+// • Class hooks: a class block registers handlers with ruHook(name, fn); the engine calls each list at its fixed
+//   point — attackResolved (after a battle), beforeAttack (an attacker's own "when you attack" prompt), forcedTarget /
+//   targetBlocked (attack targets), phaseBegan, beforeEnd (End Phase prompts), rankedUp, promoteBlocked (Rank Up
+//   restrictions), safeguard / retaliatory / e2 (a class's own Action Cards), removed (a card left the field),
+//   survives (a card the battle would destroy stays).
+// • "Removed from the field": a card leaves the Battlefield for a hand, Deck, Drop or Deadzone — destroyed in battle,
+//   Stood Down (Relieve / Chief Flank included) or sent there by an effect. Going to the Bank (a Rank Up, an Invest)
+//   is not removal. The field watch (ruFieldWatch, a render-time engine pass, so every screen and the bot worker run
+//   it at the same points) records each removal this turn in G._removed and fires the `removed` hooks.
+// • "Cannot be removed" (ruProtect / ruUnremovable): not even its controller can Stand Down or Relieve it. Battle,
+//   Stand Down and Relieve refuse such a card; any other way it leaves, the watch puts it back where it was. A card
+//   printed with noRemove (Ochre 0) cannot leave the Battlefield or the Bank (Bank <-> Rank Zone is still fine).
+// • Per-card attack bans (ruBanAttack / ruAttackBanned), MP-damage shields (ruShield / ruShieldDamage), the W-stat
+//   (ruW: printed W, this turn's changes, changes that last while on the field; never below 0).
+// • window.ruFx: the effect helpers class blocks share (moving cards, prompts, clicking a target on the board).
+// Durations (`until`): {turn:T} this turn · {turn:T, phase} this phase · {seat, after:T} until the end of that
+// seat's next turn · {untilTurn:N} through turn N · {always:true}.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 (function(){
   'use strict';
+  var HOOKS = window.RU_HOOKS = { attackResolved:[], beforeAttack:[], forcedTarget:[], targetBlocked:[], phaseBegan:[], beforeEnd:[],
+    rankedUp:[], promoteBlocked:[], safeguard:[], retaliatory:[], e2:[], removed:[], survives:[] };
+  window.ruHook = function(name, fn){ HOOKS[name].push(fn); };
+
   function side(w){ return G&&G[w]; }
   function say(m,c){ try{ log(m,c||'info'); }catch(e){} }
   function refresh(){ try{ checkWin(); }catch(e){} try{ renderAll(); }catch(e){} }
   function tn(){ return G._turnNo||0; }
   function np(c){ return c?Number(c.currentNP!=null?c.currentNP:(c.numeral||0))||0:0; }
-  function isCelNum(c){ return !!(c&&c.class==='celestial'&&c.type==='numeral'); }
   function isNum(c){ return !!(c&&(c.type==='numeral'||c.type==='evolution')); }
   function living(){ return (G.sideOrder||['player','ai']).filter(function(s){ return G[s]&&!(G.eliminated&&G.eliminated[s]); }); }
   var SLOTS=[['rank','rankZone'],['left-flank','leftFlank'],['right-flank','rightFlank'],['rear-flank','rearFlank']];
+  var ZONES=['rank','left-flank','right-flank','rear-flank','delta'];
+  var PILES=['hand','deck','discard','deadzone','bank'];
+  function zc(p,z){ if(!p)return null; var c=window.zCard(p,z); return c&&!c._empty?c:null; }
   function realRank(p){ return p&&p.rankZone&&!p.rankZone._empty?p.rankZone:null; }
-  function fieldCards(p){
-    var out=[]; if(!p)return out;
-    SLOTS.forEach(function(s){ var c=p[s[1]]; if(c&&!c._empty)out.push(c); });
-    if(p.delta&&p.delta[0])out.push(p.delta[0]);
-    return out;
-  }
+  function fieldCards(p){ return p?ZONES.map(function(z){ return zc(p,z); }).filter(Boolean):[]; }
   function zoneOf(p,card){
     if(!p||!card)return null;
-    for(var i=0;i<SLOTS.length;i++){ var c=p[SLOTS[i][1]]; if(c&&!c._empty&&c.id===card.id)return SLOTS[i][0]; }
-    return (p.delta&&p.delta[0]&&p.delta[0].id===card.id)?'delta':null;
+    for(var i=0;i<ZONES.length;i++){ var c=zc(p,ZONES[i]); if(c&&c.id===card.id)return ZONES[i]; }
+    return null;
   }
   // Where a card is on the Battlefield (any seat): {w, zone, card} with the live object, or null.
   function onField(card){
@@ -23694,25 +23719,208 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     for(var i=0;i<s.length;i++){ var z=zoneOf(G[s[i]],card); if(z)return {w:s[i],zone:z,card:window.zCard(G[s[i]],z)}; }
     return null;
   }
+  // Where a card is off the Battlefield: {s, pile, card}.
+  function locate(id){
+    var s=G.sideOrder||['player','ai'];
+    for(var i=0;i<s.length;i++){ var p=G[s[i]]; if(!p)continue;
+      for(var k=0;k<PILES.length;k++){ var a=p[PILES[k]]||[]; for(var j=0;j<a.length;j++)if(a[j]&&a[j].id===id)return {s:s[i],pile:PILES[k],card:a[j]}; } }
+    return null;
+  }
+  // ---- durations ----
+  function active(u){
+    if(!u)return false; if(u.always)return true;
+    var T=tn();
+    if(u.turn!=null&&T!==u.turn)return false;
+    if(u.phase&&G.phase!==u.phase)return false;
+    if(u.untilTurn!=null&&T>u.untilTurn)return false;
+    if(u.seat&&u.endsAt!=null&&T>u.endsAt)return false;
+    return true;
+  }
+  // ---- "cannot be removed" ----
+  // ruProtect(card, until, uses): uses = how many removals it stops (omitted: every one while it lasts).
+  window.ruProtect=function(card,until,uses){ if(!card)return; (G._protect=G._protect||[]).push({id:card.id,u:until,uses:uses==null?null:uses}); };
+  // ruProtectZones(seat, zones, until): every Numeral in those zones of that seat.
+  window.ruProtectZones=function(seat,zones,until){ (G._protectZones=G._protectZones||[]).push({seat:seat,zones:zones,u:until}); };
+  // lasting: only protection that holds every time (a one-time shield does not keep a card from being chosen — the
+  // removal attempt is what uses it up)
+  function shieldEntry(card,seat,zone,lasting){
+    if(!card)return null;
+    if(card.noRemove)return {always:true};
+    var e=(G._protect||[]).find(function(x){ return x.id===card.id&&active(x.u)&&(lasting?x.uses==null:(x.uses==null||x.uses>0)); });
+    if(e)return e;
+    if(seat&&zone){ var zz=(G._protectZones||[]).find(function(x){ return x.seat===seat&&x.zones.indexOf(zone)!==-1&&active(x.u); }); if(zz&&isNum(card))return zz; }
+    return null;
+  }
+  // Is it protected where it is (seat/zone default to where it is now)? consume: a one-time shield is used up.
+  function unremovable(card,seat,zone,consume,lasting){
+    if(!card)return false;
+    if(!seat){ var f=onField(card); if(f){ seat=f.w; zone=f.zone; } }
+    var e=shieldEntry(card,seat,zone,lasting); if(!e)return false;
+    if(consume&&e.uses!=null)e.uses--;
+    return true;
+  }
+  // ruUnremovable: is it protected at all (lasting: only protection that holds every time — what choices skip)
+  window.ruUnremovable=function(card,seat,zone,lasting){ return unremovable(card,seat,zone,false,!!lasting); };
+  // The point where a removal is refused: true (and the log line) when the card stays.
+  window.ruRefuseRemoval=function(card,seat,zone){
+    if(!unremovable(card,seat,zone,true))return false;
+    say(card.name+' cannot be removed.','heal'); return true;
+  };
+  // ---- per-card attack bans ----
+  window.ruBanAttack=function(card,until){ if(card)(G._attackBans=G._attackBans||[]).push({id:card.id,u:until}); };
+  window.ruAttackBanned=function(card){ return !!(card&&(G._attackBans||[]).some(function(x){ return x.id===card.id&&active(x.u); })); };
+  // ---- MP-damage shields (battle Morale Damage) ----
+  window.ruShield=function(seat,amount,until){ (G._mpShields=G._mpShields||[]).push({seat:seat,left:amount,u:until}); };
+  window.ruShieldDamage=function(seat,n){
+    if(!(n>0))return n;
+    (G._mpShields||[]).forEach(function(s){ if(n>0&&s.seat===seat&&s.left>0&&active(s.u)){ var k=Math.min(n,s.left); s.left-=k; n-=k; say('Damage reduced by '+k+' MP.','heal'); } });
+    return n;
+  };
+  // ---- W-stat ----
+  window.ruW=function(c){
+    if(!c)return 0;
+    var t=(c._wTurn&&c._wTurn.turn===tn())?c._wTurn.v:0;
+    return Math.max(0,(Number(c.W)||0)+t+(c._wField||0));
+  };
+  window.ruWTotal=function(seat){ return fieldCards(side(seat)).filter(isNum).reduce(function(s,c){ return s+window.ruW(c); },0); };
+
+  // ---- the field watch ----
+  // Takes a card back to where it was removed from. A Rank Zone it returns to sends whatever took its place back to
+  // the top of the Bank; a Flank it returns to sends a card that moved in since to the Bank.
+  function restoreTo(loc,seat,zone){
+    var src=G[loc.s],c=loc.card,p=G[seat];
+    var a=src[loc.pile],i=a.indexOf(c); if(i===-1)return false;
+    a.splice(i,1); if(loc.pile==='deadzone')src.cas=Math.max(-7,(src.cas||0)-1);
+    var cur=window.zCard(p,zone);
+    if(zone==='rank'){ if(cur&&!cur._empty&&cur.id!==c.id)p.bank.unshift(cur); p.rankZone=c; }
+    else{ if(cur&&cur.id!==c.id)bankInsert(p,cur); window.zSet(p,zone,c); }
+    return true;
+  }
+  window.ruRestoreRemoved=function(rec){
+    var loc=locate(rec.id); if(!loc||loc.pile==='bank')return false;
+    if(onField({id:rec.id}))return false;
+    var cur=window.zCard(G[rec.owner],rec.zone);
+    if(rec.zone!=='rank'&&cur&&!cur._empty)return false;     // a Flank that is taken again: nowhere to return to
+    restoreTo(loc,rec.owner,rec.zone);
+    G._removed=(G._removed||[]).filter(function(r){ return r!==rec; });
+    seenNow();
+    return true;
+  };
+  // Removals this turn that can still go back (the card is still where it went, its Flank is free).
+  window.ruReturnable=function(filter){
+    return (G._removed||[]).filter(function(r){
+      if(r.turn!==tn()||(filter&&!filter(r)))return false;
+      var loc=locate(r.id); if(!loc||loc.pile==='bank'||onField({id:r.id}))return false;
+      var cur=window.zCard(G[r.owner],r.zone);
+      return r.zone==='rank'||!(cur&&!cur._empty);
+    });
+  };
+  function seenNow(){
+    var now={},bank={};
+    (G.sideOrder||['player','ai']).forEach(function(s){ var p=G[s]; if(!p)return; now[s]={};
+      ZONES.forEach(function(z){ var c=zc(p,z); if(c)now[s][z]=c.id; });
+      bank[s]=(p.bank||[]).filter(function(c){ return c&&c.noRemove; }).map(function(c){ return c.id; }); });
+    G._fieldSeen=now; G._bankSeen=bank;
+  }
+  var watching=false;
+  window.ruFieldWatch=function(){
+    if(!G||!G.turn||watching)return;
+    watching=true;
+    try{
+      var T=tn(),seen=G._fieldSeen,bankSeen=G._bankSeen||{},fired=[];
+      if(seen){
+        var here={};
+        (G.sideOrder||['player','ai']).forEach(function(s){ ZONES.forEach(function(z){ var c=zc(G[s],z); if(c)here[c.id]=1; }); });
+        Object.keys(seen).forEach(function(s){ Object.keys(seen[s]).forEach(function(z){
+          var id=seen[s][z]; if(here[id])return;                         // still on a Battlefield (another zone / side)
+          var loc=locate(id); if(!loc)return;
+          loc.card._wField=0;                                              // what the field gave it ends with leaving it
+          if(loc.pile==='bank')return;                                     // to the Bank: not removal
+          if(unremovable(loc.card,s,z,true)&&restoreTo(loc,s,z)){ say(loc.card.name+' cannot be removed — it stays.','heal'); here[id]=1; return; }
+          var rec={id:id,name:loc.card.name,cls:loc.card.class,owner:s,zone:z,turn:T,phase:G.phase,to:loc.pile,toSeat:loc.s};
+          (G._removed=G._removed||[]).push(rec); fired.push({rec:rec,card:loc.card});
+        }); });
+        // a card that cannot leave the Bank either (it may go Bank <-> Rank Zone)
+        Object.keys(bankSeen).forEach(function(s){ (bankSeen[s]||[]).forEach(function(id){
+          var p=G[s]; if(!p||here[id]||(p.bank||[]).some(function(c){ return c.id===id; }))return;
+          var loc=locate(id); if(!loc||loc.pile==='bank')return;
+          var a=G[loc.s][loc.pile]; a.splice(a.indexOf(loc.card),1); if(loc.pile==='deadzone')G[loc.s].cas=Math.max(-7,(G[loc.s].cas||0)-1);
+          bankInsert(p,loc.card); say(loc.card.name+' cannot be removed from the Bank — it stays.','heal');
+        }); });
+      }
+      seenNow();
+      if(G._removed&&G._removed.length&&G._removed[0].turn<T)G._removed=G._removed.filter(function(r){ return r.turn>=T; });
+      fired.forEach(function(x){ HOOKS.removed.forEach(function(f){ try{ f(x.rec,x.card); }catch(e){ console.error(e); } }); });
+    }finally{ watching=false; }
+  };
+
+  // ---- engine entry points that call the class hooks ----
+  // An attack: what it was (snap, before it resolves) and what it did (resolved, after).
+  window.ruAttackSnap=function(aWho,aZone,dWho,dZone){
+    var A=side(aWho),D=side(dWho); if(!A||!D)return null;
+    var att=window.zCard(A,aZone),def=window.zCard(D,dZone);
+    var rec=G._atkAddonCards; G._atkAddonCards=null; G._battleResult=null;
+    var addons=(rec&&att&&rec.aWho===aWho&&rec.attId===att.id)?rec.cards.slice():[];
+    return {aWho:aWho,aZone:aZone,dWho:dWho,dZone:dZone,att:att,def:def,addons:addons};
+  };
+  window.ruAttackResolved=function(s){
+    if(!s||!s.att||!s.def)return;
+    window.ruFieldWatch();
+    s.result=G._battleResult;
+    // "defeated in battle": attacked and did not win (G._battleResult); kept for this turn
+    if(s.result&&s.result.defId===s.def.id&&s.result.winner!=='defender')(G._defeated=(G._defeated||[]).filter(function(d){ return d.turn===tn(); })).push({id:s.def.id,owner:s.dWho,zone:s.dZone,turn:tn()});
+    HOOKS.attackResolved.forEach(function(f){ try{ f(s); }catch(e){ console.error(e); } });
+  };
+  window.ruDefeatedThisTurn=function(seat){ return (G._defeated||[]).filter(function(d){ return d.turn===tn()&&(!seat||d.owner===seat); }); };
+  // the first handler that takes over (returns true) holds the flow; it continues through `resume`
+  function first(list,args){ for(var i=0;i<list.length;i++){ if(list[i].apply(null,args))return true; } return false; }
+  window.ruBeforeAttack=function(aw,aZone,dw,dZone,resume){ return first(HOOKS.beforeAttack,[aw,aZone,dw,dZone,resume]); };
+  window.ruBeforeEnd=function(resume){ return first(HOOKS.beforeEnd,[resume]); };
+  window.ruSafeguardHook=function(idx,card,atkInfo,onDone){ return first(HOOKS.safeguard,[idx,card,atkInfo,onDone]); };
+  window.ruRetaliatoryHook=function(idx,card){ return first(HOOKS.retaliatory,[idx,card]); };
+  window.ruE2Hook=function(w,card){ return first(HOOKS.e2,[w,card]); };
+  window.ruTargetBlocked=function(me,owner,zone){ return HOOKS.targetBlocked.some(function(f){ return f(me,owner,zone); }); };
+  window.ruForcedTarget=function(aw,dw,rt){ HOOKS.forcedTarget.forEach(function(f){ rt=f(aw,dw,rt)||rt; }); return rt; };
+  window.ruRankedUp=function(w,from,card){ HOOKS.rankedUp.forEach(function(f){ try{ f(w,from,card); }catch(e){ console.error(e); } }); };
+  // a Rank Up a card's own rule forbids: the reason, or null
+  window.ruPromoteBlocked=function(w,card){ for(var i=0;i<HOOKS.promoteBlocked.length;i++){ var r=HOOKS.promoteBlocked[i](w,card); if(r)return r; } return null; };
+  // a card the battle would destroy that stays: role 'defender' | 'attacker', winner as G._battleResult says
+  window.ruSurvivesBattle=function(seat,zone,card,role,winner){
+    if(window.ruRefuseRemoval(card,seat,zone))return true;
+    return HOOKS.survives.some(function(f){ return f(seat,zone,card,role,winner); });
+  };
+  window.ruPhaseBegan=function(ph){
+    window.ruFieldWatch();
+    var T=tn();
+    // durations that end with their seat's next turn
+    if(ph==='end'){ [G._protect,G._attackBans,G._protectZones,G._mpShields].forEach(function(list){ (list||[]).forEach(function(x){ if(x.u&&x.u.seat===G.turn&&x.u.endsAt==null&&T>x.u.after)x.u.endsAt=T; }); }); }
+    if(ph==='draw'){ ['_protect','_attackBans','_protectZones','_mpShields'].forEach(function(k){ if(G[k])G[k]=G[k].filter(function(x){ return active(x.u)||(x.u&&x.u.turn==null&&x.u.untilTurn==null&&x.u.seat&&x.u.endsAt==null); }); }); }
+    HOOKS.phaseBegan.forEach(function(f){ try{ f(ph); }catch(e){ console.error(e); } });
+  };
+
+  // ---- shared effect helpers ----
   // A card going back to a hand or Deck loses what the Battlefield gave it.
-  function fresh(c){ if(c.numeral!=null)c.currentNP=c.numeral; c.currentRP=c.rank||0; c.attacksLeft=1; c['№']=1; c.usedSkill=false; c.frozen=false; return c; }
-  // A Battlefield card of seat w goes to dest. A Rank Zone it leaves takes the Bank's top card (or the empty-Rank
-  // stand-in) — exactly as when a player Stands Down their Rank Zone card.
+  function fresh(c){ if(c.numeral!=null)c.currentNP=c.numeral; c.currentRP=c.rank||0; c.attacksLeft=1; c['№']=1; c.usedSkill=false; c.frozen=false; c._wField=0; return c; }
+  // A Battlefield card of seat w goes to dest ('hand' | 'deck_bottom' | 'deadzone' | 'discard'). A Rank Zone it leaves
+  // takes the Bank's top card (or the empty-Rank stand-in), exactly as a Stand Down does. A card that cannot be removed
+  // stays (false).
   function fieldTo(w,card,dest){
     var p=side(w),z=zoneOf(p,card); if(!z)return false;
     var c=window.zCard(p,z);
-    if(z==='rank')p.rankZone=p.bank.length?p.bank.shift():ruEmptyRank('cel-'+uid()); else window.zSet(p,z,null);
+    if(window.ruRefuseRemoval(c,w,z))return false;
+    if(z==='rank')p.rankZone=p.bank.length?p.bank.shift():ruEmptyRank('fx-'+uid()); else window.zSet(p,z,null);
     ruLeaveOtherSides(p,c);
     if(dest==='hand')p.hand.push(fresh(c));
     else if(dest==='deck_bottom')p.deck.push(fresh(c));
     else if(dest==='deadzone')dzAdd(p,c);
     else p.discard.push(c);
+    window.ruFieldWatch();
     return true;
   }
-  // Stand Down by an effect: the card goes to its owner's Drop, as the Stand Down action does.
+  // Stand Down by an effect or a rule: the card goes to its owner's Drop, as the Stand Down action does.
   function standDown(card,label){
     var f=onField(card); if(!f)return false;
-    fieldTo(f.w,f.card,'discard');
+    if(!fieldTo(f.w,f.card,'discard'))return false;
     say(label+': '+sidePossessiveLabel(f.w)+' '+f.card.name+' is Stood Down.','dmg');
     return true;
   }
@@ -23727,9 +23935,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var v=(typeof card.S==='number'&&card.S!==99&&card.S!==-99)?card.S:0;
     if(v){ G[w].mp+=v; say(card.name+': '+(v>0?'+':'')+v+' MP.',v>0?'heal':'dmg'); }
   }
-  function fromHand(p,c,dest){ var i=p.hand.indexOf(c); if(i===-1)return false; p.hand.splice(i,1); if(dest==='deadzone')dzAdd(p,c); else p.discard.push(c); return true; }
+  function fromHand(p,c,dest){ var i=p.hand.indexOf(c); if(i===-1)return false; p.hand.splice(i,1); if(dest==='deadzone')dzAdd(p,c); else if(dest==='deck_bottom')p.deck.push(c); else p.discard.push(c); return true; }
   function fromDeadzone(p,c){ var i=p.deadzone.indexOf(c); if(i===-1)return false; p.deadzone.splice(i,1); p.cas=Math.max(-7,(p.cas||0)-1); return true; }
-  // ---- prompts (owned by the seat whose decision it is) ----
+  function deadzoneToDrop(w,card){ var p=side(w); if(fromDeadzone(p,card))p.discard.push(card); }
+  function grantAttack(card,n){ card.attacksLeft=atkLeft(card)+n; card.canAttack=true; }
+  // ---- prompts (owned by the seat whose decision it is); `!isHumanSeat` branches only serve the old fallback bot ----
   function ask(w,title,body,useLabel,yes,no){
     if(!isHumanSeat(w)){ yes(); return; }
     ruOwnPrompt(w);
@@ -23737,12 +23947,26 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       {label:useLabel,cls:'mb-skill',fn:function(){ closeModal(); yes(); }},
       {label:'Decline',fn:function(){ closeModal(); if(no)no(); }}]);
   }
+  // a choice between named options: opts [{label, fn}]
+  function choose(w,title,body,opts){
+    if(!opts.length)return;
+    if(!isHumanSeat(w)){ opts[0].fn(); return; }
+    ruOwnPrompt(w);
+    openModal(title,'<p style="font-size:.82rem;">'+body+'</p>',opts.map(function(o){ return {label:o.label,cls:'mb-skill',fn:function(){ closeModal(); o.fn(); }}; }));
+  }
   function pick(w,label,pool,max,min,cb){
     pool=(pool||[]).filter(Boolean); max=Math.min(max,pool.length);
     if(pool.length<min){ cb(null); return; }
     if(!max){ cb([]); return; }
     if(!isHumanSeat(w)){ cb(pool.slice(0,Math.max(min,max))); return; }
     ruOwnedPicker(w,label,pool,max,min,min===0,function(p){ cb(p||[]); });
+  }
+  // cards from a hand whose NP total reaches min
+  function pickNP(w,label,pool,min,cb){
+    pool=(pool||[]).filter(Boolean);
+    if(pool.reduce(function(s,c){ return s+np(c); },0)<min){ cb(null); return; }
+    if(!isHumanSeat(w)){ var s=pool.slice().sort(function(a,b){ return np(b)-np(a); }),out=[],t=0; for(var i=0;i<s.length&&t<min;i++){ out.push(s[i]); t+=np(s[i]); } cb(out); return; }
+    ruOwnedPickerNP(w,label,pool,min,function(picks){ var t=(picks||[]).reduce(function(s,c){ return s+np(c); },0); cb(t>=min?picks:null); });
   }
   function choosePlayer(w,title,seats,describe,cb){
     if(!seats.length){ cb(null); return; }
@@ -23753,20 +23977,23 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       return {label:sideSubjectLabel(s)+' — '+describe(s),cls:'mb-skill',fn:function(){ closeModal(); cb(s); }};
     }));
   }
-  // The user clicks a Battlefield card on the board — any player's, where legal(owner, zone, card) allows (legal cards glow).
-  // cb(owner, zone, card), or cb(null) when nothing is legal. Cancelling the pick (Cancel / End Turn) ends the effect.
+  // The user clicks a Battlefield card on the board — any player's, where legal(owner, zone, card) allows (legal cards
+  // glow) — always asked, even with one legal card. cb(owner, zone, card), or cb(null) when nothing is legal.
+  // Cancelling the pick (Cancel / End Turn) ends the effect; target before paying, so nothing is lost.
   function boardPick(w,hint,legal,cb){
-    var zs=['rank','left-flank','right-flank','rear-flank','delta'],cands=[];
-    living().forEach(function(s2){ zs.forEach(function(z){ var c=window.zCard(G[s2],z); if(c&&!c._empty&&legal(s2,z,c))cands.push({s:s2,z:z,c:c}); }); });
+    var cands=[];
+    living().forEach(function(s2){ ZONES.forEach(function(z){ var c=zc(G[s2],z); if(c&&legal(s2,z,c))cands.push({s:s2,z:z,c:c}); }); });
     if(!cands.length){ cb(null); return; }
     if(!isHumanSeat(w)){ var x=cands.find(function(e){ return e.s!==w; })||cands[0]; cb(x.s,x.z,x.c); return; }
-    G._oppZoneAnySide=true; G._oppZoneZones=zs; G._oppZoneOwner=w;
+    G._oppZoneAnySide=true; G._oppZoneZones=ZONES; G._oppZoneOwner=w;
     G._oppZoneFilter=function(c,owner,zone){ return legal(owner,zone,c); };
     G._oppZoneCb=function(zone,card,owner){ G._oppZoneCb=null; G._oppZoneFilter=null; G._oppZoneAnySide=null; G._oppZoneZones=null; G._oppZoneOwner=null; clearHL(); hide('btn-can'); setHint(''); cb(owner,zone,card); };
     G.mode='oppzonepick'; renderAll(); clearHL();
     cands.forEach(function(e){ var el2=document.getElementById(window.zId(e.s,e.z)); if(el2)el2.classList.add('ht'); });
-    setHint(hint+' \u2014 click a highlighted card.'); show('btn-can');
+    setHint(hint+' — click a highlighted card.'); show('btn-can');
   }
+  // a card an effect may choose to remove (one that cannot be removed is not a choice)
+  function removable(seat,zone,c){ return !window.ruUnremovable(c,seat,zone,true); }
   function rankDesc(s){ var r=realRank(G[s]); return r?(r.name+' (NP '+np(r)+')'):'no Rank Zone card'; }
   function withRank(){ return living().filter(function(s){ return realRank(G[s]); }); }
   // The player who gave seat w a casualty: the turn player when it is not w's turn, else the player w last attacked.
@@ -23777,8 +24004,32 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return livingOpponentsOf(w)[0]||null;
   }
   function addE2M(w,card){ var m=card.M||0; if(m){ G[w].mp+=m; say(card.name+' (E2): '+sidePossessiveLabel(w)+' MP '+(m>0?'+':'')+m+'.',m>0?'heal':'dmg'); } }
-  function deadzoneToDrop(w,card){ var p=side(w); if(fromDeadzone(p,card))p.discard.push(card); }
-  function grantAttack(card,n){ card.attacksLeft=atkLeft(card)+n; card.canAttack=true; }
+  window.ruFx={side:side,say:say,refresh:refresh,tn:tn,np:np,isNum:isNum,living:living,SLOTS:SLOTS,ZONES:ZONES,realRank:realRank,
+    fieldCards:fieldCards,zoneOf:zoneOf,onField:onField,locate:locate,fresh:fresh,fieldTo:fieldTo,standDown:standDown,millN:millN,
+    skillMP:skillMP,fromHand:fromHand,fromDeadzone:fromDeadzone,deadzoneToDrop:deadzoneToDrop,grantAttack:grantAttack,ask:ask,choose:choose,
+    pick:pick,pickNP:pickNP,choosePlayer:choosePlayer,boardPick:boardPick,removable:removable,rankDesc:rankDesc,withRank:withRank,
+    casualtyGiver:casualtyGiver,addE2M:addE2M,active:active};
+})();
+</script>
+
+<script id="celestial-class">
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// CELESTIAL-CLASS — its Numeral skills, Asteroid Field and its Action Cards (Shooting Star, Gravitate, Vex,
+// Thrash Star, Neo Strike Star). The card data is in data.js; its rules register with the shared hook lists
+// (field-rules: ruHook) the engine calls at its attack, phase, Promotion, target, Safeguard, Retaliatory and
+// Dead Draw / E2 points, and it uses the shared effect helpers (window.ruFx).
+// Every choice is a prompt the owning seat answers (bot seats answer them too); `!isHumanSeat` branches only serve
+// the old fallback bot.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+(function(){
+  'use strict';
+  var F=window.ruFx;
+  var side=F.side,say=F.say,refresh=F.refresh,tn=F.tn,np=F.np,isNum=F.isNum,living=F.living,SLOTS=F.SLOTS,realRank=F.realRank,
+      fieldCards=F.fieldCards,zoneOf=F.zoneOf,onField=F.onField,fresh=F.fresh,fieldTo=F.fieldTo,standDown=F.standDown,millN=F.millN,
+      skillMP=F.skillMP,fromHand=F.fromHand,fromDeadzone=F.fromDeadzone,deadzoneToDrop=F.deadzoneToDrop,grantAttack=F.grantAttack,
+      ask=F.ask,pick=F.pick,choosePlayer=F.choosePlayer,boardPick=F.boardPick,removable=F.removable,rankDesc=F.rankDesc,
+      withRank=F.withRank,casualtyGiver=F.casualtyGiver,addE2M=F.addE2M;
+  function isCelNum(c){ return !!(c&&c.class==='celestial'&&c.type==='numeral'); }
 
   // ═══ NUMERAL SKILLS (activated) ═══
   // Celestial 1 — Cost: return this card from the Battlefield to your hand. Skill: once per turn, you may add one
@@ -23799,7 +24050,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       return true;
     },
     steps:[{type:'effect',fn:function(w,p,o,zone,card){
-      boardPick(w,'Celestial 2: choose the Rank Zone card that returns to its owner\u2019s hand',function(s2,z){ return z==='rank'; },function(t,tz,tc){
+      boardPick(w,'Celestial 2: choose the Rank Zone card that returns to its owner\u2019s hand',function(s2,z,c2){ return z==='rank'&&removable(s2,z,c2); },function(t,tz,tc){
         if(!t){ refresh(); return; }
         var bi=p.bank.indexOf(card); if(bi===-1){ say('Celestial 2 is no longer in the Bank.','dmg'); refresh(); return; }
         p.bank.splice(bi,1); dzAdd(p,card); say('Celestial 2 \u2192 deadzone.','info'); millN(w,3);
@@ -23825,7 +24076,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       return true;
     },
     steps:[{type:'effect',fn:function(w,p,o,zone,card){
-      boardPick(w,'Celestial 7: choose the Rank Zone card to send to the bottom of its Deck',function(s2,z){ return z==='rank'&&cel7Targets(w).indexOf(s2)!==-1; },function(t,tz,r){
+      boardPick(w,'Celestial 7: choose the Rank Zone card to send to the bottom of its Deck',function(s2,z,c2){ return z==='rank'&&removable(s2,z,c2)&&cel7Targets(w).indexOf(s2)!==-1; },function(t,tz,r){
         if(!t||!r){ refresh(); return; }
         var need=np(r);
         // two picks, the second limited to cards that make the pair total more than the target's NP
@@ -23877,16 +24128,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 
   // ═══ NUMERAL SKILLS (triggered) ═══
   // Attack bookkeeping and the battle-triggered skills. snap() runs before an attack resolves, resolved() after.
-  window.celestialAttackSnap=function(aWho,aZone,dWho,dZone){
-    var A=side(aWho),D=side(dWho); if(!A||!D)return null;
-    var att=window.zCard(A,aZone),def=window.zCard(D,dZone);
-    var rec=G._atkAddonCards; G._atkAddonCards=null; G._battleResult=null;
-    var addons=(rec&&att&&rec.aWho===aWho&&rec.attId===att.id)?rec.cards.slice():[];
-    return {aWho:aWho,aZone:aZone,dWho:dWho,dZone:dZone,att:att,def:def,addons:addons};
-  };
   // A card that left the Battlefield in this battle (a Rank Zone card that loses stays — its owner takes the casualty).
   function leftField(card,w){ return !!(card&&!card._empty&&!zoneOf(side(w),card)); }
-  window.celestialAttackResolved=function(s){
+  ruHook('attackResolved',function(s){
     if(!s||!s.att||!s.def)return;
     var A=side(s.aWho),D=side(s.dWho),T=tn();
     if(s.aZone==='rank')A._celRankAttacked=s.att.id+'@'+T;
@@ -23914,7 +24158,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       if(d.numeral===4)offerCel4(w,d,s.att);
       if(d.numeral===6)returnCel6(w,d);
     }
-  };
+  });
   function casualtiesThisTurn(w){ return ((G._casCardsThisTurn&&G._casCardsThisTurn[w])||[]).length+((G._celBattleCas||{})[w+'@'+tn()]||0); }
   // Celestial 0 — when defeated in battle, the Numerals that attacked it return to their player's hand after your next
   // Draw Phase.
@@ -23956,7 +24200,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // Celestial 5 — Cost: once per turn when you attack with it, you may mill 3. Skill: if the last card milled is a
   // Celestial-class Numeral, the card targeted for attack is Stood Down after the attack, once the opponent has taken at
   // least 2 Morale Damage and one Casualty this turn. Returns true when it opened its prompt (the attack goes on after).
-  window.celestialBeforeAttack=function(aw,aZone,dw,dZone,resume){
+  ruHook('beforeAttack',function(aw,aZone,dw,dZone,resume){
     var A=side(aw),att=A&&window.zCard(A,aZone);
     if(!att||att.name!=='Celestial 5'||att._cel5Turn===tn()||!A.deck.length)return false;
     att._cel5Turn=tn();
@@ -23969,12 +24213,12 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       refresh(); resume();
     },resume);
     return true;
-  };
+  });
   // Celestial 9 — when it enters the Battlefield by being promoted from a Rank³ Numeral: Cost: send the highest card in your
   // Bank to the Deadzone, then this card to the Deadzone. Skill: Stand Down every Rank Zone card, then all players mill
   // one card; 4 Morale Damage to every opponent per card sent to the Drop by this skill. You cannot attack this turn or
   // draw at the start of your next turn.
-  window.celestialRankedUp=function(w,from,card){
+  ruHook('rankedUp',function(w,from,card){
     var p=side(w);
     if(!card||card.name!=='Celestial 9'||!from||from.rank!==3||!p.bank.length)return;
     ask(w,'Celestial 9 — use its skill?','Celestial 9 was promoted from a Rank³ Numeral. Send the highest card in your Bank and Celestial 9 to the Deadzone: every Rank Zone card is Stood Down, then all players mill 1; each opponent takes 4 Morale Damage per card sent to the Drop (S: -6 MP). You cannot attack this turn or draw at the start of your next turn.','Use Celestial 9',function(){
@@ -23997,10 +24241,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         refresh();
       });
     });
-  };
+  });
 
   // ═══ TURN TIMING ═══
-  window.celestialPhaseBegan=function(ph){
+  ruHook('phaseBegan',function(ph){
     var T=tn(),w=G.turn,changed=false;
     if(ph==='draw'){
       // Celestial 8's "cannot attack on your next turn" — this is that turn
@@ -24040,15 +24284,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       G._atkAddonCards=null;
     }
     if(changed)refresh();
-  };
+  });
   function noteCel6Entries(){
     (G._cel6Due||[]).forEach(function(e){ if(e.turn===tn()&&!e.entered&&zoneOf(side(e.w),{id:e.id}))e.entered=true; });
   }
-  window.celestialNoteEntries=noteCel6Entries;
   // Shooting Star (E1): after the Battle Phase, drop as many cards from the attacked player's Battlefield and hand as the
   // Rank of the Celestial-class Numeral it sent — the user chooses Battlefield cards, the rest come from the hand at
   // random. Runs before the End Phase; returns true when it took over (the End Phase begins after it).
-  window.celestialBeforeEnd=function(resume){
+  ruHook('beforeEnd',function(resume){
     var w=G.turn,T=tn();
     var q=(G._celShootingStar||[]).filter(function(e){ return e.w===w&&e.turn===T; });
     if(!q.length)return false;
@@ -24071,7 +24314,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     };
     next();
     return true;
-  };
+  });
 
   // ═══ GRAVITATE — the attacker's Numerals must attack the user's highest Numeral until the end of the turn ═══
   function gravitateOn(attacker){ var g=G._celGravitate&&G._celGravitate[attacker]; return g&&g.turn===tn()&&G[g.by]&&!(G.eliminated&&G.eliminated[g.by])?g.by:null; }
@@ -24080,19 +24323,19 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var top=Math.max.apply(null,zs.map(function(z){ return np(window.zCard(p,z)); }));
     return zs.filter(function(z){ return np(window.zCard(p,z))===top; });
   }
-  window.celestialTargetBlocked=function(me,owner,zone){
+  ruHook('targetBlocked',function(me,owner,zone){
     var by=gravitateOn(me); if(!by)return false;
     return owner!==by||highestZones(by).indexOf(zone)===-1;
-  };
+  });
   // The declared attack's final target, once Gravitate applies to it.
-  window.celestialForcedTarget=function(aw,dw,rt){
+  ruHook('forcedTarget',function(aw,dw,rt){
     var by=gravitateOn(aw); if(!by||by!==dw)return rt;
     var hz=highestZones(dw); if(!hz.length||hz.indexOf(rt.zone)!==-1)return rt;
     var c=window.zCard(side(dw),hz[0]);
     say('Gravitate: the attack is drawn to '+sidePossessiveLabel(dw)+' '+c.name+'.','info');
     return {zone:hz[0],card:c};
-  };
-  window.celestialSafeguard=function(idx,card,atkInfo,onDone){
+  });
+  ruHook('safeguard',function(idx,card,atkInfo,onDone){
     if(!card||card.name!=='Gravitate')return false;
     var dw=ruActor(),p=side(dw);
     if((p.actUsed||0)>=acActionCapForDefense(dw)){ say('No Action Card slots available for Gravitate.','dmg'); onDone(); return true; }
@@ -24109,10 +24352,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       refresh(); onDone();
     });
     return true;
-  };
+  });
 
   // ═══ RETALIATORY: VEX, NEO STRIKE STAR ═══
-  window.celestialRetaliatory=function(idx,card){
+  ruHook('retaliatory',function(idx,card){
     if(!card||(card.name!=='Vex'&&card.name!=='Neo Strike Star'))return false;
     var me=ruActor(),p=side(me);
     var foe=(G._lastAtkInfo&&G._lastAtkInfo.aWho&&G._lastAtkInfo.aWho!==me&&G[G._lastAtkInfo.aWho])?G._lastAtkInfo.aWho:oppOf(me);
@@ -24143,7 +24386,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     };
     nextAttacker();
     return true;
-  };
+  });
 
   // ═══ ADVANTAGEOUS (E1): SHOOTING STAR, THRASH STAR ═══
   ACDEFS['Shooting Star']={
@@ -24166,7 +24409,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     ]};
 
   // ═══ DEAD DRAW / CASUALTY EFFECTS (E2) ═══
-  window.celestialE2=function(w,card){
+  ruHook('e2',function(w,card){
     var nm=card&&card.name,p=side(w);
     if(['Shooting Star','Gravitate','Vex','Thrash Star','Neo Strike Star'].indexOf(nm)===-1)return false;
     addE2M(w,card);
@@ -24228,14 +24471,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       if(!pk||pk.length<2){ refresh(); return; }
       pk.forEach(function(c){ fromHand(p,c,'discard'); });
       millN(w,2);
-      boardPick(w,'Neo Strike Star (E2): choose your opponent\u2019s Rank Zone card to send to the Deadzone',function(s2,z){ return z==='rank'&&s2!==w; },function(t){
+      boardPick(w,'Neo Strike Star (E2): choose your opponent\u2019s Rank Zone card to send to the Deadzone',function(s2,z,c2){ return z==='rank'&&s2!==w&&removable(s2,z,c2); },function(t){
         var r=t&&realRank(G[t]);
         if(r&&fieldTo(t,r,'deadzone')){ G[t].mp-=5; say('Neo Strike Star (E2): '+sidePossessiveLabel(t)+' '+r.name+' is sent to the Deadzone; '+sideVerbLabel(t,'lose','loses')+' 5 MP.','dmg'); }
         refresh();
       });
     });
     return true;
-  };
+  });
 
   // ═══ ASTEROID FIELD ═══
   function areaUses(w,k){ var u=side(w)._celAreaUse||{}; return u[k+'@'+tn()]||0; }
@@ -24264,7 +24507,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       {label:'Drop a non-Rank Zone card',cost:'Discard a card and pay 3 MP (up to twice per turn).',
         check:function(w){ return areaReady(w,'drop',3)&&nonRankTargets().length>0; },
         fn:function(w){
-          boardPick(w,'Asteroid Field: choose a non-Rank Zone card to send to the Drop',function(s2,z){ return z!=='rank'; },function(t,tz,tc){
+          boardPick(w,'Asteroid Field: choose a non-Rank Zone card to send to the Drop',function(s2,z,c2){ return z!=='rank'&&removable(s2,z,c2); },function(t,tz,tc){
             if(!t){ refresh(); return; }
             areaCost(w,'drop',3,'drop a non-Rank Zone card',function(){
               if(fieldTo(t,tc,'discard'))say('Asteroid Field: '+sidePossessiveLabel(t)+' '+tc.name+' is sent to the Drop.','dmg');
@@ -24275,7 +24518,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       {label:'Drop a Rank Zone card',cost:'Discard a card and pay 5 MP (3 + 2 more; up to twice per turn).',
         check:function(w){ return areaReady(w,'rank',5)&&withRank().length>0; },
         fn:function(w){
-          boardPick(w,'Asteroid Field: choose a Rank Zone card to send to the Drop',function(s2,z){ return z==='rank'; },function(t,tz,tc){
+          boardPick(w,'Asteroid Field: choose a Rank Zone card to send to the Drop',function(s2,z,c2){ return z==='rank'&&removable(s2,z,c2); },function(t,tz,tc){
             if(!t){ refresh(); return; }
             areaCost(w,'rank',5,'drop a Rank Zone card',function(){
               if(fieldTo(t,tc,'discard'))say('Asteroid Field: '+sidePossessiveLabel(t)+' '+tc.name+' is sent to the Drop.','dmg');
@@ -24299,6 +24542,372 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
             if(pk&&pk.length)say('Asteroid Field: '+pk.map(function(c){ return c.name; }).join(' and ')+' are added from the Drop to '+sidePossLower(w)+' hand.','heal');
             refresh();
           });
+        }); }}
+    ]
+  };
+})();
+</script>
+
+<script id="ochre-class">
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// OCHRE-CLASS — its Numeral rules, Conglomerate Canyon and its Action Cards (Solidify, Persist, Rebound, Petrify,
+// Sedimentary Star). The card data (with the W-stat) is in data.js. It is built on the shared field rules
+// (field-rules: what "removed" means, "cannot be removed", attack bans, the W-stat, the hook lists, window.ruFx).
+// Fullmetal parts (Ochre 6's restriction, Ochre 9's skill) join when the Fullmetal evolution is added.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+(function(){
+  'use strict';
+  var F=window.ruFx;
+  var side=F.side,say=F.say,refresh=F.refresh,tn=F.tn,np=F.np,isNum=F.isNum,living=F.living,realRank=F.realRank,fieldCards=F.fieldCards,
+      onField=F.onField,locate=F.locate,fieldTo=F.fieldTo,standDown=F.standDown,millN=F.millN,skillMP=F.skillMP,fromHand=F.fromHand,
+      fromDeadzone=F.fromDeadzone,deadzoneToDrop=F.deadzoneToDrop,ask=F.ask,choose=F.choose,pick=F.pick,pickNP=F.pickNP,
+      choosePlayer=F.choosePlayer,boardPick=F.boardPick,casualtyGiver=F.casualtyGiver,addE2M=F.addE2M;
+  function isOchre(c){ return !!(c&&(c.class==='ochre'||c.starCls==='ochre')); }
+  function isOchreNum(c){ return !!(c&&c.class==='ochre'&&c.type==='numeral'); }
+  function foeOf(me){ return (G._lastAtkInfo&&G._lastAtkInfo.aWho&&G._lastAtkInfo.aWho!==me&&G[G._lastAtkInfo.aWho])?G._lastAtkInfo.aWho:oppOf(me); }
+  function attackedBy(me){ var a=G._lastAtkInfo; return !!(a&&a.aWho&&a.aWho!==me&&G.turn===a.aWho); }
+  function cardOf(rec){ var l=locate(rec.id); return l&&l.card; }
+
+  // ═══ NUMERALS ═══
+  // Ochre 0 — cannot be removed from your Battlefield or Bank: printed (noRemove in data.js), kept by the field rules.
+
+  // Ochre 1 — Cost: once per exchange, mill one card and Stand this card Down. Skill: your Flank Zone Numerals cannot be
+  // removed during this phase; add one Ochre-class Numeral from your Deck to your hand.
+  SDEFS['Ochre 1']={source:'field',phases:['main','standby','battle'],
+    check:function(w,card,zone){
+      if(side(w)._ochre1Ex===G.exchange){ say('Ochre 1: its skill can be used once per exchange.','dmg'); return false; }
+      if(window.ruUnremovable(card,w,zone)){ say('Ochre 1 cannot be Stood Down (it cannot be removed).','dmg'); return false; }
+      return true;
+    },
+    steps:[{type:'effect',fn:function(w,p,o,zone,card){
+      p._ochre1Ex=G.exchange;
+      millN(w,1);
+      if(!standDown(card,'Ochre 1')){ refresh(); return; }
+      window.ruProtectZones(w,['left-flank','right-flank','rear-flank'],{turn:tn(),phase:G.phase});
+      say('Ochre 1: '+sidePossessiveLabel(w)+' Flank Zone Numerals cannot be removed during this phase.','heal');
+      pick(w,'Ochre 1 — add one Ochre-class Numeral from your Deck to your hand.',p.deck.filter(isOchreNum),1,1,function(pk){
+        var c=pk&&pk[0]; if(c){ p.deck.splice(p.deck.indexOf(c),1); p.hand.push(c); say('Ochre 1: an Ochre-class Numeral is added to '+sidePossLower(w)+' hand.','heal'); }
+        refresh();
+      });
+    }}]};
+  // Ochre 3 — once per turn: return a card removed from any player's field this turn to where it was removed from; if you
+  // do, this card's W-stat +1 until the end of the turn.
+  SDEFS['Ochre 3']={source:'field',phases:['main','standby','battle'],
+    check:function(w,card){
+      if(card._ochre3Turn===tn()){ say('Ochre 3: its skill can be used once per turn.','dmg'); return false; }
+      if(!window.ruReturnable().length){ say('Ochre 3: no card removed from a field this turn can go back.','dmg'); return false; }
+      return true;
+    },
+    steps:[{type:'effect',fn:function(w,p,o,zone,card){
+      card._ochre3Turn=tn();
+      var recs=window.ruReturnable(),pool=recs.map(cardOf);
+      pick(w,'Ochre 3 — return a card removed from a field this turn to where it was.',pool,1,1,function(pk){
+        var c=pk&&pk[0],rec=c&&recs[pool.indexOf(c)];
+        if(rec&&window.ruRestoreRemoved(rec)){
+          say('Ochre 3: '+sidePossessiveLabel(rec.owner)+' '+c.name+' returns to where it was removed from.','heal');
+          var me=onField(card); if(me){ var t=me.card._wTurn; me.card._wTurn={turn:tn(),v:((t&&t.turn===tn())?t.v:0)+1}; say('Ochre 3: W-stat +1 until the end of the turn.','heal'); }
+        }
+        refresh();
+      });
+    }}]};
+  // Ochre 5 — once per turn, you may mill 3: an Ochre-class card among them goes to the bottom of your Deck; if it does,
+  // this card cannot be removed once this turn (it cannot be targeted for removal once).
+  SDEFS['Ochre 5']={source:'field',phases:['main','standby','battle'],
+    check:function(w,card){
+      if(card._ochre5Turn===tn()){ say('Ochre 5: its skill can be used once per turn.','dmg'); return false; }
+      if(!side(w).deck.length){ say('Ochre 5: no cards to mill.','dmg'); return false; }
+      return true;
+    },
+    steps:[{type:'effect',fn:function(w,p,o,zone,card){
+      card._ochre5Turn=tn();
+      var och=millN(w,3).filter(isOchre);
+      if(!och.length){ say('Ochre 5: no Ochre-class card among them.','info'); refresh(); return; }
+      pick(w,'Ochre 5 — send an Ochre-class card you milled to the bottom of your Deck.',och,1,1,function(pk){
+        var c=pk&&pk[0]; if(!c){ refresh(); return; }
+        var i=p.discard.indexOf(c); if(i!==-1){ p.discard.splice(i,1); p.deck.push(c); }
+        var me=onField(card); if(me)window.ruProtect(me.card,{turn:tn()},1);
+        say('Ochre 5: '+c.name+' goes to the bottom of the Deck; Ochre 5 cannot be removed once this turn.','heal');
+        refresh();
+      });
+    }}]};
+  // Ochre 7 — Skill 1: when it is removed from your Battlefield, you may discard hand cards whose NP total is 10 or more to
+  // return it to its original Zone; it then gains Skill 2. Skill 2 (mill 1): add 1 Ochre-class card from your Deadzone to
+  // your hand, or inflict Morale Damage to target opponent equal to the W-stat total on your field.
+  ruHook('removed',function(rec,card){
+    if(card.name!=='Ochre 7'||rec.cls!=='ochre')return;
+    delete card._ochre7Skill2;
+    var w=rec.owner,p=side(w); if(!p||G.gameOver)return;
+    if(p.hand.reduce(function(s,c){ return s+np(c); },0)<10)return;
+    if(!window.ruReturnable(function(r){ return r===rec; }).length)return;
+    ask(w,'Ochre 7 — use Skill 1?','Ochre 7 was removed. Discard cards from your hand whose NP total is 10 or higher to return it to its original Zone; it then gains Skill 2 (S: +3 MP).','Use Ochre 7',function(){
+      pickNP(w,'Ochre 7 — discard cards whose NP total is 10 or higher.',p.hand.slice(),10,function(pk){
+        if(!pk){ refresh(); return; }
+        if(!window.ruReturnable(function(r){ return r===rec; }).length){ say('Ochre 7 can no longer return to its Zone.','info'); refresh(); return; }
+        pk.forEach(function(c){ fromHand(p,c,'discard'); });
+        if(window.ruRestoreRemoved(rec)){
+          skillMP(w,card); card._ochre7Skill2=true;
+          say('Ochre 7 returns to its original Zone and gains Skill 2.','heal');
+        }
+        refresh();
+      });
+    });
+  });
+  SDEFS['Ochre 7']={source:'field',phases:['main','standby','battle'],
+    check:function(w,card){ if(!card._ochre7Skill2){ say('Ochre 7 has not gained Skill 2 (it gains it by returning to its Zone with Skill 1).','dmg'); return false; } return true; },
+    steps:[{type:'mill',count:1},{type:'effect',fn:function(w,p){
+      var opts=[];
+      var och=p.deadzone.filter(isOchre);
+      if(och.length)opts.push({label:'Add an Ochre-class card from your Deadzone',fn:function(){
+        pick(w,'Ochre 7 — add an Ochre-class card from your Deadzone to your hand.',och,1,1,function(pk){ var c=pk&&pk[0]; if(c&&fromDeadzone(p,c)){ p.hand.push(c); say('Ochre 7: '+c.name+' is added from the Deadzone to '+sidePossLower(w)+' hand.','heal'); } refresh(); });
+      }});
+      opts.push({label:'Morale Damage equal to your W-stat total ('+window.ruWTotal(w)+')',fn:function(){
+        choosePlayer(w,'Ochre 7 — which opponent takes the Morale Damage?',livingOpponentsOf(w),function(s){ return G[s].mp+' MP'; },function(t){
+          var dmg=window.ruWTotal(w); if(t&&dmg){ G[t].mp-=dmg; ruSetLastMoraleTo(t,dmg); say('Ochre 7: '+sideVerbLabel(t,'take','takes')+' '+dmg+' Morale Damage (W-stat total).','dmg'); }
+          refresh();
+        });
+      }});
+      choose(w,'Ochre 7 — Skill 2','Choose one.',opts);
+    }}]};
+  // Ochre 8 — can only be played in your Flank Zone unless you control another Ochre-class card in your Flank Zone; if it
+  // does not attack your opponent on your turn, it is Stood Down at the end of the turn.
+  ruHook('promoteBlocked',function(w,card){
+    if(!card||card.name!=='Ochre 8')return null;
+    var p=side(w),ok=[p.leftFlank,p.rightFlank,p.rearFlank].some(function(c){ return c&&!c._empty&&isOchre(c); });
+    return ok?null:'Ochre 8 can only be played in your Flank Zone unless you control another Ochre-class card in your Flank Zone.';
+  });
+  // Ochre 9 — Ranked Up from a Rank 3 or higher: it cannot be removed this turn. (Its skill needs a Fullmetal.)
+  ruHook('rankedUp',function(w,from,card){
+    if(!card||card.name!=='Ochre 9'||!from||(from.rank||0)<3)return;
+    window.ruProtect(card,{turn:tn()}); say('Ochre 9: Ranked Up from a Rank³ — it cannot be removed this turn.','heal');
+  });
+  ruHook('attackResolved',function(s){
+    if(s.att&&s.att.name==='Ochre 8'&&s.aWho!==s.dWho&&G.turn===s.aWho)s.att._ochre8Atk=tn();
+  });
+
+  // ═══ TURN TIMING ═══
+  ruHook('phaseBegan',function(ph){
+    if(ph!=='end')return;
+    var w=G.turn,p=side(w); if(!p)return;
+    fieldCards(p).filter(function(c){ return c.name==='Ochre 8'&&c._ochre8Atk!==tn(); }).forEach(function(c){
+      if(!standDown(c,'Ochre 8 (it did not attack)'))say('Ochre 8 did not attack, but it cannot be removed.','info');
+    });
+  });
+  // End-of-turn returns that may need a choice (Rebound's card, Sedimentary Star's Numeral); before the End Phase.
+  ruHook('beforeEnd',function(resume){
+    var T=tn(),q=(G._ochreEnd||[]).filter(function(e){ return e.turn===T; });
+    if(!q.length)return false;
+    G._ochreEnd=(G._ochreEnd||[]).filter(function(e){ return q.indexOf(e)<0; });
+    var next=function(){
+      var e=q.shift(); if(!e){ refresh(); resume(); return; }
+      var p=side(e.w); if(!p){ next(); return; }
+      if(e.kind==='rebound'){
+        var c=p.deadzone.find(function(x){ return x.id===e.id; });
+        if(c&&fromDeadzone(p,c)){ p.hand.push(c); say('Rebound (E2): '+c.name+' is added to '+sidePossLower(e.w)+' hand.','heal'); }
+        next(); return;
+      }
+      // Sedimentary Star (E2): another Ochre-class Numeral removed from your field this turn returns to its Zone
+      var recs=window.ruReturnable(function(r){ return r.owner===e.w&&r.cls==='ochre'&&r.id!==e.not&&cardOf(r)&&cardOf(r).type==='numeral'; });
+      if(!recs.length){ say('Sedimentary Star (E2): no other Ochre-class Numeral was removed from '+sidePossLower(e.w)+' field this turn.','info'); next(); return; }
+      var pool=recs.map(cardOf);
+      pick(e.w,'Sedimentary Star (E2) — return an Ochre-class Numeral removed this turn to its Zone.',pool,1,1,function(pk){
+        var c=pk&&pk[0],rec=c&&recs[pool.indexOf(c)];
+        if(rec&&window.ruRestoreRemoved(rec))say('Sedimentary Star (E2): '+c.name+' returns to its original Zone.','heal');
+        next();
+      });
+    };
+    next();
+    return true;
+  });
+
+  // ═══ ACTION CARDS ═══
+  // Solidify (E1) — your attacks on an opponent's Numeral that tie do not destroy the Numeral(s) you attacked with, this turn.
+  ACDEFS['Solidify']={steps:[
+    {type:'move_self',to:'discard'},
+    {type:'mill',count:1},
+    {type:'effect',fn:function(w){ (G._solidify=G._solidify||{})[w]=tn(); say(ruPOV(w,'Solidify: when {your} attack ties, the Numeral(s) {you} attacked with are not destroyed this turn.'),'heal'); }}
+  ]};
+  ruHook('survives',function(seat,zone,card,role,winner){
+    if(role==='attacker'&&winner==='tie'&&G._solidify&&G._solidify[seat]===tn()){ say('Solidify: '+card.name+' is not destroyed.','heal'); return true; }
+    if(role==='defender'&&G._defState&&G._defState.persist===seat){ say('Persist: the removal of '+card.name+' is negated.','heal'); return true; }
+    return false;
+  });
+  // Persist (E1, Safeguard) — negate the removal of the attacked Numeral; take 3 less MP of damage this turn.
+  ruHook('safeguard',function(idx,card,atkInfo,onDone){
+    if(!card||card.name!=='Persist')return false;
+    var dw=ruActor(),p=side(dw);
+    if((p.actUsed||0)>=acActionCapForDefense(dw)){ say('No Action Card slots available for Persist.','dmg'); onDone(); return true; }
+    var others=p.hand.filter(function(c){ return c!==card; });
+    if(!others.length){ say('Persist needs one more card in hand to drop.','dmg'); onDone(); return true; }
+    pick(dw,'Persist — drop one card from your hand.',others,1,1,function(pk){
+      if(!pk||!pk.length){ onDone(); return; }
+      if(!acCommitAction(p.hand.indexOf(card),card,'discard')){ onDone(); return; }
+      fromHand(p,pk[0],'discard');
+      G._sgUsedThisAttack=true; G._defState=G._defState||{}; G._defState.persist=dw;
+      window.ruShield(dw,3,{turn:tn()});
+      say(ruPOV(dw,'Persist: the attacked Numeral cannot be removed by this attack; {you} take 3 less MP of damage this turn.'),'heal');
+      refresh(); onDone();
+    });
+    return true;
+  });
+  // Retaliatory: Rebound, Petrify, Sedimentary Star
+  ruHook('retaliatory',function(idx,card){
+    if(!card||['Rebound','Petrify','Sedimentary Star'].indexOf(card.name)===-1)return false;
+    var me=ruActor(),p=side(me),foe=foeOf(me);
+    if(card.name==='Rebound'){
+      if(!attackedBy(me)){ ruNotice(me,'Rebound: your opponent has not attacked you this turn.','dmg'); return true; }
+      if(!acCommitAction(idx,card,'deadzone'))return true;
+      var before=p.hand.slice(); draw(me,3);
+      var drawn=p.hand.filter(function(c){ return before.indexOf(c)===-1; });
+      var rp=drawn.reduce(function(s,c){ return s+(c.type==='numeral'?(c.rank||0):0); },0);
+      var finish=function(keep){
+        drawn.forEach(function(c){ if(c!==keep)fromHand(p,c,'discard'); });
+        if(rp){ G[foe].mp-=rp; say('Rebound: '+sideVerbLabel(foe,'lose','loses')+' '+rp+' MP (RP total of the cards drawn).','dmg'); }
+        refresh();
+      };
+      if(!drawn.length){ refresh(); return true; }
+      var top=Math.max.apply(null,drawn.map(function(c){ return Number(c.M)||0; })),best=drawn.filter(function(c){ return (Number(c.M)||0)===top; });
+      if(best.length===1){ finish(best[0]); return true; }
+      pick(me,'Rebound — keep one of the drawn cards with the highest M value (the rest are discarded).',best,1,1,function(pk){ finish(pk&&pk[0]||best[0]); });
+      return true;
+    }
+    if(card.name==='Petrify'){
+      if(!attackedBy(me)){ ruNotice(me,'Petrify: your opponent has not attacked you this turn.','dmg'); return true; }
+      boardPick(me,'Petrify: choose a Numeral on your opponent’s Battlefield',function(s2,z,c2){ return s2===foe&&isNum(c2); },function(t,tz,tc){
+        if(!t){ refresh(); return; }
+        if(!acCommitAction(p.hand.indexOf(card),card,'discard')){ refresh(); return; }
+        millN(me,1);
+        var until={seat:me,after:tn()};
+        window.ruProtect(tc,until); window.ruBanAttack(tc,until);
+        say('Petrify: '+sidePossessiveLabel(t)+' '+tc.name+' cannot be removed and cannot attack until the end of '+sidePossLower(me)+' next turn.','info');
+        refresh();
+      });
+      return true;
+    }
+    // Sedimentary Star: a Numeral you control defeated and sent to the Deadzone returns to its original Zone
+    var recs=window.ruReturnable(function(r){ return r.owner===me&&r.to==='deadzone'&&window.ruDefeatedThisTurn(me).some(function(d){ return d.id===r.id; }); });
+    if(!recs.length){ ruNotice(me,'Sedimentary Star: none of your Numerals was defeated and sent to the Deadzone this turn.','dmg'); return true; }
+    if(!acCommitAction(idx,card,'discard'))return true;
+    var pool=recs.map(cardOf);
+    pick(me,'Sedimentary Star — return a defeated Numeral to its original Zone.',pool,1,1,function(pk){
+      var c=pk&&pk[0],rec=c&&recs[pool.indexOf(c)];
+      if(rec&&window.ruRestoreRemoved(rec)){
+        say('Sedimentary Star: '+c.name+' returns to its original Zone.','heal');
+        if(isOchreNum(c)&&(c.rank||0)===3){ window.ruProtect(c,{untilTurn:tn()+1}); say('Sedimentary Star: '+c.name+' cannot be removed for another turn.','heal'); }
+      }
+      refresh();
+    });
+    return true;
+  });
+  // Dead Draw / Casualty effects (E2)
+  ruHook('e2',function(w,card){
+    var nm=card&&card.name,p=side(w);
+    if(['Solidify','Persist','Rebound','Petrify','Sedimentary Star'].indexOf(nm)===-1)return false;
+    addE2M(w,card);
+    if(nm==='Solidify'){
+      if(!p.hand.length){ say('Solidify (E2): no card in hand to cede — no effect.','info'); refresh(); return true; }
+      boardPick(w,'Solidify (E2): choose a Numeral to raise to the highest NP on the Battlefields',function(s2,z,c2){ return isNum(c2); },function(t,tz,tc){
+        if(!t){ refresh(); return; }
+        pick(w,'Solidify (E2) — cede one card from your hand.',p.hand.slice(),1,1,function(pk){
+          if(!pk||!pk[0]){ refresh(); return; }
+          fromHand(p,pk[0],'deadzone');
+          var top=Math.max.apply(null,living().map(function(s){ return Math.max.apply(null,[0].concat(fieldCards(side(s)).filter(isNum).map(np))); }));
+          if(np(tc)<top){ tc.currentNP=top; say('Solidify (E2): '+tc.name+' gains NP up to '+top+' until the end of the turn.','heal'); }
+          refresh();
+        });
+      });
+      return true;
+    }
+    if(nm==='Persist'){
+      var recs=window.ruReturnable(function(r){ return r.owner===w&&cardOf(r)&&isNum(cardOf(r)); });
+      if(!recs.length){ say('Persist (E2): no Numeral was removed from '+sidePossLower(w)+' Battlefield this turn — no effect.','info'); refresh(); return true; }
+      deadzoneToDrop(w,card); millN(w,2);
+      var pool=recs.map(cardOf);
+      pick(w,'Persist (E2) — return a Numeral removed from your Battlefield this turn.',pool,1,1,function(pk){
+        var c=pk&&pk[0],rec=c&&recs[pool.indexOf(c)];
+        if(rec&&window.ruRestoreRemoved(rec))say('Persist (E2): '+c.name+' returns to where it was removed from.','heal');
+        refresh();
+      });
+      return true;
+    }
+    if(nm==='Rebound'){
+      millN(w,3);
+      var withM=p.deadzone.filter(function(c){ return c&&c.M!=null; });
+      if(!withM.length){ refresh(); return true; }
+      var top=Math.max.apply(null,withM.map(function(c){ return Number(c.M)||0; })),best=withM.filter(function(c){ return (Number(c.M)||0)===top; });
+      var go=function(c){
+        choosePlayer(w,'Rebound (E2) — which opponent loses MP?',livingOpponentsOf(w),function(s){ return G[s].mp+' MP'; },function(t){
+          if(t&&top>0){ G[t].mp-=top; say('Rebound (E2): '+sideVerbLabel(t,'lose','loses')+' '+top+' MP (highest M value in '+sidePossLower(w)+' Deadzone).','dmg'); }
+          (G._ochreEnd=G._ochreEnd||[]).push({kind:'rebound',w:w,id:c.id,turn:tn()});
+          say('Rebound (E2): '+c.name+' is added to '+sidePossLower(w)+' hand at the end of the turn.','info');
+          refresh();
+        });
+      };
+      if(best.length===1){ go(best[0]); return true; }
+      pick(w,'Rebound (E2) — choose the card with the highest M value.',best,1,1,function(pk){ go(pk&&pk[0]||best[0]); });
+      return true;
+    }
+    if(nm==='Petrify'){
+      boardPick(w,'Petrify (E2): choose a Numeral on your opponent’s Battlefield that cannot attack',function(s2,z,c2){ return s2!==w&&isNum(c2); },function(t,tz,tc){
+        if(t){ window.ruBanAttack(tc,{seat:w,after:tn()}); say('Petrify (E2): '+sidePossessiveLabel(t)+' '+tc.name+' cannot attack until the end of '+sidePossLower(w)+' next turn.','info'); }
+        refresh();
+      });
+      return true;
+    }
+    // Sedimentary Star (E2): discard an Ochre-class Numeral; at the end of the turn another one removed this turn returns
+    var och=p.hand.filter(isOchreNum);
+    if(!och.length){ say('Sedimentary Star (E2): no Ochre-class Numeral in hand to discard — no effect.','info'); refresh(); return true; }
+    pick(w,'Sedimentary Star (E2) — discard an Ochre-class Numeral from your hand.',och,1,1,function(pk){
+      var c=pk&&pk[0]; if(!c){ refresh(); return; }
+      fromHand(p,c,'discard');
+      (G._ochreEnd=G._ochreEnd||[]).push({kind:'sediment',w:w,not:c.id,turn:tn()});
+      say('Sedimentary Star (E2): at the end of the turn, another Ochre-class Numeral removed from '+sidePossLower(w)+' field this turn returns to its Zone.','info');
+      refresh();
+    });
+    return true;
+  });
+
+  // ═══ CONGLOMERATE CANYON ═══
+  function canyonReady(w){ var p=side(w); return G.turn===w&&['main','standby','battle'].indexOf(G.phase)!==-1&&p._canyonEx!==G.exchange&&p.deck.length>0&&p.hand.some(isOchre); }
+  // Once per Exchange: mill 1 and discard an Ochre-class card from your hand, then the effect.
+  function canyonCost(w,then){
+    var p=side(w);
+    pick(w,'Conglomerate Canyon — discard an Ochre-class card from your hand.',p.hand.filter(isOchre),1,1,function(pk){
+      if(!pk||!pk[0]){ refresh(); return; }
+      p._canyonEx=G.exchange; fromHand(p,pk[0],'discard'); millN(w,1);
+      then();
+    });
+  }
+  ADEFS['Conglomerate Canyon']={
+    passive:'Once per Exchange, mill 1 card and discard an Ochre-class card from your hand to use one of its effects.',
+    canEnter:function(){ return living().some(function(s){ return fieldCards(side(s)).some(isOchreNum); }); },
+    enterText:'it can be sent to your Deadzone only while an Ochre-class Numeral is on a player’s field.',
+    effects:[
+      {label:'Add a Safeguard Action Card',cost:'Once per Exchange: mill 1 card and discard an Ochre-class card from your hand.',
+        check:function(w){ return canyonReady(w)&&side(w).deck.some(function(c){ return c.type==='action'&&c.sub==='Safeguard'; }); },
+        fn:function(w){ canyonCost(w,function(){
+          var p=side(w);
+          pick(w,'Conglomerate Canyon — add a Safeguard Action Card from your Deck to your hand.',p.deck.filter(function(c){ return c.type==='action'&&c.sub==='Safeguard'; }),1,1,function(pk){
+            var c=pk&&pk[0]; if(c){ p.deck.splice(p.deck.indexOf(c),1); p.hand.push(c); say('Conglomerate Canyon: a Safeguard Action Card is added to '+sidePossLower(w)+' hand.','heal'); }
+            refresh();
+          });
+        }); }},
+      {label:'A Numeral cannot be removed this turn',cost:'Once per Exchange: mill 1 card and discard an Ochre-class card from your hand.',
+        check:function(w){ return canyonReady(w)&&living().some(function(s){ return fieldCards(side(s)).some(isNum); }); },
+        fn:function(w){
+          boardPick(w,'Conglomerate Canyon: choose a Numeral that cannot be removed this turn',function(s2,z,c2){ return isNum(c2); },function(t,tz,tc){
+            if(!t){ refresh(); return; }
+            canyonCost(w,function(){ window.ruProtect(tc,{turn:tn()}); say('Conglomerate Canyon: '+sidePossessiveLabel(t)+' '+tc.name+' cannot be removed this turn.','heal'); refresh(); });
+          });
+        }},
+      {label:'All players draw 2 (W-stats drop)',cost:'Once per Exchange: mill 1 card and discard an Ochre-class card from your hand.',
+        check:function(w){ return canyonReady(w); },
+        fn:function(w){ canyonCost(w,function(){
+          var drew=living().filter(function(s){ return side(s).deck.length>0; });
+          drew.forEach(function(s){ draw(s,2); });
+          var k=drew.filter(function(s){ var r=realRank(side(s)); return !(r&&isOchreNum(r)); }).length;
+          if(k)living().forEach(function(s){ fieldCards(side(s)).filter(isNum).forEach(function(c){ c._wField=(c._wField||0)-k; }); });
+          say('Conglomerate Canyon: all players draw 2'+(k?'; every Numeral on the field loses '+k+' W-stat':'')+'.','info');
+          refresh();
         }); }}
     ]
   };
@@ -24418,6 +25027,7 @@ function ruPromptOwnerOf(elm){ return (elm&&elm._ruOwner)||null; }
 // Is a shared prompt (some player's decision — never this screen's private views) open or waiting in the queue?
 // Shared prompts exist on every screen (as the owner's dialog or as a mirror), so every screen gives the same answer.
 function ruPromptPending(){
+  if(typeof G!=='undefined'&&G&&G.mode==='oppzonepick')return true;   // an effect waiting for a card to be clicked on the board
   var pk=document.getElementById('picker-modal'); if(pk&&pk.classList.contains('open')&&!pk._ruViewOnly)return true;
   var m=document.getElementById('modal'); if(m&&m.classList.contains('open')&&!m._ruViewOnly)return true;
   return (typeof _modalQueue!=='undefined')&&_modalQueue.some(function(q){return q&&!q._ruViewOnly;});

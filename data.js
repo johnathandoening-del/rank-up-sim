@@ -18,9 +18,10 @@ const CM={
   fission:      {name:'Fission',      align:'Neutral',   areaName:'Obelus Oubliette',areaM:6,  icon:'\uE00A'},
   extension:    {name:'Extension',    align:'Benevolent',areaName:'City of Recreation',areaM:9,icon:'\uE006'},
   celestial:    {name:'Celestial',    align:'Neutral',   areaName:'Asteroid Field',  areaM:8,  icon:'\uE014'},
+  ochre:        {name:'Ochre',        align:'Neutral',   areaName:'Conglomerate Canyon',areaM:6,icon:'\uE011'},
 };
 const AIPAIR={light:'inferno',inferno:'light',blizzard:'shadow',shadow:'blizzard',maximum:'negative',negative:'maximum',deckstructive:'blizzard',
-  restorative:'phantom',phantom:'restorative',astute:'zero',zero:'astute',haste:'7th','7th':'haste',fission:'extension',extension:'fission',celestial:'light'};
+  restorative:'phantom',phantom:'restorative',astute:'zero',zero:'astute',haste:'7th','7th':'haste',fission:'extension',extension:'fission',celestial:'ochre',ochre:'celestial'};
 const CLASS_COLORS={
   light:'#FFFFFF',inferno:'#FF0000',blizzard:'#B3EEFF',shadow:'#000000',maximum:'#C09D2D',deckstructive:'#04825B',negative:'#3F1D53',
   restorative:'#FF6699',haste:'#FFE600',astute:'#940094','7th':'#B0C4DE',zero:'#8B6666',phantom:'#2B3E34',fission:'#42082B',extension:'#E67E22',
@@ -43,7 +44,8 @@ const CLASS_STATS={
   inferno:{off:7,def:3,acc:4,syn:6,dis:5,ver:2,res:3},
   fission:{off:5,def:4,acc:2,syn:7,dis:7,ver:5,res:5},
   extension:{off:5,def:7,acc:3,syn:7,dis:3,ver:4,res:7},
-  celestial:{off:6,def:4,acc:3,syn:6,dis:7,ver:4,res:4}
+  celestial:{off:6,def:4,acc:3,syn:6,dis:7,ver:4,res:4},
+  ochre:{off:3,def:7,acc:4,syn:6,dis:5,ver:4,res:7}
 };
 const STAT_META=[
   {k:'off',abbr:'Off',name:'Offense',desc:'Measures how quickly and effectively a deck can pressure opponents through Morale damage, Casualty damage, or both.'},
@@ -123,6 +125,11 @@ const AC={
   'Vex':{name:'Vex',sub:'Retaliatory',M:-1,e1:'Avenging Attack: Drop this card. The card in your opponent’s Rank Zone loses 2 NP until the end of their next turn.',e2:'Sabatoric Draw: (Casualty) Mill one card. The next card your opponent draws is sent to the Drop.'},
   'Thrash Star':{name:'Thrash Star',sub:'Advantageous',M:2,isStar:true,starType:'generic',e1:'Drop this card and one card from your hand. The card in your Rank Zone gains 5 NP until the end of the turn.',e2:'Dead Draw: (Casualty) Drop 2 cards from your hand. Target opponent loses 5 MP.'},
   'Neo Strike Star':{name:'Neo Strike Star',sub:'Retaliatory',M:3,isStar:true,starType:'neo',e1:'Avenging Attack: Drop this card and mill 3 cards. The card in your Rank Zone gains 4 NP and 2 RP until the end of the turn. All cards on your Battlefield may attack your opponent this turn.',e2:'Sabatoric Draw: (Casualty) Discard and mill 2 cards. Send the card in your opponent’s Rank Zone to the Deadzone, and if you do, that player loses 5 MP.'},
+  'Solidify':{name:'Solidify',sub:'Advantageous',M:2,e1:'Drop this card and mill one card. If you were to declare an attack on an opponent’s Numeral and your Numeral(s)’ NP is equal to the opponent’s, the Numeral(s) you attacked with are not destroyed this turn.',e2:'Dead Draw: Cede one card. Target Numeral gains NP until it is equal to the highest NP on all Battlefields until the end of the turn.'},
+  'Persist':{name:'Persist',sub:'Safeguard',M:0,e1:'Damage Defense: If a Numeral on your Battlefield would be removed due to an attack, drop this card and one card from your hand. Negate the removal of that Numeral and take 3 less MP of damage this turn.',e2:'Casualty Counter: If a Numeral was removed from your Battlefield this turn, drop this card and mill 2 cards. Return that Numeral back to where it was removed from.'},
+  'Rebound':{name:'Rebound',sub:'Retaliatory',M:-2,e1:'Avenging Attack: If your opponent attacked you this turn, you may cede this card and draw 3 cards. Discard all drawn cards except for the one with the highest M value. The opponent that attacked you loses MP equal to the RP total of the cards you drew due to this effect.',e2:'Sabatoric Draw: When this card is sent to your Deadzone, you may mill 3 cards. Target opponent loses MP equal to the highest M value in your Deadzone. Add that card to your hand at the end of the turn.'},
+  'Petrify':{name:'Petrify',sub:'Retaliatory',M:-1,e1:'Avenging Attack: If your opponent attacked you this turn, you may drop this card and mill one card. Target one Numeral on your opponent’s Battlefield. It cannot be removed and cannot attack until the end of your next turn.',e2:'Sabatoric Draw: Target one Numeral on your opponent’s Battlefield. It cannot attack until the end of your next turn.'},
+  'Sedimentary Star':{name:'Sedimentary Star',sub:'Retaliatory',M:5,isStar:true,starType:'class',cls:'ochre',e1:'Avenging Attack: If a Numeral you control was defeated and sent to the Deadzone, return that Numeral to its original Zone. If that Numeral was a Rank³ Ochre-class Numeral, it cannot be removed for another turn.',e2:'Sabatoric Draw: Discard an Ochre-class Numeral in your hand. If another Ochre-class Numeral was removed from your field this turn, return it to its original Zone at the end of the turn.'},
 };
 
 // ═══════════════════════════════════════════
@@ -324,6 +331,18 @@ const ND={
   {n:8,r:3,A:1,M:3,S:5,ca:true,st:'Skilled',fromN:6,sc:'This card must be Ranked Up from a Numeral 6 or higher. Up to 3 times per War, send a random card from your Bank to the Deadzone and discard cards whose NP total is at least 21.',sk:'This card in your Rank Zone receives as many additional attacks as the Rank of the card sent to the Deadzone due to this skill. If the card sent to the Deadzone due to this skill was a Celestial-class Numeral, Stand Down any Numeral targeted for an attack by this card after each attack this turn. You cannot attack on your next turn after using this skill.'},
   {n:9,r:3,A:2,M:3,S:-6,ca:true,st:'Skilled',sc:'When this card enters the Battlefield, if it was promoted from a Rank³ Numeral, send the highest card in your Bank to the Deadzone, then send this card to the Deadzone.',sk:'Stand Down all Rank Zone cards on all Battlefields. Then all players mill one card, and you must send this card to the Deadzone. Inflict 4 Morale Damage to all opponents for each card sent to the Drop due to this skill. You cannot attack the turn you use this skill or draw at the start of your next turn.'},
  ],
+ ochre:[
+  {n:0,r:0,A:1,M:-1,S:1,W:2,ca:true,st:'Skilled',noRemove:true,sc:'No cost.',sk:'This card cannot be removed from your Battlefield or Bank.'},
+  {n:1,r:1,A:1,M:0,S:2,W:1,ca:true,st:'Skilled',sc:'Once per exchange, mill one card and stand this card down.',sk:'If you do, Flank Zone Numerals cannot be removed during this phase. Add one Ochre-class Numeral from your Deck to your hand.'},
+  {n:2,r:1,A:1,M:2,S:null,W:2,ca:true,st:'Basic',sk:'This card has no skill.'},
+  {n:3,r:1,A:1,M:1,S:1,W:2,ca:true,st:'Skilled',sc:'Once per turn.',sk:'Return a card removed from any player’s field back to the location it was removed from during this turn. If you do, this card’s W-stat increases by +1 until the end of the turn.'},
+  {n:4,r:2,A:1,M:1,S:null,W:1,ca:true,st:'Basic',sk:'This card has no skill.'},
+  {n:5,r:2,A:2,M:1,S:1,W:0,ca:true,st:'Skilled',sc:'Once per turn, when this card is on your Battlefield, you may mill 3 cards.',sk:'If there is an Ochre-class card amongst them, send it to the bottom of your Deck. If you do, this card cannot be targeted for removal once per turn for this turn.'},
+  {n:6,r:2,A:1,M:3,S:null,W:2,ca:true,st:'Basic',sk:'This card has no skill. Additional Effect: This card cannot be used for a Fullmetal Rank Up if the target is Rank⁰ or Rank¹.'},
+  {n:7,r:3,A:2,M:3,S:3,W:1,ca:true,st:'Skilled',sc:'Skill 1: If this card is on your Battlefield and was removed, discard cards from your hand whose NP total is 10 or higher. Skill 2: Mill 1 card.',sk:'Skill 1: Return this card to its original Zone. If you do, this card gains Skill 2. Skill 2: Choose one: add 1 Ochre-class card from your Deadzone to your hand; or inflict Morale Damage to target opponent equal to the total of all W-stats on your field.'},
+  {n:8,r:3,A:1,M:1,S:null,W:4,ca:true,st:'Basic',sk:'This card has no skill. Additional Effect: This card can only be played in your Flank Zone unless you control another Ochre-class card in your Flank Zone. If this card does not attack your opponent on your turn, stand it at the end of the turn.'},
+  {n:9,r:3,A:1,M:4,S:4,W:3,ca:true,st:'Skilled',sc:'If this card was used as an element for a Fullmetal.',sk:'Your Fullmetal Numeral gains an additional W-stat, and then all players gain MP equal to the W-stat total across all fields. Additional Effect: If this card was Ranked Up from a Rank 3 or higher, it cannot be removed this turn.'},
+ ],
 };
 
 const CLASSLESS=[
@@ -353,6 +372,7 @@ const DECK_AC={
   fission:[{n:1,k:'Boost'},{n:1,k:'Reveal'},{n:1,k:'Plus'},{n:2,k:'Repair'},{n:1,k:'Search'},{n:1,k:'Explore'},{n:1,k:'Switchdraw'},{n:2,k:'Recover'},{n:2,k:'Divide'},{n:1,k:'Protect'},{n:1,k:'Nullify'},{n:2,k:'Strike'},{n:1,k:'Counterstrike'},{n:1,k:'Subtract'},{n:1,k:'Deckstroy'},{n:1,k:'Protect Star'},{n:1,k:'Divide Star'},{n:1,k:'Draw Star'},{n:1,k:'Neo Battle Star'},{n:1,k:'Neo Rank Star'},{n:2,k:'Obelus Star'}],
   extension:[{n:2,k:'Supplementary Star'},{n:1,k:'Search'},{n:1,k:'Explore'},{n:1,k:'Multiply'},{n:1,k:'Repair'},{n:3,k:'Plus'},{n:1,k:'Cease'},{n:2,k:'Protect'},{n:2,k:'Recover'},{n:2,k:'Return'},{n:1,k:'Revive'},{n:2,k:'Counterattack'},{n:2,k:'Counterstrike'},{n:2,k:'Flank Star'},{n:1,k:'Battle Star'},{n:2,k:'Neo Flank Star'}],
   celestial:[{n:2,k:'Shooting Star'},{n:1,k:'Muster'},{n:2,k:'Repair'},{n:2,k:'Boost'},{n:1,k:'Search'},{n:1,k:'Multiply'},{n:1,k:'Gravitate'},{n:1,k:'Protect'},{n:2,k:'Recover'},{n:2,k:'Cease'},{n:1,k:'Vex'},{n:2,k:'Strike'},{n:2,k:'Counterstrike'},{n:1,k:'Deckstroy'},{n:1,k:'Thrash Star'},{n:1,k:'Battle Star'},{n:1,k:'Protect Star'},{n:1,k:'Neo Draw Star'},{n:1,k:'Neo Strike Star'}],
+  ochre:[{n:1,k:'Repair'},{n:1,k:'Multiply'},{n:1,k:'Draw'},{n:1,k:'Motivate'},{n:1,k:'Boost'},{n:1,k:'Search'},{n:1,k:'Solidify'},{n:1,k:'Reverse'},{n:1,k:'Cease'},{n:1,k:'Recover'},{n:2,k:'Protect'},{n:1,k:'Persist'},{n:1,k:'Divide'},{n:1,k:'Return'},{n:1,k:'Rebound'},{n:1,k:'Strike'},{n:1,k:'Counterstrike'},{n:1,k:'Petrify'},{n:1,k:'Rank Star'},{n:1,k:'Protect Star'},{n:1,k:'Battle Star'},{n:1,k:'Neo Rank Star'},{n:1,k:'Neo Flank Star'},{n:2,k:'Sedimentary Star'}],
 };
 
 const AREA_TEXT={
@@ -372,4 +392,5 @@ const AREA_TEXT={
   fission:'Obelus Oubliette: while in Deadzone, all players gain 1 MP whenever a Fission-class Numeral skill is activated. Once per turn, mill 1 to negate Double/Multiply/Multi-Star/Neo Multi-Star. When a Rank³ Numeral is sent to a Flank due to a Fission skill, add Divide from Deck/Drop to hand. Obelus Star gains an additional split reward.',
   extension:'City of Recreation: when sent to Deadzone, add two Extension Numerals from Deck/Drop/Deadzone to hand, then both players draw 1. With 2+ Extension Numerals, Flanks resist battle destruction once per turn. With 3 Extension Numerals, discard 1 to choose a support effect, then you cannot attack.',
   celestial:'Asteroid Field: Send to your Deadzone once a Rank² Celestial-class Numeral is in your Rank Zone and another is in your Deadzone. While in your Deadzone, at the start of every turn each player who does not have at least two Numerals, or one Celestial-class Numeral, on their Battlefield loses 2 MP. Up to twice per turn each, discard a card and pay 3 MP: send target player’s non-Rank Zone card to the Drop; send target player’s Rank Zone card to the Drop (pay 2 more MP); add one Shooting Star from your Deck to your hand; or add two Celestial-class Numerals from your Drop to your hand.',
+  ochre:'Conglomerate Canyon: Can only be sent to the Deadzone if an Ochre-class Numeral is on any player’s field. Once per Exchange, mill 1 card and discard an Ochre-class card from your hand to use one of these effects: add one Safeguard Action Card from your Deck to your hand; target one Numeral on any field — it cannot be removed this turn; or all players draw 2 cards, but all W-stats for all Numerals on the field are reduced by 1 for every player that drew and does not have an Ochre-class Numeral in their Rank Zone.',
 };

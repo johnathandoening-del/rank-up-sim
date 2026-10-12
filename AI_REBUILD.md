@@ -94,6 +94,13 @@ does need touching:
   `.t-<class>` / `.nc-<class>` rules in `styles.css`; `GAUNTLET_MAP` (`index.html`) holds its Gauntlet opponents. `CM`
   is the registry: every headless tool reads the class list from it (`tools/headless/classes.js`), so tests and arena
   deals include the new class automatically.
+- **A class's rules** go in its own `<script id="<class>-class">` block built on the shared field rules
+  (`<script id="field-rules">`): register with `ruHook(name, fn)` (attackResolved, beforeAttack, forcedTarget,
+  targetBlocked, phaseBegan, beforeEnd, rankedUp, promoteBlocked, safeguard, retaliatory, e2, removed, survives) and use
+  `window.ruFx` (fieldTo / standDown / millN / ask / choose / pick / pickNP / boardPick — card targets are clicked on the
+  board — …). "Removed" (left the field for a hand, Deck, Drop or Deadzone; the Bank is not removal), "cannot be
+  removed" (`ruProtect`, `noRemove` in data), per-card attack bans, MP shields, the W-stat (`W` in data, `ruW`) and
+  "defeated in battle" (attacked and did not win, `G._battleResult`) are all defined there once.
 - **New card effects** — offer choices as prompts the owning seat answers (`openModal` / the picker, owned by that
   seat), never "if a bot, pick X": in solo games every bot seat is input-driven and decides through those prompts
   (`ruBotControlledSeat` shortcuts only serve the old fallback bot). A prompt button must do something (a button
@@ -208,3 +215,8 @@ does need touching:
   attack" grants added to 1 instead of to the attacks LEFT (a card that had attacked got 2 more; 36 places, now
   atkLeft(c)+n); a Retaliatory card counted its Action slot twice (the window and its own commit); custom class glyphs
   past U+E010 (Celestial) were drawn at the small non-glyph emblem size.
+- **2026-10-11** — Ochre-class (W-stat; Fullmetal parts wait for the Fullmetal evolution). The shared field rules
+  block: removal tracking and "cannot be removed" (prevented at battle / Stand Down / Relieve, and any other way a card
+  leaves, the field watch — a render-time engine pass — puts it back; Ochre 0 also cannot leave the Bank), attack bans,
+  MP shields, the W-stat, the class hook lists and the shared effect helpers; Celestial moved onto them. An open card
+  pick on the board now holds the flow like a dialog (ruPromptPending).
