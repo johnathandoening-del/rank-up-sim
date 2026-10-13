@@ -95,12 +95,53 @@ does need touching:
   is the registry: every headless tool reads the class list from it (`tools/headless/classes.js`), so tests and arena
   deals include the new class automatically.
 - **A class's rules** go in its own `<script id="<class>-class">` block built on the shared field rules
-  (`<script id="field-rules">`): register with `ruHook(name, fn)` (attackResolved, beforeAttack, forcedTarget,
-  targetBlocked, phaseBegan, beforeEnd, rankedUp, promoteBlocked, safeguard, retaliatory, e2, removed, survives) and use
-  `window.ruFx` (fieldTo / standDown / millN / ask / choose / pick / pickNP / boardPick — card targets are clicked on the
-  board — …). "Removed" (left the field for a hand, Deck, Drop or Deadzone; the Bank is not removal), "cannot be
-  removed" (`ruProtect`, `noRemove` in data), per-card attack bans, MP shields, the W-stat (`W` in data, `ruW`) and
-  "defeated in battle" (attacked and did not win, `G._battleResult`) are all defined there once.
+  (`<script id="field-rules">`): register with `ruHook(name, fn)` (attackResolved, beforeAttack, defend, forcedTarget,
+  targetBlocked, phaseEnded, phaseBegan, beforeEnd, rankedUp, promoteBlocked, safeguard, retaliatory, e2, removed,
+  entered, survives, actResolved, actResponses, actionNegated) and use `window.ruFx` (fieldTo / standDown / millN / ask /
+  choose / pick / pickNP / boardPick — card targets are clicked on the board — / order / intoDeck / cedeTop / damage
+  …). "Removed" (left the field for a hand, Deck, Drop or Deadzone; the Bank is not removal), "cannot be removed"
+  (`ruProtect`, `noRemove` in data), per-card attack bans, MP shields, attacks that deal no damage
+  (`ruNoAttackDamage`), the W-stat (`W` in data, `ruW`; a W/M/S card has `A:null` and shows W in A's place) and
+  "defeated in battle" (attacked and did not win, `G._battleResult`) are all defined there once. An Area's printed
+  Activation ("when sent to your Deadzone") is `ADEFS[name].onEnter(seat, card)`.
+- **Numeral skills** — one point for using any Numeral skill (field rules): what stops it being used at all
+  (`ruSkillLocked`: "cannot use Numeral skills this turn", Haste 7), an armed negation waiting for it (`ruSkillArmed`:
+  Shining Justice, Seven Heaven — negated before its cost), its cost, its S, an opponent's Shadow 6 (after the cost,
+  before the effect), then its effect. A skill a player presses (`SDEFS`) gets this from `startSkillL4` and the step
+  runner: write its printed cost as cost steps (the standard types, or `{type:'async', cost:true}` for a cost with
+  prompts of its own), its targets and once-per marks as `activation:true` steps, and its effect after them — never a
+  cost inside an `effect` step (Shadow 6 would answer before it, a free use could not skip it). A skill that happens on
+  its own (a trigger asks, a reaction answers) goes through `ruOfferSkill` / `ruUseSkill` (`ruFx.offerSkill / useSkill /
+  skillLocked`) and is declared with `ruTriggeredSkills`; one that negates an Action Card by rewinding passes
+  `rewinds:true` (its cost is paid in the rewound position). The random-Bank cost is the step runner's own (it never
+  takes a card that cannot be removed).
+- **Action Card activations** — every activation (a hand effect, or a Deadzone effect: Dead Draw / Casualty Counter /
+  Sabatoric Draw) is a record from its commit to the end of its resolution, and what it DID is observed by the field
+  rules for any card: the NP/RP it changed, the cards it removed, the cards that left a Deadzone, its board-pick
+  targets, the Casualty Draws it caused. Cards that answer activations ("if a player activates a card that changes
+  NP…", "negate…", "whenever an Action Card is negated…") register `actResponses` / `actResolved` / `actionNegated`
+  and read that record — never a list of card names. Negating one (`ruActNegate`) rewinds the game in place to the
+  moment its effect started. What a new Action Card's implementation must do:
+  - Through `ACDEFS` steps nothing more: the commit is in `playActionBase`, and the first step that is not a cost
+    (`ruIsCostStep`: costs, targeting `pick_opp_zone`, checks `guard:true`; mark others `cost:true` / `effect:true`)
+    starts the effect. A step that pays a cost behind a prompt of its own is `marksEffect:true` and calls
+    `ruActEffect()` once its costs are paid.
+  - Hand-written (a safeguard / retaliatory / e2 hook): commit with `acCommitAction` / `commitFromHand` (they begin the
+    record; an E2 begins at `applyE2`), pay the costs, then call `ruActEffect()` where the effect starts.
+  - A flow that goes on after an activation ends it first: `ruActFlush(mark, next)` (as `resolveSafeguard`'s
+    `onDone` and the Dead Draw queue do) or `ruActAfter(mark, next)` (the Retaliatory window).
+  - Locks ("cannot use / activate Action Cards [of a type]") are `ruActLock`; every play entry checks `ruActLocked`.
+- **Time** (field rules, TIME) — cards that reach into the past or the future use the game's history, never their
+  own bookkeeping: `G._hist` (every turn's start: where every card was, MP, Casualty Counts — `ruTurnStart`,
+  `ruTurnsOf`, `ruRestoreTo`), `G._battles` (every attack with the NP/RP it was fought at — `ruRetroBattles` re-fights a
+  past Battle Phase and applies the difference now), `ruLater(kind, seat, when)` with `window.ruTimeFx[kind]` (an
+  effect at the next turn / your next turn / Battle Phase / Damage Step), `ruDelayCasualties` / `ruBlockCasualties`,
+  `ruAasW` (a card's A stat becomes a W stat of the same value — A: Ⅱ → W: Ⅱ, no A — while a duration or a "while this card stays in …" condition lasts), `ruMoraleLostThisTurn`,
+  `ruLoseGame`. Other shared points: `ruSkillNegation` (every Numeral-skill negation goes through it, so a card can
+  negate the negation), the `targeted` hook (before the Safeguard window), `drawn`, `phaseRedirect` (a second Battle
+  Phase), `ruActMoveChanges` (an activation's NP/RP changes moved to another time), `ruActNegate(…, 'delay')` with
+  `ruActReplay` (a declarative card's effect resolved later, its costs not paid again). A skill with a cost that may be
+  skipped ("without paying its cost") and paid later keeps its cost and its effect apart (see TSK in temporal-class).
 - **New card effects** — offer choices as prompts the owning seat answers (`openModal` / the picker, owned by that
   seat), never "if a bot, pick X": in solo games every bot seat is input-driven and decides through those prompts
   (`ruBotControlledSeat` shortcuts only serve the old fallback bot). A prompt button must do something (a button
@@ -220,3 +261,43 @@ does need touching:
   leaves, the field watch — a render-time engine pass — puts it back; Ochre 0 also cannot leave the Bank), attack bans,
   MP shields, the W-stat, the class hook lists and the shared effect helpers; Celestial moved onto them. An open card
   pick on the board now holds the flow like a dialog (ruPromptPending).
+- **2026-10-12** — Kismet-class, on a new part of the field rules: Action Card activations. Every activation (hand or
+  Deadzone effect) is a record from commit to end; what it did — NP/RP changes, removals (with their cause), cards
+  taken out of a Deadzone, board-pick targets, the Casualty Draws it caused — is observed for any card, and other cards
+  answer it in a response window (seat by seat). Negation rewinds the game in place (every object keeps its identity,
+  so a flow that goes on afterwards — an attack, the Casualty Draws in line — goes on with the same cards); the bot
+  worker rebuilds it by replay like any mid-action position. Activation locks; `phaseEnded` / `defend` / `entered`
+  hooks; Area Activations (`ADEFS.onEnter`); W/M/S cards show W in A's place. Engine fixes found on the way: Cancel at
+  an Action Card's first pick gave nothing back (slot and M now return); an old bot guard step counted as the card's
+  effect; the settle system numbers its continuations so an activation ends after everything its flow registered.
+- **2026-10-13** — Temporal-class, on a new TIME part of the field rules: the history of every turn's start (card
+  positions, MP, Casualty Counts), the battle log (a past Battle Phase re-fought with changed NP/RP, the difference
+  applied now), effects set for later points, held / blocked Casualty Draws, A-becomes-W overrides, every Numeral-skill
+  negation through one point (Shining Justice, Seven Heaven, Shadow 6), a `targeted` window before the Safeguards, a
+  second Battle Phase (`phaseRedirect`), Area Cards that leave a Deadzone (`ADEFS.onLeave`), an Action Card's effect put
+  off to the next turn and replayed. The step runner's "without paying its cost" now skips every cost (it skipped a
+  partial list; a Deadzone-drop cost was still paid), and "the end of the phase" is a real point (`phaseEnded`, before
+  the next phase resets anything).
+  Then (user rulings): "A becomes W" turns the A stat into a W stat of the same value (it had taken the card's own W —
+  0 for most cards); the cards Temporal 1 drew return from wherever they went (`ruFindCard` finds a card anywhere,
+  Evolution Elements included). Found by random games: a rewind that put back a Casualty Draw waiting when the rewound
+  effect began left it in a line nothing was drawing — the game never settled, so the bots could not think; the line now
+  resumes (`ruCasQueueResume`). Skills that happen on their own are declared (`ruTriggeredSkills`) so pressing them says
+  so instead of "no implementation yet".
+  Also from random games: a phase that begins again (Retroactive Star's second Battle Phase) looked like no change at all
+  to the state fingerprint, so the move finder took "end turn" for a no-op and a bot could never end that turn — every
+  phase that begins now counts (`G._phaseSeq` in `stateSig`).
+  And: a skill or Action Card whose cost cannot be paid (7th 7 — Surge with a hand worth NP 12 of the 14 it drops)
+  started anyway, opened a picker nobody could finish and froze the game. Every cost is now checked before anything
+  is activated (`ruCostUnpayable`: hand / Bank / Drop / Deadzone counts, NP totals, fixed minimums worked out as the
+  activating player); one that cannot be paid does not start.
+  Then (user ruling: Temporal 1's return wins "in any other circumstance, unless negated"; a card that cannot be removed
+  stays): skills that happen on their own were outside every skill rule — no "cannot use Numeral skills" lock, no
+  Shining Justice / Seven Heaven negation, no Shadow 6 — and several pressed skills paid their cost inside the effect
+  step, so Shadow 6 answered before the cost and a free use could not skip it. One point now: `ruSkillLocked` /
+  `ruSkillArmed` (used by `startSkillL4` and by `ruUseSkill` / `ruOfferSkill` for the triggered ones), costs as cost
+  steps (`{type:'async'}` in the step runner, `activation:true` for targets and marks), Shadow 6 once per skill at the
+  first step past the activation steps. Kismet 1 / 3 / 9's answers rewind an Action Card, so Shadow 6 answers them
+  first and their cost is paid in the rewound position. Found on the way: the random-Bank cost had four copies in
+  the step runner's wrappers (one asked the player to choose — the cards say random) and none kept Ochre 0 in the
+  Bank; one copy remains.
