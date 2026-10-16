@@ -8389,312 +8389,175 @@ window.ruSeatOfFieldCard=ruSeatOfFieldCard;window.ruDefenderSeat=ruDefenderSeat;
 function ruDefPrompt(dw,title,body,btns){ruOwnPrompt(dw);openModal(title,body,btns);}
 
 // ═══ REACTIVE "WHEN BEING ATTACKED" NUMERAL SKILLS — offered to a human defender BEFORE damage ═══
-function offerReactiveDefenseL1(aWho,att,addonNP,tgt,onDone){
-    G._reactiveNegateAtk=false;G._reactiveRedirect=null;
-    const dw=ruDefenderSeat(aWho,tgt);
-    if(dw===aWho||!isHumanSeat(dw)||!tgt||!tgt.card){onDone();return;}
-    const p=G[dw],o=G[aWho],tc=tgt.card;
-    const aNP=window.npValRD1(att)+(addonNP||0), tNP=window.npValRD1(tc);
-    const opts=[];
-    function spendAnyHand(n){if(p.hand.length<n)return null;const picks=[];for(let i=0;i<n;i++){const c=p.hand.pop();p.discard.push(c);picks.push(c);}return picks;}
+// One definition per skill, read from its printed card (the copies that had grown in layers L1–L10 disagreed with each other
+// and with the cards). Each is used through the field rules' skill point (ruUseSkill): what stops it being used, an armed
+// negation, its cost, its S, an opponent's Shadow 6, then its effect. After one resolves, the others still usable are
+// offered again — until the defender passes, or the attack is negated or turned onto another card.
+// An entry: {card, label, cost(paid), effect(done), mark()} — or {area(next), label} for an Area Card's effect (not a skill).
+function reactiveDefenses(aWho,att,addonNP,tgt,dw){
+  const F=window.ruFx,p=G[dw],o=G[aWho],tc=tgt&&tgt.card,out=[];
+  const ZK={'rank':'rankZone','left-flank':'leftFlank','right-flank':'rightFlank','rear-flank':'rearFlank'};
+  const zoneOf=c=>Object.keys(ZK).find(z=>c&&p[ZK[z]]===c)||null;
+  if(!p||!o||!tc||!zoneOf(tc))return out;
+  const aNP=npOf(att)+(addonNP||0),tNP=npOf(tc);
+  // a cost: n cards picked from (a pool of) your hand go to the Drop
+  const dropHand=(label,pool,n,then)=>function(paid){
+    F.pick(dw,label,pool(),n,n,function(pk){
+      if(!pk||pk.length<n){ paid(false); return; }
+      pk.forEach(c=>{ const k=p.hand.indexOf(c); if(k!==-1){ p.hand.splice(k,1); p.discard.push(c); } });
+      if(then)then(); paid(true);
+    });
+  };
+  const topToDrop=n=>{ for(let k=0;k<n&&p.deck.length;k++)p.discard.push(p.deck.shift()); };
+  const is=(cls,n)=>tc.type==='numeral'&&tc.class===cls&&tc.numeral===n&&tc.skillType!=='Basic'&&!tc.usedSkill;
+  const add=(card,label,x)=>out.push(Object.assign({card:card,label:label,mark:function(){ card.usedSkill=true; }},x));
+  const defState=()=>(G._defState=G._defState||{});
 
-    // Original Light reactive package.
-    if(tc.class==='light'&&tc.numeral===0&&!tc.usedSkill&&p.hand.length>0){opts.push({label:'Light 0 — negate all Morale/Casualty Damage (drop 1 hand)',fn:()=>{const d=spendAnyHand(1)[0];tc.usedSkill=true;G._defState=G._defState||{};G._defState.noMorale=true;G._defState.protectCas=99;log(`Light 0: damage negated; dropped ${d.name}.`,'heal');}});}
-    const light3=p.hand.find(c=>c.class==='light'&&c.numeral===3);
-    if(light3&&aNP>tNP&&!tc.isDigit){opts.push({label:`Light 3 — negate attack and return ${tc.name} to hand`,fn:()=>{window.removeFromArrayRD1(p.hand,light3);p.discard.push(light3);if(tgt.zone==='rank')p.rankZone=p.bank.length?p.bank.shift():ruEmptyRank('l3-'+uid());else if(tgt.zone==='left-flank')p.leftFlank=null;else if(tgt.zone==='right-flank')p.rightFlank=null;else if(tgt.zone==='rear-flank')p.rearFlank=null;p.hand.push(tc);p.mp-=window.rankValRD1(tc);G._reactiveNegateAtk=true;log(`Light 3: attack negated; ${tc.name} returned to hand. ${sideVerbLabel(dw,'lose','loses')} ${window.rankValRD1(tc)} MP.`,'heal');}});}
-    const l6slot=['rankZone','leftFlank','rightFlank','rearFlank'].find(z=>p[z]&&p[z].class==='light'&&p[z].numeral===6&&!p[z].usedSkill);
-    if(l6slot&&p.hand.length>0&&tc.numeral<6&&!(tc.class==='light'&&tc.numeral===6)){opts.push({label:'Light 6 — redirect attack to Light 6 (drop 1 hand)',fn:()=>{const d=spendAnyHand(1)[0];p[l6slot].usedSkill=true;G._reactiveRedirect={zone:l6slot==='rankZone'?'rank':l6slot==='leftFlank'?'left-flank':l6slot==='rightFlank'?'right-flank':'rear-flank',card:p[l6slot]};G._defState=G._defState||{};G._defState.noMorale=true;log(`Light 6: redirected attack; dropped ${d.name}.`,'heal');}});}
-
-    // Newly fixed reactive Battle Phase skills.
-    if(tc.class==='restorative'&&tc.numeral===0&&!tc.usedSkill&&p.hand.length>0&&p.deck.length>0){opts.push({label:'Restorative 0 — negate Casualty Damage (drop 1 hand + top Deck)',fn:()=>{const d=spendAnyHand(1)[0];window.dropTopRD1(dw,1);tc.usedSkill=true;G._defState=G._defState||{};G._defState.protectCas=99;log(`Restorative 0: Casualty Damage negated; dropped ${d.name} and milled 1.`,'heal');}});}
-    if(tc.class==='astute'&&tc.numeral===0&&!tc.usedSkill&&p.hand.length>0){opts.push({label:'Astute 0 — reveal/drop 1 opponent hand card (discard 1)',fn:()=>{window.cChoose(dw,p.hand,1,'Astute 0 — choose a card from hand to discard.',function(pk){var d=pk[0];if(!d)return;var di=p.hand.indexOf(d);if(di>=0)p.hand.splice(di,1);p.discard.push(d);tc.usedSkill=true;if(o.hand.length){window.cChoose(dw,o.hand,1,'Astute 0 — choose an opponent hand card to Drop.',function(pk2){var c=pk2[0];if(c){var ci=o.hand.indexOf(c);if(ci>=0)o.hand.splice(ci,1);o.discard.push(c);log('Astute 0: discarded '+d.name+'; '+sideVerbLabel(aWho,'drop')+' '+c.name+'.','dmg');}});}else log('Astute 0: discarded '+d.name+'; the attacker’s hand is empty.','info');});}});}
-    if(tc.class==='zero'&&tc.numeral===0&&!tc.usedSkill&&p.hand.some(c=>c.class==='zero')){opts.push({label:'Zero 0 — take no Morale/Casualty Damage (discard 1 Zero card)',async:true,fn:(done)=>{const zeros=p.hand.filter(c=>c.class==='zero');const apply=(z)=>{if(z){window.removeFromArrayRD1(p.hand,z);p.discard.push(z);}tc.usedSkill=true;G._defState=G._defState||{};G._defState.noMorale=true;G._defState.protectCas=99;log(`Zero 0: damage negated; discarded ${z?z.name:'a Zero card'}.`,'heal');done();};if(zeros.length<=1){apply(zeros[0]);}else{ruOwnedPicker(dw,'Zero 0 — discard which Zero card?',zeros,1,1,false,(sel)=>apply((sel&&sel[0])||zeros[0]));}}});}
-    if(tc.class==='haste'&&tc.numeral===0&&!tc.usedSkill&&p.deck.length>0){opts.push({label:'Haste 0 — mill 1, add Fast Track from Deck/Drop',fn:()=>{window.dropTopRD1(dw,1);tc.usedSkill=true;const got=window.findAndMoveFastTrackRD1(dw);log(`Haste 0: milled 1 and ${got?'added Fast Track to hand':'found no Fast Track'}.`,'info');}});}
-    if(tc.class==='phantom'&&tc.numeral===0&&!tc.usedSkill&&p.deck.length>0){opts.push({label:'Phantom 0 — mill 1, the attacker sends hand cards to Deadzone equal to your Casualties',fn:()=>{window.dropTopRD1(dw,1);tc.usedSkill=true;const n=window.cedeOpponentHandRD1(dw,p.cas||0);log(`Phantom 0: ${sideVerbLabel(aWho,'send')} ${n} hand card(s) to Deadzone.`,'dmg');}});}
-    if(tc.class==='deckstructive'&&tc.numeral===0&&!tc.usedSkill&&p.hand.length>=3){opts.push({label:'Deckstructive 0 — negate attack, attacker mills after Battle Phase (drop 3 hand)',fn:()=>{const picks=spendAnyHand(3);tc.usedSkill=true;G._reactiveNegateAtk=true;G._d0millQueued={who:aWho,count:window.npValRD1(att)};log(`Deckstructive 0: attack negated; dropped ${picks.map(c=>c.name).join(', ')}. ${sideSubjectLabel(aWho)} will mill ${window.npValRD1(att)} after Battle Phase.`,'heal');}});}
-    if(tc.class==='blizzard'&&tc.numeral===0&&!tc.usedSkill&&p.deck.length>0){opts.push({label:'Blizzard 0 — freeze attacker next turn (mill 1 at end)',fn:()=>{tc.usedSkill=true;att.frozen=true;G._blizzard0Mill=dw;log(`Blizzard 0: ${att.name} cannot attack until the end of ${sidePossLower(aWho)} next turn. ${sideVerbLabel(dw,'mill','mills')} 1 at end.`,'heal');}});}
-    if(tc.class==='negative'&&tc.numeral===0&&!tc.usedSkill&&p.hand.length>0){opts.push({label:'Negative 0 — if defeated, gain MP equal to attacker Numeral (drop 1 hand)',fn:()=>{const d=spendAnyHand(1)[0];tc.usedSkill=true;tc._negative0Gain=window.npValRD1(att);log(`Negative 0: if defeated in this battle, gain ${window.npValRD1(att)} MP; dropped ${d.name}.`,'heal');}});}
-
-    // Area effect with a non-turn trigger: Frozen Tundra can negate the opponent's attack at the moment
-    // you are attacked (offered to the defender to use or pass).
-    if(p.deadzone.some(function(c){return c&&c.name==='Frozen Tundra';})){
-      var _ftFld=['rankZone','leftFlank','rightFlank','rearFlank'].map(function(z){return p[z];}).filter(function(c){return c&&c.class==='blizzard'&&c.type==='numeral';}).length;
-      var _ftHand=p.hand.filter(function(c){return c&&c.class==='blizzard'&&c.type==='numeral';});
-      if(_ftFld>=2&&_ftHand.length>0){
-        opts.push({label:'Frozen Tundra — negate this attack (drop 1 Blizzard Numeral)',async:true,fn:function(done){
-          window.cChoose(dw,_ftHand,1,'Frozen Tundra — choose a Blizzard Numeral to Drop.',function(pk){
-            var c=pk&&pk[0]; if(c){var i=p.hand.indexOf(c); if(i!==-1)p.hand.splice(i,1); p.discard.push(c);}
-            G._reactiveNegateAtk=true;
-            if(att&&att.class==='inferno'){G._ru157AttackLock=G._ru157AttackLock||{}; G._ru157AttackLock[aWho]=Math.max(G._ru157AttackLock[aWho]||0,2);}
-            log('Frozen Tundra: this attack is negated'+(att&&att.class==='inferno'?'; the Inferno attacker cannot attack next turn':'')+'.','heal');
-            done();
-          });
-        }});
-      }
-    }
-    // Blizzard 6 is an attack-stopper: it must be usable when you are being attacked, not only on your own turn.
-    var _blz6=['rankZone','leftFlank','rightFlank','rearFlank'].map(function(z){return p[z];}).find(function(c){return c&&c.name==='Blizzard 6'&&!c.usedSkill;});
-    if(_blz6&&p.hand.length>0&&p.deadzone.length>0&&p.deck.length>=2){
-      opts.push({label:'Blizzard 6 — stop attacks this turn (drop 1 hand + 1 Deadzone, mill 2)',async:true,fn:function(done){
-        window.cChoose(dw,p.hand.slice(),1,'Blizzard 6 — choose a hand card to Drop.',function(pk){
-          var c=pk&&pk[0]; if(c){var i=p.hand.indexOf(c); if(i!==-1)p.hand.splice(i,1); p.discard.push(c);}
-          for(var k=0;k<2&&p.deck.length;k++){p.discard.push(p.deck.shift());}
-          if(p.deadzone.length){var _blz6dz=p.deadzone.pop();if(_blz6dz&&_blz6dz.type==='numeral'&&(_blz6dz.rank||0)>=3){window.RUr3DeadToDiscard(p,_blz6dz);}else{p.discard.push(_blz6dz);}}
-          _blz6.usedSkill=true;
-          G._reactiveNegateAtk=true;
-          G._ru157NoAttackThisTurn=true;
-          ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(function(z){if(o[z])o[z].attacksLeft=0;});
-          log('Blizzard 6: this attack is negated and no further attacks can be declared this turn.','heal');
-          done();
+  // Light 0 — discard a card from hand: no Morale or Casualty Damage from attacks involving it until the end of the turn
+  if(is('light',0)&&p.hand.length)add(tc,'Light 0 — no Morale or Casualty Damage from attacks involving it this turn (discard 1)',{
+    cost:dropHand('Light 0 — discard a card from your hand.',()=>p.hand.slice(),1),
+    effect:function(done){ window.ruNoAttackDamage(tc,{turn:F.tn()}); log('Light 0: no Morale or Casualty Damage from attacks involving it this turn.','heal'); done(); }});
+  // Light 3 (from your hand) — discard it: a Numeral on your field is attacked — negate the attack and return that Numeral
+  // to your hand; lose MP equal to its RP
+  const l3=p.hand.find(c=>c&&c.type==='numeral'&&c.class==='light'&&c.numeral===3);
+  if(l3&&tc.type==='numeral')add(l3,'Light 3 — negate the attack; '+tc.name+' returns to your hand (lose MP equal to its RP)',{mark:function(){},
+    cost:function(paid){ const k=p.hand.indexOf(l3); if(k===-1){ paid(false); return; } p.hand.splice(k,1); p.discard.push(l3); paid(true); },
+    effect:function(done){
+      G._reactiveNegateAtk=true;
+      const z=zoneOf(tc);
+      if(z&&!window.ruUnremovable(tc,dw,z)){
+        const back=window.removeBattlefieldTargetL7(dw,z);
+        if(back){ const loss=window.printedRankL7(back); p.hand.push(F.fresh(back)); p.mp-=loss; log('Light 3: the attack is negated; '+back.name+' returns to '+sidePossLower(dw)+' hand; '+sideVerbLabel(dw,'lose','loses')+' '+loss+' MP.','heal'); }
+      }else log('Light 3: the attack is negated.','heal');
+      done();
+    }});
+  // Light 6 (on your field, another of your cards targeted) — discard a card from hand: the attack turns onto Light 6, and it
+  // deals no Morale Damage
+  Object.keys(ZK).forEach(z=>{
+    const l6=p[ZK[z]];
+    if(!(l6&&l6!==tc&&l6.type==='numeral'&&l6.class==='light'&&l6.numeral===6&&!l6.usedSkill&&p.hand.length))return;
+    add(l6,'Light 6 — the attack turns onto Light 6; no Morale Damage from it (discard 1)',{
+      cost:dropHand('Light 6 — discard a card from your hand.',()=>p.hand.slice(),1),
+      effect:function(done){ G._reactiveRedirect={zone:z,card:l6}; defState().noMorale=true; log('Light 6: the attack turns onto Light 6 — no Morale Damage from it.','heal'); done(); }});
+  });
+  // Restorative 0 — drop a hand card and the top card of your Deck: no Casualty Damage from this attack
+  if(is('restorative',0)&&p.hand.length&&p.deck.length)add(tc,'Restorative 0 — no Casualty Damage from this attack (drop 1 hand card and the top of your Deck)',{
+    cost:dropHand('Restorative 0 — drop a card from your hand.',()=>p.hand.slice(),1,()=>topToDrop(1)),
+    effect:function(done){ defState().protectCas=99; log('Restorative 0: no Casualty Damage from this attack.','heal'); done(); }});
+  // Astute 0 — discard a card: the attacker reveals their hand; you may discard one card from it
+  if(is('astute',0)&&p.hand.length)add(tc,'Astute 0 — '+sidePossLower(aWho)+' hand is revealed; you may discard one of its cards (discard 1)',{
+    cost:dropHand('Astute 0 — discard a card from your hand.',()=>p.hand.slice(),1),
+    effect:function(done){
+      log('Astute 0: '+sidePossessiveLabel(aWho)+' hand — '+(o.hand.map(c=>c.name).join(', ')||'empty')+'.','info');
+      F.pick(dw,'Astute 0 — you may discard one card from '+sidePossLower(aWho)+' hand.',o.hand.slice(),1,0,function(pk){
+        const c=pk&&pk[0]; if(c){ o.hand.splice(o.hand.indexOf(c),1); o.discard.push(c); log('Astute 0: '+sidePossessiveLabel(aWho)+' '+c.name+' is discarded.','dmg'); }
+        done();
+      });
+    }});
+  // Zero 0 — discard a Zero-class card: it takes no Morale or Casualty Damage from this attack
+  const zeros=()=>p.hand.filter(c=>c&&c.class==='zero');
+  if(is('zero',0)&&zeros().length)add(tc,'Zero 0 — no Morale or Casualty Damage from this attack (discard a Zero-class card)',{
+    cost:dropHand('Zero 0 — discard a Zero-class card from your hand.',zeros,1),
+    effect:function(done){ const s=defState(); s.noMorale=true; s.protectCas=99; log('Zero 0: no Morale or Casualty Damage from this attack.','heal'); done(); }});
+  // Haste 0 — drop the top card of your Deck: add a Fast Track from your Drop or Deck to your hand
+  if(is('haste',0)&&p.deck.length)add(tc,'Haste 0 — add a Fast Track from your Drop or Deck (the top of your Deck to the Drop)',{
+    cost:function(paid){ topToDrop(1); paid(true); },
+    effect:function(done){ const got=window.findAndMoveFastTrackRD1(dw); log('Haste 0: '+(got?'Fast Track is added to '+sidePossLower(dw)+' hand.':'no Fast Track to add.'),'info'); done(); }});
+  // Phantom 0 — the top card of your Deck to the Drop: cards from the attacker's hand go to their Deadzone, as many as your
+  // Casualty Count
+  if(is('phantom',0)&&p.deck.length)add(tc,'Phantom 0 — cards from '+sidePossLower(aWho)+' hand to their Deadzone, as many as your Casualty Count (the top of your Deck to the Drop)',{
+    cost:function(paid){ topToDrop(1); paid(true); },
+    effect:function(done){
+      const n=Math.min(Math.max(0,p.cas||0),o.hand.length);
+      if(!n){ log('Phantom 0: no cards to send.','info'); done(); return; }
+      F.pick(dw,'Phantom 0 — choose '+n+' card(s) from '+sidePossLower(aWho)+' hand for their Deadzone.',o.hand.slice(),n,n,function(pk){
+        (pk||[]).forEach(c=>{ o.hand.splice(o.hand.indexOf(c),1); window.dzAdd(o,c); });
+        log('Phantom 0: '+(pk||[]).length+' card(s) from '+sidePossLower(aWho)+' hand go to the Deadzone.','dmg'); done();
+      });
+    }});
+  // Blizzard 0 — drop the top card of your Deck: the attacking card cannot attack until the end of its owner's next turn
+  if(is('blizzard',0)&&p.deck.length)add(tc,'Blizzard 0 — '+att.name+' cannot attack until the end of '+sidePossLower(aWho)+' next turn (the top of your Deck to the Drop)',{
+    cost:function(paid){ topToDrop(1); paid(true); },
+    effect:function(done){ window.markFrozen(att,aWho,2,'Blizzard 0: '+att.name+' cannot attack until the end of '+sidePossLower(aWho)+' next turn.'); done(); }});
+  // Negative 0 — drop a hand card: if a Numeral defeats it in this battle, gain MP equal to that Numeral
+  if(is('negative',0)&&p.hand.length)add(tc,'Negative 0 — if it is defeated in this battle, gain MP equal to the attacker’s Numeral (drop 1)',{
+    cost:dropHand('Negative 0 — drop a card from your hand.',()=>p.hand.slice(),1),
+    effect:function(done){ tc._negative0Gain=window.baseNPRD4(att); log('Negative 0: if it is defeated in this battle, '+sideVerbLabel(dw,'gain','gains')+' '+tc._negative0Gain+' MP.','heal'); done(); }});
+  // Deckstructive 0 — drop 3 hand cards: negate the attack; after the Battle Phase the attacker mills cards equal to its NP
+  if(is('deckstructive',0)&&p.hand.length>=3)add(tc,'Deckstructive 0 — negate the attack; '+sideSubjectLabel(aWho)+' mills '+npOf(att)+' after the Battle Phase (drop 3)',{
+    cost:dropHand('Deckstructive 0 — drop 3 cards from your hand.',()=>p.hand.slice(),3),
+    effect:function(done){ G._reactiveNegateAtk=true; G._d0millQueued={who:aWho,count:npOf(att)}; log('Deckstructive 0: the attack is negated; '+sideSubjectLabel(aWho)+' will mill '+npOf(att)+' after the Battle Phase.','heal'); done(); }});
+  // Extension 0 (in your Bank) — your Rear Flank card would be defeated in the opponent's turn: return a card from your Drop
+  // to your Deck and drop a hand card: its removal is negated
+  const ext0=(p.bank||[]).find(c=>c&&c.name==='Extension 0'&&!c.usedSkill);
+  if(ext0&&tgt.zone==='rear-flank'&&G.turn!==dw&&aNP>=tNP&&p.hand.length&&p.discard.length)add(ext0,'Extension 0 — '+tc.name+' is not removed (a Drop card to your Deck, drop 1 hand card)',{
+    cost:function(paid){
+      F.pick(dw,'Extension 0 — return a card from your Drop to your Deck.',p.discard.slice(),1,1,function(a){
+        const c=a&&a[0]; if(!c){ paid(false); return; }
+        p.discard.splice(p.discard.indexOf(c),1); p.deck.push(c);
+        dropHand('Extension 0 — drop a card from your hand.',()=>p.hand.slice(),1)(paid);
+      });
+    },
+    effect:function(done){ tc._extension0Protected=true; log('Extension 0: '+tc.name+' is not removed from the Rear Flank.','heal'); done(); }});
+  // Blizzard 6 (on your field) — mill 2, drop a hand card and a Deadzone card: no player can declare an attack until the end
+  // of the turn (this one is stopped); the attacker drops a card from their Deadzone at the end of the turn
+  Object.keys(ZK).forEach(z=>{
+    const b6=p[ZK[z]];
+    if(!(b6&&b6.type==='numeral'&&b6.class==='blizzard'&&b6.numeral===6&&!b6.usedSkill&&p.hand.length&&p.deadzone.length&&p.deck.length>=2))return;
+    add(b6,'Blizzard 6 — no attack can be declared this turn; this one is stopped (mill 2, drop 1 hand and 1 Deadzone card)',{
+      cost:function(paid){
+        F.millN(dw,2);
+        dropHand('Blizzard 6 — drop a card from your hand.',()=>p.hand.slice(),1)(function(ok){
+          if(!ok){ paid(false); return; }
+          F.pick(dw,'Blizzard 6 — drop a card from your Deadzone.',p.deadzone.slice(),1,1,function(pk){ const c=pk&&pk[0]; if(c)F.deadzoneToDrop(dw,c); paid(true); });
         });
+      },
+      effect:function(done){
+        G._reactiveNegateAtk=true; G._ru157NoAttackThisTurn=true; G._ru157Blizzard6Drop=aWho;
+        F.living().forEach(s=>F.fieldCards(G[s]).forEach(c=>{ c.attacksLeft=0; }));
+        log('Blizzard 6: this attack is stopped and no attack can be declared this turn; '+sideSubjectLabel(aWho)+' drops a Deadzone card at the end of the turn.','heal'); done();
       }});
-    }
-    if(!opts.length){onDone();return;}
-    let body=`<p style="font-size:.82rem;margin-bottom:.5rem;">${sidePossessiveLabel(aWho)} <strong>${att.name}</strong> (NP ${aNP}) is attacking ${sidePossLower(dw)} <strong>${tc.name}</strong> (NP ${tNP}). ${sideSubjectLabel(dw)} may use a reactive Battle Phase Numeral skill:</p>`;
-    const btns=opts.map(o=>({label:o.label,cls:'mb-skill',fn:()=>{closeModal();if(o.async){o.fn(()=>{renderAll();onDone();});}else{o.fn();renderAll();onDone();}}}));
+  });
+  // Frozen Tundra (an Area Card in your Deadzone — not a skill): with 2+ Blizzard Numerals on your field, drop a Blizzard
+  // Numeral from your hand: negate this attack (an Inferno attacker cannot attack on its next turn)
+  if(p.deadzone.some(c=>c&&c.name==='Frozen Tundra')){
+    const bl=()=>p.hand.filter(c=>c&&c.class==='blizzard'&&c.type==='numeral');
+    const onFld=Object.keys(ZK).filter(z=>{ const c=p[ZK[z]]; return c&&c.class==='blizzard'&&c.type==='numeral'; }).length;
+    if(onFld>=2&&bl().length)out.push({label:'Frozen Tundra — negate this attack (drop 1 Blizzard Numeral)',area:function(next){
+      F.pick(dw,'Frozen Tundra — drop a Blizzard Numeral from your hand.',bl(),1,1,function(pk){
+        const c=pk&&pk[0]; if(!c){ next(); return; }
+        p.hand.splice(p.hand.indexOf(c),1); p.discard.push(c);
+        G._reactiveNegateAtk=true;
+        if(att.class==='inferno'){ G._ru157AttackLock=G._ru157AttackLock||{}; G._ru157AttackLock[aWho]=Math.max(G._ru157AttackLock[aWho]||0,2); }
+        log('Frozen Tundra: this attack is negated'+(att.class==='inferno'?'; the Inferno attacker cannot attack next turn':'')+'.','heal');
+        next();
+      });
+    }});
+  }
+  return out;
+}
+function offerReactiveSkills(aWho,att,addonNP,tgt,onDone){
+  const dw=ruDefenderSeat(aWho,tgt);
+  if(dw===aWho||!isHumanSeat(dw)||!tgt||!tgt.card){onDone();return;}
+  (function offer(){
+    if(G.gameOver||G._reactiveNegateAtk||G._reactiveRedirect){ onDone(); return; }
+    const opts=reactiveDefenses(aWho,att,addonNP,tgt,dw).filter(o=>o.area||!window.ruSkillLocked(dw,o.card));
+    if(!opts.length){ onDone(); return; }
+    const body=`<p style="font-size:.82rem;margin-bottom:.5rem;">${sidePossessiveLabel(aWho)} <strong>${att.name}</strong> (NP ${npOf(att)+(addonNP||0)}) is attacking ${sidePossLower(dw)} <strong>${tgt.card.name}</strong> (NP ${npOf(tgt.card)}). ${sideSubjectLabel(dw)} may use a reactive skill:</p>`;
+    const again=function(){ renderAll(); offer(); };
+    const btns=opts.map(o=>({label:o.label,cls:'mb-skill',fn:()=>{ closeModal();
+      if(o.area){ o.area(again); return; }
+      window.ruUseSkill(dw,o.card,{cost:o.cost,effect:o.effect,mark:o.mark,done:again}); }}));
     btns.push({label:'Pass',fn:()=>{closeModal();onDone();}});
     ruDefPrompt(dw,'Reactive Battle Skill?',body,btns);
-  }
-function offerReactiveDefenseL2(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho&&isHumanSeat(dw)&&tgt&&tgt.card&&tgt.zone==='rear-flank'){
-        const p=G[dw];
-        const ext0=(p.bank||[]).find(c=>c.name==='Extension 0'&&!c.usedSkill);
-        if(ext0&&p.hand.length>0){
-          const aNP=window.npRD2(att)+(addonNP||0), tNP=window.npRD2(tgt.card);
-          const body=`<p style="font-size:.82rem;margin-bottom:.5rem;">${sidePossessiveLabel(aWho)} <strong>${att.name}</strong> (NP ${aNP}) is attacking ${sidePossLower(dw)} Rear Flank <strong>${tgt.card.name}</strong> (NP ${tNP}). Extension 0 can protect the Rear Flank during the opponent's turn.</p>`;
-          ruDefPrompt(dw,'Reactive Battle Skill?',body,[
-            {label:'Use Extension 0 — protect Rear Flank',cls:'mb-skill',fn:()=>{closeModal();if(p.discard.length)p.deck.push(p.discard.pop());const h=p.hand.pop();p.discard.push(h);ext0.usedSkill=true;tgt.card._shield=true;tgt.card._extension0Protected=true;G._defState=G._defState||{};G._defState.noMorale=true;G._defState.protectCas=99;log(`Extension 0: Rear Flank removal/damage protected; dropped ${h.name}.`,'heal');renderAll();onDone();}},
-            {label:'Pass',fn:()=>{closeModal();offerReactiveDefenseL1(aWho,att,addonNP,tgt,onDone);}}
-          ]);
-          return;
-        }
-      }
-      return offerReactiveDefenseL1(aWho,att,addonNP,tgt,onDone);
-    }
-function offerReactiveDefenseL3(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho&&isHumanSeat(dw)&&tgt&&tgt.card&&tgt.card.class==='deckstructive'&&tgt.card.numeral===0&&!tgt.card.usedSkill&&G[dw].hand&&G[dw].hand.length>=3){
-        var t=tgt.card;
-        var body='<p style="font-size:.82rem;margin-bottom:.5rem;">'+sideSubjectLabel(aWho)+' '+(isLocalHumanSeat(aWho)?'are':'is')+' attacking '+sidePossLower(dw)+' <strong>'+t.name+'</strong>. Deckstructive 0 may drop exactly 3 chosen hand cards to negate the attack; after Battle Phase, the attacker mills cards equal to the attacking card NP.</p>';
-        ruDefPrompt(dw,'Deckstructive 0 - Reactive Skill',body,[
-          {label:'Use Deckstructive 0',cls:'mb-skill',fn:function(){
-            closeModal();
-            window.chooseRD3(dw,'Deckstructive 0 - choose the 3 hand cards to Drop.',G[dw].hand,3,3,false,function(picks){
-              if(picks.length!==3){onDone();return;}
-              picks.forEach(function(c){window.moveToRD3(G[dw],c,'discard');});
-              t.usedSkill=true;
-              G._reactiveNegateAtk=true;
-              G._d0millQueued={who:aWho,count:window.npRD3(att)};
-              window.safeLogRD3('Deckstructive 0: attack negated; dropped '+picks.map(function(c){return c.name;}).join(', ')+'. '+sideSubjectLabel(aWho)+' will drop '+window.npRD3(att)+' card(s) after Battle Phase.','heal');
-              window.renderSafeRD3();
-              onDone();
-            });
-          }},
-          {label:'Pass',fn:function(){closeModal();offerReactiveDefenseL2(aWho,att,addonNP,tgt,onDone);}}
-        ]);
-        return;
-      }
-      return offerReactiveDefenseL2(aWho,att,addonNP,tgt,onDone);
-    }
-function offerReactiveDefenseL4(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho&&isHumanSeat(dw)&&tgt&&tgt.card&&tgt.card.class==='negative'&&tgt.card.numeral===0&&!tgt.card.usedSkill&&(G[dw].hand||[]).length){
-        ruDefPrompt(dw,'Negative 0 - Reactive Skill','<p style="font-size:.82rem;">'+sideSubjectLabel(aWho)+' '+(isLocalHumanSeat(aWho)?'are':'is')+' attacking '+sidePossLower(dw)+' Negative 0. Choose 1 hand card to Drop. If Negative 0 is defeated in this battle, its owner gains MP equal to the attacking Numeral.</p>',[
-          {label:'Use Negative 0',cls:'mb-skill',fn:function(){
-            closeModal();
-            window.payHandRD4(dw,'Negative 0 - choose 1 hand card to Drop.',1,function(picks){
-              if(!picks.length){onDone();return;}
-              tgt.card.usedSkill=true;
-              tgt.card._negative0Gain=window.baseNPRD4(att);
-              window.safeLogRD4('Negative 0: if defeated this battle, gain '+window.baseNPRD4(att)+' MP.','heal');
-              window.renderSafeRD4();onDone();
-            });
-          }},
-          {label:'Pass',fn:function(){closeModal();offerReactiveDefenseL3(aWho,att,addonNP,tgt,onDone);}}
-        ]);
-        return;
-      }
-      return offerReactiveDefenseL3(aWho,att,addonNP,tgt,onDone);
-    }
-function offerReactiveDefenseL5(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho&&isHumanSeat(dw)&&tgt&&tgt.card&&window.sideL7(dw)){
-        var p=window.sideL7(dw),tc=tgt.card,aNP=window.npL7(att)+(addonNP||0),tNP=window.npL7(tc),opts=[];
-        if(tc.class==='light'&&tc.numeral===0&&!tc.usedSkill&&p.hand.length){
-          opts.push({label:'Light 0 - negate Morale/Casualty Damage (choose 1 hand card)',fn:function(){
-            window.pickCardsL7(dw,'Light 0 - choose the hand card to Drop.',p.hand,1,1,false,function(picks){
-              if(!picks){onDone();return;}
-              window.moveToL7(p,picks[0],'discard');tc.usedSkill=true;G._reactiveNegateAtk=true;G._defState=G._defState||{};G._defState.noMorale=true;G._defState.protectCas=99;
-              window.safeLogL7('Light 0: attack damage negated; dropped '+picks[0].name+'.','heal');window.renderSafeL7();onDone();
-            });
-          }});
-        }
-        var light3s=(p.hand||[]).filter(function(c){return c&&c.name==='Light 3';});
-        if(light3s.length&&aNP>tNP&&!tc.isDigit){
-          opts.push({label:'Light 3 - negate attack and return target to hand',fn:function(){
-            window.pickCardsL7(dw,'Light 3 - choose which Light 3 to Drop.',light3s,1,1,false,function(picks){
-              var l3=picks&&picks[0];if(!l3){onDone();return;}
-              window.moveToL7(p,l3,'discard');
-              var ret=window.removeBattlefieldTargetL7(dw,tgt.zone);
-              if(ret){p.hand.push(ret);var loss=window.printedRankL7(ret);p.mp-=loss;window.safeLogL7('Light 3: attack negated; '+ret.name+' returned to hand. '+sideVerbLabel(dw,'lose','loses')+' '+loss+' MP.','heal');}
-              G._reactiveNegateAtk=true;window.renderSafeL7();onDone();
-            });
-          }});
-        }
-        ['rank','left-flank','right-flank','rear-flank'].forEach(function(z){
-          var l6=window.zoneCardL7(p,z);
-          if(l6&&l6.class==='light'&&l6.numeral===6&&!l6.usedSkill&&p.hand.length&&tc!==l6&&tc.numeral<6){
-            opts.push({label:'Light 6 - redirect attack to '+l6.name+' (choose 1 hand card)',fn:function(){
-              window.pickCardsL7(dw,'Light 6 - choose the hand card to Drop.',p.hand,1,1,false,function(picks){
-                if(!picks){onDone();return;}
-                window.moveToL7(p,picks[0],'discard');l6.usedSkill=true;
-                G._reactiveRedirect={zone:z,card:l6};G._defState=G._defState||{};G._defState.noMorale=true;
-                window.safeLogL7('Light 6: attack redirected to Light 6; dropped '+picks[0].name+'; no Morale Damage from that attack.','heal');
-                window.renderSafeL7();onDone();
-              });
-            }});
-          }
-        });
-        if(opts.length){
-          var body='<p style="font-size:.82rem;margin-bottom:.5rem;">'+sideSubjectLabel(aWho)+' '+(isLocalHumanSeat(aWho)?'are':'is')+' attacking '+sidePossLower(dw)+' <strong>'+tc.name+'</strong>. Choose a Light reactive skill or pass.</p>';
-          var btns=opts.map(function(o){return {label:o.label,cls:'mb-skill',fn:function(){closeModal();o.fn();}};});
-          btns.push({label:'Pass',fn:function(){closeModal();onDone();}});
-          ruDefPrompt(dw,'Light Reactive Skill',body,btns);
-          return;
-        }
-      }
-      return offerReactiveDefenseL4(aWho,att,addonNP,tgt,onDone);
-    }
-function offerReactiveDefenseL6(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho&&isHumanSeat(dw)&&tgt&&tgt.card&&tgt.card.class==='blizzard'&&tgt.card.numeral===0&&!tgt.card.usedSkill&&window.sideRD6(dw)&&window.sideRD6(dw).deck.length){
-        ruDefPrompt(dw,'Blizzard 0 - Reactive Skill','<p style="font-size:.82rem;">'+sideSubjectLabel(aWho)+' '+(isLocalHumanSeat(aWho)?'are':'is')+' attacking '+sidePossLower(dw)+' Blizzard 0. Use Blizzard 0 to freeze that attacker; the top card of the defender’s Deck will drop at End Phase.</p>',[
-          {label:'Use Blizzard 0',cls:'mb-skill',fn:function(){closeModal();tgt.card.usedSkill=true;markFrozen(att,aWho,2,'Blizzard 0: '+att.name+' cannot attack until the end of '+sidePossLower(aWho)+' next turn.');G._ru157Blizzard0Mill=G._ru157Blizzard0Mill||{};G._ru157Blizzard0Mill[dw]=(G._ru157Blizzard0Mill[dw]||0)+1;window.renderSafeRD6();onDone();}},
-          {label:'Pass',fn:function(){closeModal();onDone();}}
-        ]);
-        return;
-      }
-      return offerReactiveDefenseL5(aWho,att,addonNP,tgt,onDone);
-    }
-function offerReactiveDefenseL7(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho&&isHumanSeat(dw)&&tgt&&tgt.card&&tgt.card.class==='phantom'&&tgt.card.numeral===0&&!tgt.card.usedSkill&&window.sideSG8(dw)&&window.sideSG8(dw).deck.length){
-        ruDefPrompt(dw,'Phantom 0 - Reactive Skill','<p style="font-size:.82rem;">'+sideSubjectLabel(aWho)+' '+(isLocalHumanSeat(aWho)?'are':'is')+' attacking '+sidePossLower(dw)+' Phantom 0. Use Phantom 0 to drop the top card of the defender’s Deck; then the attacker sends hand cards to Deadzone equal to the defender’s Casualty Count.</p>',[
-          {label:'Use Phantom 0',cls:'mb-skill',fn:function(){
-            closeModal();
-            var p=window.sideSG8(dw);tgt.card.usedSkill=true;window.topDeckRD7(dw,1,'discard');
-            var n=Math.max(0,p.cas||0);
-            window.moveOpponentHandToDeadzoneRD7(dw,n,'Phantom 0',function(picks){
-              window.safeLogSG8('Phantom 0: '+sideVerbLabel(aWho,'send')+' '+(picks?picks.length:0)+' hand card(s) to Deadzone.','dmg');
-              window.renderSafeSG8();window.checkSafeSG8();onDone();
-            });
-          }},
-          {label:'Pass',fn:function(){closeModal();onDone();}}
-        ]);
-        return;
-      }
-      return offerReactiveDefenseL6(aWho,att,addonNP,tgt,onDone);
-    }
-function offerReactiveDefenseL8(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho && isHumanSeat(dw) && tgt && tgt.card && tgt.card.class === 'astute' && tgt.card.numeral === 0 && !tgt.card.usedSkill && window.sideRD8(dw) && window.sideRD8(dw).hand.length){
-        ruDefPrompt(dw,'Astute 0 - Reactive Skill',
-          '<p style="font-size:.82rem;">'+sideSubjectLabel(aWho)+' declared an attack on Astute 0. The defender may discard one card; if they do, the attacker reveals hand and the defender may Drop one card from it.</p>',
-          [
-            {label:'Use Astute 0',cls:'mb-skill',fn:function(){
-              closeModal();
-              var p = window.sideRD8(dw), card = tgt.card, sv = typeof card.S === 'number' && Math.abs(card.S) < 50 ? card.S : 0;
-              window.chooseOneRD8(dw,'Astute 0 - choose 1 hand card to discard as cost.',p.hand.slice(),false,function(cost){
-                if(!cost){ onDone(); return; }
-                window.moveToRD8(p,cost,'discard');
-                if(sv){ p.mp += sv; window.safeLogRD8('Astute 0 skill morale: ' + (sv > 0 ? '+' : '') + sv + ' MP.', sv > 0 ? 'heal' : 'dmg'); }
-                card.usedSkill = true;
-                window.chooseOpponentHandRD8(dw,'Astute 0 - choose up to 1 of the attacker’s hand cards to Drop.',1,0,function(picks){
-                  window.safeLogRD8('Astute 0: discarded ' + cost.name + '; dropped ' + (picks && picks[0] ? picks[0].name : 'no hand card') + ' from ' + sidePossLower(aWho) + ' hand.', 'dmg');
-                  window.renderSafeRD8(); window.checkSafeRD8(); onDone();
-                });
-              });
-            }},
-            {label:'Pass',fn:function(){ closeModal(); onDone(); }}
-          ]);
-        return;
-      }
-      return offerReactiveDefenseL7.apply(this,arguments);
-    }
-function offerReactiveDefenseL9(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho && isHumanSeat(dw) && tgt && tgt.card && tgt.zone === 'rear-flank' && window.sideRD9(dw)){
-        var p = window.sideRD9(dw);
-        var ext0 = (p.bank || []).find(function(c){ return c && c.name === 'Extension 0' && !c.usedSkill; });
-        var aNP = (typeof window.npRD9 === 'function' ? window.npRD9(att) : 0) + (addonNP || 0);
-        var tNP = typeof window.npRD9 === 'function' ? window.npRD9(tgt.card) : 0;
-        if(ext0 && p.hand.length && p.discard.length && aNP >= tNP){
-          ruDefPrompt(dw,'Extension 0 - Rear Flank Protection',
-            '<p style="font-size:.82rem;">'+sideSubjectLabel(aWho)+' '+(isLocalHumanSeat(aWho)?'are':'is')+' attacking '+sidePossLower(dw)+' Rear Flank. Extension 0 can return one Drop card to Deck and drop one hand card to negate that Rear Flank card leaving the Battlefield.</p>',
-            [
-              {label:'Use Extension 0',cls:'mb-skill',fn:function(){
-                closeModal();
-                window.chooseOneRD9(dw,'Extension 0 - choose 1 Drop card to return to Deck.',p.discard.slice(),false,function(dropCard){
-                  if(!dropCard){ onDone(); return; }
-                  window.moveToRD9(p,dropCard,'deck_bottom');
-                  window.chooseOneRD9(dw,'Extension 0 - choose 1 hand card to Drop.',p.hand.slice(),false,function(handCard){
-                    if(!handCard){ onDone(); return; }
-                    window.moveToRD9(p,handCard,'discard');
-                    ext0.usedSkill = true;
-                    tgt.card._shield = true;
-                    tgt.card._extension0Protected = true;
-                    G._defState = G._defState || {};
-                    G._defState.noMorale = true;
-                    G._defState.protectCas = 99;
-                    window.safeLogRD9('Extension 0: returned ' + dropCard.name + ', dropped ' + handCard.name + ', and protected Rear Flank from battle removal.','heal');
-                    window.renderSafeSS8();
-                    onDone();
-                  });
-                });
-              }},
-              {label:'Pass',fn:function(){ closeModal(); offerReactiveDefenseL8(aWho,att,addonNP,tgt,onDone); }}
-            ]);
-          return;
-        }
-      }
-      return offerReactiveDefenseL8.apply(this,arguments);
-    }
+  })();
+}
 // A class's own reactive defenses (ruHook('defend')) come first; each goes on with the rest of the window.
 function offerReactiveDefense(aWho,att,addonNP,tgt,onDone){
-  const rest=function(){ offerReactiveDefenseL10(aWho,att,addonNP,tgt,onDone); };
+  const rest=function(){ offerReactiveSkills(aWho,att,addonNP,tgt,onDone); };
   if(window.ruDefendHook&&window.ruDefendHook(aWho,att,addonNP,tgt,onDone,rest))return;
   rest();
 }
-function offerReactiveDefenseL10(aWho,att,addonNP,tgt,onDone){
-      const dw=ruDefenderSeat(aWho,tgt);
-      if(dw!==aWho && isHumanSeat(dw) && tgt && tgt.card && tgt.card.class === 'restorative' && tgt.card.numeral === 0 && !tgt.card.usedSkill){
-        var p = window.sideRD10(dw);
-        if(p && p.hand.length && p.deck.length){
-          ruDefPrompt(dw,'Restorative 0 - Reactive Defense',
-            '<p style="font-size:.82rem;">'+sideSubjectLabel(aWho)+' declared an attack on Restorative 0. The defender may drop one chosen hand card and the top card of Deck to negate Casualty Damage from that attack.</p>',
-            [
-              {label:'Use Restorative 0',cls:'mb-skill',fn:function(){
-                closeModal();
-                window.chooseOneRD10(dw,'Restorative 0 - choose 1 hand card to Drop.',p.hand.slice(),false,function(cost){
-                  if(!cost){ onDone(); return; }
-                  window.moveToRD10(p,cost,'discard');
-                  window.topDeckToDropRD10(p,1);
-                  tgt.card.usedSkill = true;
-                  G._defState = G._defState || {};
-                  G._defState.protectCas = 99;
-                  window.safeLogRD10('Restorative 0: dropped ' + cost.name + ' and top Deck card; Casualty Damage from this attack is negated.','heal');
-                  window.renderSafeRD10();
-                  onDone();
-                });
-              }},
-              {label:'Pass',fn:function(){ closeModal(); offerReactiveDefenseL9(aWho,att,addonNP,tgt,onDone); }}
-            ]);
-          return;
-        }
-      }
-      return offerReactiveDefenseL9.apply(this,arguments);
-    }
 window.offerReactiveDefense=offerReactiveDefense;
 
 // ═══ DEFENSE WINDOW — SAFEGUARD (offered to a human defender BEFORE the attack resolves) ═══
@@ -24231,13 +24094,6 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   // ruActNegate(rec, kind, by, done): 'change' returns the NP+RP total that went back; otherwise true, or false when it
   // can no longer be negated (its moment is gone).
-  // The NP/RP changes an activation made go back now, without negating it (an effect applied at another time):
-  // returns them, by seat and zone — {seat: {zone: {dNP, dRP}}}.
-  window.ruActMoveChanges=function(rec){
-    var by={}; rec.changes.forEach(function(c){ var z=(by[c.owner]=by[c.owner]||{}),e=(z[c.zone]=z[c.zone]||{dNP:0,dRP:0}); e.dNP+=c.dNP; e.dRP+=c.dRP; });
-    undoChanges(rec,ACT_SNAP[rec.n]); rec.changes=[]; refresh();
-    return by;
-  };
   window.ruActNegate=function(rec,kind,by,done){
     var s=ACT_SNAP[rec.n],fin=function(){ if(done)done(); };
     if(kind==='change'){
@@ -24303,11 +24159,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // • History (G._hist): at the start of every turn (its Draw Phase) where every card was (seat, zone or pile, place),
   //   and every player's MP and Casualty Count. ruTurnStart(T), ruTurnsOf(seat) read it; ruRestoreTo(entry, which) puts
   //   cards back where they were then (a card that cannot be removed stays — the field watch).
-  // • Battles (G._battles): every resolved attack with the NP/RP it was fought at. ruRetroBattles re-fights a seat's past
-  //   Battle Phase with changed NP/RP and applies the difference now ("applied to your previous Battle Phase").
+  // • Battles (G._battles): every resolved attack with the NP/RP it was fought at (ruBattleOutcome: what a battle does).
+  // • The timeline (G._tl): a position at the start of each seat's last Battle Phases and every input since. A card that
+  //   changes the past (ruRewritePast) goes back to such a position, makes its change there, and every input played since
+  //   is played again on top of it — what follows is what would have followed: other draws, battles, Casualties.
   // • Later (G._timeQ, ruLater): an effect set for a later point — 'nextTurn' (the start of the next turn), 'myTurn' /
-  //   'myBattle' (the start of that seat's next turn / Battle Phase), 'myDamage' (that seat's next Damage Step: its next
-  //   resolved attack, or the end of that Battle Phase without one). window.ruTimeFx[kind](entry) is the effect.
+  //   'myBattle' (the start of that seat's next turn / Battle Phase), 'myPhase' (data.phase of that seat's next turn),
+  //   'myDamage' (that seat's next Damage Step: its next resolved attack, or the end of that Battle Phase without one).
+  //   window.ruTimeFx[kind](entry) is the effect.
   // • Held Casualty Draws (ruDelayCasualties): a seat's Casualty Draws this turn are kept back and taken at a later point.
   // • A becomes W (ruAasW): a card's A stat turns into a W stat of the same value (A: Ⅱ → W: Ⅱ, in A's place — it gives
   //   no Action Card slots then) while a duration / condition lasts; then its own A and W come back.
@@ -24401,31 +24260,153 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return o;
   }
   window.ruBattleOutcome=outcome;
-  // the difference one side of a battle takes now: MP (lost, or regained when negative), Casualty Draws, its card defeated
-  // now / back from the Deadzone
-  function applyDiff(seat,mp,draws,cardId,zone,kill,unkill,label){
-    var p=side(seat); if(!p)return;
-    if(mp>0)damage(seat,mp,label,true); else if(mp<0){ p.mp-=mp; say(label+': '+sideVerbLabel(seat,'regain','regains')+' '+(-mp)+' MP.','heal'); }
-    for(var i=0;i<draws;i++)casDraw(seat);
-    if(kill){ var f=onField({id:cardId}); if(f&&f.w===seat&&fieldTo(seat,f.card,'deadzone'))say(label+': '+sidePossessiveLabel(seat)+' '+f.card.name+' is defeated.','dmg'); }
-    if(unkill){ var c=(p.deadzone||[]).find(function(x){ return x.id===cardId; });
-      if(c&&!window.zCard(p,zone)){ fromDeadzone(p,c); window.zSet(p,zone,fresh(c)); window.ruFieldWatch(); say(label+': '+c.name+' was not defeated — it returns to its Zone.','heal'); } }
+  // ---- the timeline: changing the past ----
+  // Kept only while a card that can use it is in the game (window.ruTimelineUsers: predicates its class registers). A
+  // position is kept at the start of each seat's last TL_KEEP Battle Phases — at the first input of that Battle Phase, with
+  // the table settled — encoded as a string (copying a game position stays cheap), with every input from then on: the
+  // input, and for an answer the prompt it answered (its title, the button's label, the cards picked).
+  window.ruTimelineUsers=window.ruTimelineUsers||[];
+  var TL_KEEP=2,TL_OWN={_tl:1,_tlReplay:1,_tlAuto:1,_tlPending:1,_actor:1,_uiLocal:1,_inInput:1,_replaying:1,_recording:1,_actionLog:1};
+  function tlNeeded(){ return window.ruTimelineUsers.some(function(f){ try{ return !!f(); }catch(e){ return false; } }); }
+  function tlBusy(){ return !!((window._RUcq&&window._RUcq.length)||window._RUcbusy); }
+  function tlQuiet(){ return !window.ruUiBusy()&&!(typeof SF!=='undefined'&&SF)&&!tlBusy()&&!(window.ruSettlePending&&window.ruSettlePending())&&G.mode!=='oppzonepick'; }
+  // A game position as a string and back: shared references and cycles kept, Sets / Maps, Infinity / NaN; functions and
+  // DOM nodes dropped (as every saved position).
+  function tlEncode(root){
+    var ids=new Map(),nodes=[],OPS2=Object.prototype.hasOwnProperty;
+    function enc(v){
+      if(v===null)return null;
+      var t=typeof v;
+      if(t==='number')return isFinite(v)?v:{$n:String(v)};
+      if(t==='string'||t==='boolean')return v;
+      if(t!=='object'||v.nodeType)return {$u:1};
+      var id=ids.get(v); if(id!==undefined)return {$r:id};
+      id=nodes.length; ids.set(v,id); nodes.push(null);
+      var tag=Object.prototype.toString.call(v),node;
+      if(Array.isArray(v))node={a:v.map(enc)};
+      else if(tag==='[object Set]'){ var sa=[]; v.forEach(function(x){ sa.push(enc(x)); }); node={s:sa}; }
+      else if(tag==='[object Map]'){ var ma=[]; v.forEach(function(x,k){ ma.push([enc(k),enc(x)]); }); node={m:ma}; }
+      else{ var o={}; for(var k in v){ if(!OPS2.call(v,k)||typeof v[k]==='function')continue; o[k]=enc(v[k]); } node={o:o}; }
+      nodes[id]=node; return {$r:id};
+    }
+    var r=enc(root); return JSON.stringify({r:r,n:nodes});
   }
-  // Seat w's attacks of turn T fought again with its attacking cards changed by delta[zone] = {dNP, dRP} (by the zone each
-  // attacked from); every difference in the result happens now. Returns how many battles changed.
-  window.ruRetroBattles=function(w,T,delta,label){
-    var n=0;
-    (G._battles||[]).filter(function(b){ return b.turn===T&&b.aWho===w; }).forEach(function(b){
-      var d=delta[b.aZone]; if(!d||(!d.dNP&&!d.dRP))return;
-      var o0=outcome(b),o1=outcome(Object.assign({},b,{aNP:b.aNP+(d.dNP||0),aRP:b.aRP+(d.dRP||0)}));
-      if(o0.mpA===o1.mpA&&o0.mpD===o1.mpD&&o0.drawA===o1.drawA&&o0.drawD===o1.drawD&&o0.killA===o1.killA&&o0.killD===o1.killD)return;
-      n++;
-      say(label+': the attack from '+sidePossLower(w)+' '+b.aZone.replace('-',' ')+' is fought again at NP '+(b.aNP+(d.dNP||0))+' (was '+b.aNP+') against NP '+b.dNP+'.','imp');
-      applyDiff(b.dWho,o1.mpD-o0.mpD,Math.max(0,o1.drawD-o0.drawD),b.defId,b.dZone,o1.killD&&!o0.killD,o0.killD&&!o1.killD,label);
-      applyDiff(b.aWho,o1.mpA-o0.mpA,Math.max(0,o1.drawA-o0.drawA),b.attId,b.aZone,o1.killA&&!o0.killA,o0.killA&&!o1.killA,label);
+  function tlDecode(str){
+    var d=JSON.parse(str),n=d.n,made=n.map(function(x){ return x.a?new Array(x.a.length):x.s?new Set():x.m?new Map():{}; });
+    function val(v){ if(v===null||typeof v!=='object')return v; if(v.$r!==undefined)return made[v.$r]; if(v.$n!==undefined)return Number(v.$n); return undefined; }
+    n.forEach(function(x,i){ var t=made[i];
+      if(x.a)x.a.forEach(function(e,k){ t[k]=val(e); });
+      else if(x.s)x.s.forEach(function(e){ t.add(val(e)); });
+      else if(x.m)x.m.forEach(function(e){ t.set(val(e[0]),val(e[1])); });
+      else for(var k in x.o)t[k]=val(x.o[k]);
     });
-    return n;
+    return val(d.r);
+  }
+  // the prompt waiting for an answer now (owner and title), '' when none: a picker, a dialog, a card to click on the board
+  function promptKey(){
+    var pk=document.getElementById('picker-modal'),m=document.getElementById('modal');
+    if(pk&&pk.classList.contains('open')&&!pk._ruViewOnly)return 'P|'+(pk._ruOwner||G.turn)+'|'+((document.getElementById('pk-title')||{}).textContent||'');
+    if(m&&m.classList.contains('open')&&!m._ruViewOnly)return 'M|'+(m._ruOwner||G.turn)+'|'+(m._ruStash?m._ruStash.title:((document.getElementById('m-title')||{}).textContent||''));
+    if(G.mode==='oppzonepick')return 'B|'+(G._oppZoneOwner||G.turn);
+    return '';
+  }
+  function modalLabels(){ var m=document.getElementById('modal'),r=document.getElementById('m-btns'); return ((m&&m._ruStash)?m._ruStash.btns:(r?[].slice.call(r.children):[])).map(function(b){ return b.textContent; }); }
+  function pickPool(){ return (typeof PCK!=='undefined'&&PCK&&PCK.pool)||[]; }
+  function tlMark(tl){
+    var g2={}; for(var k in G){ if(!TL_OWN[k])g2[k]=G[k]; }
+    tl.marks.push({seat:G.turn,turn:tn(),seq:G._phaseSeq||0,n:tl.base+tl.inputs.length,
+      snap:tlEncode({G:g2,rng:window.ruRngState(),cq:(window._RUcq||[]).slice()})});
+    var per={};
+    for(var i=tl.marks.length-1;i>=0;i--){ var m=tl.marks[i]; per[m.seat]=(per[m.seat]||0)+1; if(per[m.seat]>TL_KEEP)tl.marks.splice(i,1); }
+    var from=Math.min.apply(null,tl.marks.map(function(x){ return x.n; }));
+    if(from>tl.base){ tl.inputs.splice(0,from-tl.base); tl.base=from; }
+  }
+  // Every input, just before it is applied (the table settled) — the input layer calls it on every screen, for every input.
+  window.ruTimelineNote=function(a){
+    if(!G||!a||G.gameOver)return;
+    var tl=G._tl;
+    if(!tl){ if(!tlNeeded())return; tl=G._tl={marks:[],inputs:[],base:0}; }
+    if(G.phase==='battle'&&tlQuiet()&&!tl.marks.some(function(m){ return m.seat===G.turn&&m.turn===tn()&&m.seq===(G._phaseSeq||0); }))tlMark(tl);
+    if(!tl.marks.length)return;
+    var x={}; for(var k in a){ if(k!=='sig')x[k]=a[k]; }
+    var e={a:x,p:promptKey()};
+    if(a.t==='modal')e.l=modalLabels()[a.i];
+    if(a.t==='pick'){ var pool=pickPool(); e.ids=Array.isArray(a.ix)?a.ix.map(function(i){ return pool[i]&&pool[i].id; }):(a.ids||[]); }
+    if(a.t==='zone'||a.t==='delta')e.m=G.mode;
+    tl.inputs.push(e);
   };
+  // Seat w's previous Battle Phase (the one before the Battle Phase it is in now): its kept position, or null.
+  window.ruPastMark=function(w){
+    var tl=G._tl; if(!tl)return null;
+    var mine=tl.marks.filter(function(m){ return m.seat===w&&!(m.turn===tn()&&m.seq===(G._phaseSeq||0)); });
+    return mine.length?mine[mine.length-1]:null;
+  };
+  // Change the past at kept position m: once the input that asked for it is over, the game goes back to m; change(next)
+  // makes the change there; then every input played since m is played again (ruTimelineDrive). auto: kept in the
+  // rewritten game for the card that made the change (it meets its own use again on the way).
+  window.ruRewritePast=function(m,change,auto){
+    var tl=G._tl,list=tl.inputs.slice(m.n-tl.base);
+    G._tlPending=true;
+    window.ruWhenSettled(null,function(){
+      tlRestore(m);
+      G._tl={marks:[],inputs:[],base:0};
+      if(auto)G._tlAuto=auto;
+      change(function(){ G._tlReplay={list:list,i:0}; refresh(); });
+    },{defer:true});
+  };
+  function tlRestore(m){
+    var s=tlDecode(m.snap);
+    try{ _modalQueue.length=0; }catch(e){}
+    try{ _modalOpen=false; }catch(e){}
+    var md=document.getElementById('modal'); if(md){ md.classList.remove('open'); md._ruStash=null; md._ruOwner=null; md._ruMirror=false; md._ruViewOnly=false; }
+    var pk=document.getElementById('picker-modal'); if(pk){ pk.classList.remove('open'); pk._ruOwner=null; pk._ruMirror=false; }
+    try{ PCK={cb:null,pool:[],sel:[],max:1,min:1,opt:false,npMode:false,npMin:0}; }catch(e){}
+    SF=null;
+    if(window.ruSettleReset)window.ruSettleReset();
+    window._RUcq=s.cq.slice(); window._RUcbusy=false;
+    G=s.G;
+    window.ruRngRestore(s.rng);
+  }
+  // the recorded answer e for the prompt open now — the input to apply, or null when this past asks something else
+  function tlAnswer(e,open){
+    var a=e.a; if(e.p!==open)return null;
+    if(a.t==='modal'){ var i=modalLabels().indexOf(e.l); return i<0?null:Object.assign({},a,{i:i}); }
+    if(a.t==='pick'){
+      if(!(e.ids||[]).every(function(id){ return id!=null; }))return pickPool().length&&Array.isArray(a.ix)?a:null;
+      var pool=pickPool(),ix=e.ids.map(function(id){ return pool.findIndex(function(c){ return c&&c.id===id; }); });
+      return ix.some(function(x){ return x<0; })?null:Object.assign({},a,{ix:ix,ids:e.ids});
+    }
+    return a;
+  }
+  // Play the recorded inputs again, each after the table has settled (the input layer calls this at the end of every
+  // settle). An input this past no longer allows does nothing; an answer whose prompt never comes is dropped; a prompt
+  // this past asks that the recording does not answer stops the replay until its owner answers it.
+  var tlDriving=false;
+  window.ruTimelineDrive=function(){
+    if(tlDriving||!G||!G._tlReplay)return;
+    tlDriving=true;
+    try{
+      for(var guard=0;guard<20000;guard++){
+        var R=G&&G._tlReplay; if(!R)break;
+        if(G.gameOver||R.i>=R.list.length){ tlFinish(); break; }
+        if(tlBusy()){ window.ruWhenSettled(function(){ return !tlBusy(); },function(){},{defer:true}); break; }   // Casualty Draws first
+        var e=R.list[R.i],a=e.a,open=promptKey();
+        var answer=a.t==='modal'||a.t==='pick'||a.t==='pickCancel'||((a.t==='zone'||a.t==='delta')&&e.m==='oppzonepick');
+        if(answer){
+          if(!open){ R.i++; continue; }
+          var b=tlAnswer(e,open); if(!b)break;
+          R.i++; window.ruApplyAction(b); continue;
+        }
+        if(open)break;
+        R.i++; window.ruApplyAction(a);
+      }
+    } finally { tlDriving=false; }
+  };
+  function tlFinish(){
+    G._tlReplay=null; delete G._tlAuto;
+    say('The timeline has been rewritten — this is the present that follows from it.','imp');
+    refresh();
+  }
   // ---- later ----
   window.ruTimeFx=window.ruTimeFx||{};
   window.ruLater=function(kind,w,when,data){ (G._timeQ=G._timeQ||[]).push({kind:kind,w:w,when:when,from:tn(),data:data||{}}); };
@@ -24486,6 +24467,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       held.forEach(function(h){ if(h.n)(G._timeQ=G._timeQ||[]).push({kind:'casualties',w:h.owner,when:h.when,from:h.turn,data:{seat:h.seat,n:h.n,by:h.by}}); });
       mpWatch(); G._mpLost={turn:tn()}; awWatch(); histPush(); runLater(function(e){ return tn()>e.from&&(e.when==='nextTurn'||(e.when==='myTurn'&&e.w===G.turn)); }); }
     if(ph==='battle')runLater(function(e){ return tn()>e.from&&e.when==='myBattle'&&e.w===G.turn; });
+    // (a phase that did not come in that turn: the next one that does)
+    runLater(function(e){ return tn()>e.from&&e.when==='myPhase'&&e.w===G.turn&&PH.indexOf(ph)>=PH.indexOf(e.data.phase); });
   }
   function timeEnded(ph){
     if(ph==='battle')runLater(function(e){ return tn()>e.from&&e.when==='myDamage'&&e.w===G.turn; });
@@ -24639,12 +24622,20 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return null;
   };
   window.ruActReplayable=function(rec){ var d=typeof ACDEFS!=='undefined'&&ACDEFS[rec.name]; return !!(rec.how==='hand'&&d&&d.steps&&!d.steps.some(function(s){ return s.marksEffect; })&&d.steps.some(function(s){ return !paidCost(s); })); };
-  window.ruActReplay=function(w,cardId,name){
-    var d=ACDEFS[name]; if(!d||!G[w])return false;
-    var l=locate(cardId),card=l?l.card:{id:cardId,name:name,type:'action'};
-    SF={who:w,fieldZone:'replay',card:card,def:{steps:d.steps.filter(function(s){ return !paidCost(s)&&!s.marksEffect; })},stepIdx:0,
+  // An Action Card activated without paying its cost — a whole activation as at any other time: its record, its effect,
+  // the answers to it. o.noM: its M was counted already (an effect put off to now); o.toDrop: it goes to the Drop first
+  // (from a hand or a Deck). done() once it has resolved.
+  window.ruActFree=function(w,card,done,o){
+    o=o||{}; var d=card&&typeof ACDEFS!=='undefined'&&ACDEFS[card.name];
+    if(!d||!G[w]){ if(done)done(); return null; }
+    if(o.toDrop){ var l=locate(card.id); if(l&&l.pile!=='discard'){ var arr=G[l.s][l.pile]; arr.splice(arr.indexOf(l.card),1); if(l.pile==='deadzone')G[l.s].cas=Math.max(-7,(G[l.s].cas||0)-1); G[w].discard.push(l.card); card=l.card; } }
+    if(!o.noM&&!card.dynamicM){ var m=Number(card.M)||0; if(m){ G[w].mp+=m; say(sideVerbLabel(w,'use','uses')+' '+card.name+': '+(m>0?'+':'')+m+' MP.',m>0?'heal':'dmg'); } }
+    var mark=window.ruActMark(),rec=window.ruActBegin(w,card,'hand');
+    SF={who:w,fieldZone:'hand',card:card,def:d,stepIdx:0,freeCost:true,
       ctx:{handPicks:[],bankPicks:[],deadPicks:[],discPicks:[],deckPicks:[],milledCards:[],randomBankCard:null,oppTargetZone:null,oppTargetCard:null,_targetOppSide:null}};
-    runStep(); return true;
+    runStep();
+    window.ruActAfter(mark,done||function(){});
+    return rec;
   };
 
   // ---- shared effect helpers ----
@@ -24713,7 +24704,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function fromHand(p,c,dest){ var i=p.hand.indexOf(c); if(i===-1)return false; p.hand.splice(i,1); if(dest==='deadzone')dzAdd(p,c); else if(dest==='deck_bottom')p.deck.push(c); else p.discard.push(c); return true; }
   function fromDeadzone(p,c){ var i=p.deadzone.indexOf(c); if(i===-1)return false; p.deadzone.splice(i,1); p.cas=Math.max(-7,(p.cas||0)-1); return true; }
-  function deadzoneToDrop(w,card){ var p=side(w); if(fromDeadzone(p,card))p.discard.push(card); }
+  // (a Rank³⁺ Numeral leaving a Deadzone for the Drop: its owner may take it to hand instead — the engine's rule)
+  function deadzoneToDrop(w,card){ var p=side(w); if(!fromDeadzone(p,card))return; if(card.type==='numeral'&&(card.rank||0)>=3&&window.RUr3DeadToDiscard)window.RUr3DeadToDiscard(p,card); else p.discard.push(card); }
   function grantAttack(card,n){ card.attacksLeft=atkLeft(card)+n; card.canAttack=true; }
   // ---- prompts (owned by the seat whose decision it is); `!isHumanSeat` branches only serve the old fallback bot ----
   function ask(w,title,body,useLabel,yes,no){
@@ -25795,7 +25787,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // ═══ ANSWERS TO WHAT AN ACTIVATION DID ═══
   // An opponent's Advantageous Action Card whose activation changed the NP or RP of a card: Kismet 1 (from your hand),
   // Kismet 3 (from your Drop or Deadzone) and Kismet 4 (on your Battlefield) may answer it.
-  function npChanger(rec,s){ return rec.who!==s&&rec.sub==='Advantageous'&&!rec.negated&&rec.changes.length>0; }
+  // "if a player activates …" includes you (only "an opponent" leaves your own cards out)
+  function npChanger(rec,s){ return rec.sub==='Advantageous'&&!rec.negated&&rec.changes.length>0; }
+  // "the opponent" of an answer to an activation: the player who activated it — or, when that was you, your opponent
+  function theOpponent(s,rec,label,cb){
+    if(rec.who!==s){ cb(rec.who); return; }
+    var os=opps(s); if(os.length<=1){ cb(os[0]||null); return; }
+    choosePlayer(s,label+' — which opponent?',os,function(x){ return side(x).mp+' MP'; },cb);
+  }
   ruHook('actResponses',function(rec){
     var out=[];
     living().forEach(function(s){
@@ -25810,7 +25809,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           out.push({seat:s,label:'Kismet 4 — negate the NP/RP changes ('+changeTotal(rec)+' damage)',use:function(r,done){ kismet4(s,r,done); }});
       }
       // Kismet 9, Skill 2 — on your Battlefield, once per turn: an opponent activates an Action Card
-      if(rec.who!==s&&rec.sub&&!rec.negated){
+      if(rec.sub&&!rec.negated){
         var k9=onFieldThen(rec,p).find(function(c){ return c.name==='Kismet 9'&&c._k9s2!==tn(); });
         var hand=heldThen(rec,p.hand);
         if(k9&&hand.some(function(c){ return isAction(c)&&c.sub===rec.sub; })&&hand.some(isKisNum)&&!skillLocked(s,k9))
@@ -25879,8 +25878,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       },
       effect:function(fin){
         var tot=window.ruActNegate(rec,'change','Kismet 4');
-        damage(rec.who,tot,'Kismet 4',true);
-        fin();
+        theOpponent(s,rec,'Kismet 4',function(t){ if(t)damage(t,tot,'Kismet 4',true); fin(); });
       },
       done:function(){ done(); }});
   }
@@ -25906,8 +25904,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         window.ruActNegate(rec,'activation','Kismet 9',function(){ pay(function(){
           var n=ch.kn.rank||0,m=mOf(ch);
           if(n>0){ window.ruActLock(null,sub,{untilTurn:tn()+n-1},'Kismet 9',true); say('Kismet 9: '+sub+' Action Cards cannot be activated for '+n+' turn'+(n>1?'s':'')+'.','imp'); }
-          if(m>0)damage(rec.who,m,'Kismet 9');
-          fin();
+          if(m>0)theOpponent(s,rec,'Kismet 9',function(t){ if(t)damage(t,m,'Kismet 9'); fin(); }); else fin();
         }); });
       },
       done:function(){ done(); }});
@@ -26037,9 +26034,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     kismet0(aw,c,resume); return true;
   });
   // Kismet 7 — discard a hand card and a Bank card whose NP total is 7 or higher, drop 1 Deadzone card: drop another
-  // Deadzone card; target opponent discards Action Cards equal to its Rank and loses MP equal to all the cards discarded
-  // this turn due to this skill. It cannot attack the turn it uses this skill.
+  // Deadzone card; target opponent discards Action Cards equal to its Rank and loses MP equal to all the cards sent to the
+  // Drop this turn due to this card — its cost's included (user ruling). It cannot attack the turn it uses this skill.
   function k7Bank(p){ return p.bank.filter(function(c){ return !c.noRemove; }); }
+  // the cards Kismet 7 sent to the Drop this turn — its costs' and its skill's (what its MP loss counts)
+  function k7Of(card){ return (card._k7&&card._k7.turn===tn())?card._k7:(card._k7={turn:tn(),n:0}); }
   function k7Hand(p){ var b=k7Bank(p); return p.hand.filter(function(h){ return b.some(function(c){ return np(h)+np(c)>=7; }); }); }
   function dropFromDeadzone(w,label,cb){
     var p=side(w),pool=deadPool(p);
@@ -26056,21 +26055,21 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           pick(w,'Kismet 7 — discard 1 card from your Bank (NP total with '+h.name+': 7 or higher).',k7Bank(p).filter(function(c){ return np(h)+np(c)>=7; }),1,1,function(b){
             var bc=b&&b[0]; if(!bc){ next(false); return; }
             fromHand(p,h,'discard'); p.bank.splice(p.bank.indexOf(bc),1); p.discard.push(bc);
-            dropFromDeadzone(w,'Kismet 7 — drop 1 card from your Deadzone (cost).',function(){ next(true); });
+            dropFromDeadzone(w,'Kismet 7 — drop 1 card from your Deadzone (cost).',function(dc){ k7Of(card).n+=2+(dc?1:0); next(true); });
           });
         });
       }},
       {type:'effect',fn:function(w,p,o,zone,card){
             dropFromDeadzone(w,'Kismet 7 — drop 1 card from your Deadzone: target opponent discards Action Cards equal to its Rank.',function(c){
-              var r=isNumeral(c)?(c.rank||0):0;
+              var r=isNumeral(c)?(c.rank||0):0; if(c)k7Of(card).n++;
               window.ruBanAttack(card,{turn:tn()});
               choosePlayer(w,'Kismet 7 — target opponent',opps(w),function(s){ return side(s).hand.filter(isAction).length+' Action Card(s) in hand'; },function(t){
                 if(!t){ refresh(); return; }
                 var tp=side(t),acts=tp.hand.filter(isAction),n=Math.min(r,acts.length);
                 var fin=function(pk){
                   (pk||[]).forEach(function(x){ fromHand(tp,x,'discard'); });
-                  var k=(card._k7&&card._k7.turn===tn())?card._k7:(card._k7={turn:tn(),n:0}); k.n+=(pk||[]).length;
-                  say('Kismet 7: '+sideVerbLabel(t,'discard','discards')+' '+(pk||[]).length+' Action Card(s)'+(c?' (Rank of '+c.name+': '+r+')':'')+'.','dmg');
+                  var k=k7Of(card); k.n+=(pk||[]).length;
+                  say('Kismet 7: '+sideVerbLabel(t,'discard','discards')+' '+(pk||[]).length+' Action Card(s)'+(c?' (Rank of '+c.name+': '+r+')':'')+'; '+k.n+' card(s) sent to the Drop by Kismet 7 this turn.','dmg');
                   damage(t,k.n,'Kismet 7');
                   refresh();
                 };
@@ -26674,31 +26673,30 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // Temporal 4 — (when it attacks) mill 7: a non-Neo, generic Advantageous Star from your Deck is activated without paying
   // its cost; its effects apply to your previous Battle Phase instead of this one
   function genericStar(c){ var a=c&&AC[c.name]; return !!(c&&c.type==='action'&&a&&a.isStar&&a.starType==='generic'&&a.sub==='Advantageous'&&ACDEFS[c.name]); }
+  // The Star goes back in time: the game returns to the start of your previous Battle Phase, past you activates it there,
+  // and everything played since is played again on top of it (the field rules' timeline) — that Battle Phase, the turns
+  // after it, this one, up to Temporal 4's attack, which then goes on in the present that follows.
   TSK['Temporal 4']={
     canPay:function(w){ return side(w).deck.length>=7; },
     cost:function(w,card,cb){ millN(w,7); cb(true); },
     skill:function(w,card,done){
-      var p=side(w);
-      pick(w,'Temporal 4 — a non-Neo, generic Advantageous Star from your Deck: it activates without paying its cost, applied to your previous Battle Phase.',p.deck.filter(genericStar),1,1,function(pk){
+      var p=side(w),past=window.ruPastMark(w);
+      if(!past){ say('Temporal 4: '+sideSubjectLabel(w)+' '+(isLocalHumanSeat(w)?'have':'has')+' no previous Battle Phase to go back to.','info'); done(); return; }
+      pick(w,'Temporal 4 — a non-Neo, generic Advantageous Star from your Deck: past you activates it at the start of your previous Battle Phase.',p.deck.filter(genericStar),1,1,function(pk){
         var s=pk&&pk[0]; if(!s){ say('Temporal 4: no such Star in '+sidePossLower(w)+' Deck.','info'); done(); return; }
-        p.deck.splice(p.deck.indexOf(s),1); p.discard.push(s);
-        var m=Number(s.M)||0; if(m){ p.mp+=m; say(sideVerbLabel(w,'use','uses')+' '+s.name+': '+(m>0?'+':'')+m+' MP.',m>0?'heal':'dmg'); }
-        var prev=prevTurnOf(w),mark=window.ruActMark(),rec=window.ruActBegin(w,s,'hand');
-        if(rec)rec.retro={turn:prev?prev.turn:null,label:'Temporal 4'};
-        SF={who:w,fieldZone:'hand',card:s,def:ACDEFS[s.name],stepIdx:0,freeCost:true,
-          ctx:{handPicks:[],bankPicks:[],deadPicks:[],discPicks:[],deckPicks:[],milledCards:[],randomBankCard:null,oppTargetZone:null,oppTargetCard:null,_targetOppSide:null}};
-        runStep();
-        window.ruActAfter(mark,done);
+        say('Temporal 4: '+s.name+' goes back to the start of '+sidePossLower(w)+' previous Battle Phase (turn '+past.turn+').','imp');
+        window.ruRewritePast(past,function(next){
+          var f=window.ruFindCard(s.id);
+          say('Temporal 4: past '+sideSubjectLabel(w)+' '+(isLocalHumanSeat(w)?'activate':'activates')+' '+s.name+' — everything since is played again.','imp');
+          if(f)window.ruActFree(w,f.card,next,{toDrop:true}); else next();
+        },{kind:'t4',id:card.id,turn:tn()});
+        done();
       });
     }
   };
-  // an activation set to apply to a past Battle Phase: its NP/RP changes leave the present for those battles
-  ruHook('actResolved',function(rec){
-    if(!rec.retro||rec.negated)return false;
-    var moved=window.ruActMoveChanges(rec),mine=moved[rec.who]||{};
-    var n=rec.retro.turn!=null?window.ruRetroBattles(rec.who,rec.retro.turn,mine,rec.retro.label):0;
-    say(rec.retro.label+': '+rec.name+' applies to '+sidePossLower(rec.who)+' previous Battle Phase'+(n?' — '+n+' battle'+(n>1?'s':'')+' fought again.':' — none of those battles changes.'),'imp');
-    return false;
+  // Temporal 4 rewrites the past: the field rules keep the timeline while one is in the game
+  window.ruTimelineUsers.push(function(){
+    return living().some(function(s){ var q=side(s); return fieldCards(q).concat(q.hand||[],q.deck||[],q.bank||[],q.discard||[],q.deadzone||[]).some(named('Temporal 4')); });
   });
   // Temporal 7 — Skill 1 (return Drop cards whose NP total is 14 or higher to your Deck): you may add a Numeral from your
   // Deadzone to your hand; a Temporal-class one gives this card Skill 2. Skill 2 (once per turn, cede that Numeral): look at
@@ -26890,9 +26888,17 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // Temporal 4 — when it attacks (once per turn)
   ruHook('beforeAttack',function(aw,aZone,dw,dZone,resume){
     var p=side(aw),c=window.zCard(p,aZone);
-    if(!c||c.name!=='Temporal 4'||c._t4===tn()||!TSK['Temporal 4'].canPay(aw)||!p.deck.some(genericStar)||skillLocked(aw,c))return false;
-    ask(aw,'Temporal 4 — mill 7?','Mill 7: a non-Neo, generic Advantageous Star from your Deck activates without paying its cost — its effects apply to your previous Battle Phase (S: +4 MP).','Use Temporal 4',function(){
-      c._t4=tn(); useSkill(aw,c,'Temporal 4',function(){ refresh(); resume(); });
+    if(!c||c.name!=='Temporal 4'||c._t4===tn())return false;
+    // the present a rewritten past leads to: its skill was used on this attack — its cost and S again, the Star is in the past
+    var au=G._tlAuto;
+    if(au&&au.kind==='t4'&&au.id===c.id&&au.turn===tn()){
+      delete G._tlAuto; c._t4=tn(); millN(aw,7); skillMP(aw,c);
+      say('Temporal 4: its skill was used on this attack — its Star is in the past now.','info');
+      return false;
+    }
+    if(!TSK['Temporal 4'].canPay(aw)||!p.deck.some(genericStar)||skillLocked(aw,c))return false;
+    ask(aw,'Temporal 4 — mill 7?','Mill 7: past you activates a non-Neo, generic Advantageous Star from your Deck at the start of your previous Battle Phase, without paying its cost — and everything since plays out again from there (S: +4 MP).','Use Temporal 4',function(){
+      c._t4=tn(); useSkill(aw,c,'Temporal 4',function(){ refresh(); if(!G._tlPending)resume(); });
     },function(){ c._t4=tn(); resume(); });
     return true;
   });
@@ -26983,20 +26989,24 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     living().forEach(function(s){
       if(!riftOf(s)||!riftFree(s)||rec.negated||!window.ruActReplayable(rec))return;
       out.push({seat:s,label:'Retrograde Rift — pay 5 MP: '+rec.name+' resolves next turn',use:function(r,done){
+        var turnSeat=G.turn;
         window.ruActNegate(r,'delay','Retrograde Rift',function(){
-          useRift(s); side(s).mp-=5; say('Retrograde Rift: '+sideVerbLabel(s,'pay','pays')+' 5 MP; '+r.name+'’s effect resolves next turn.','imp');
-          window.ruLater('replay',r.who,'nextTurn',{id:r.id,name:r.name});
+          useRift(s); side(s).mp-=5; say('Retrograde Rift: '+sideVerbLabel(s,'pay','pays')+' 5 MP; '+r.name+' resolves in the '+r.phase+' Phase of '+sidePossLower(turnSeat)+' next turn.','imp');
+          // as if activated then: the same phase of the next turn of the player whose turn it is
+          window.ruLater('replay',turnSeat,'myPhase',{who:r.who,id:r.id,name:r.name,phase:r.phase});
           refresh(); done();
         });
       }});
     });
     return out;
   });
+  // the Action Card it put off is activated now, as in this phase (its costs and M were paid when it was first activated)
   window.ruTimeFx.replay=function(e){
     window.ruWhenSettled(window.ruTableClear,function(){
       if(G.gameOver)return;
-      say('Retrograde Rift: '+sidePossessiveLabel(e.w)+' '+e.data.name+' resolves now.','imp');
-      window.ruActReplay(e.w,e.data.id,e.data.name);
+      var who=e.data.who||e.w,l=locate(e.data.id),a=AC[e.data.name]||{};
+      say('Retrograde Rift: '+sidePossessiveLabel(who)+' '+e.data.name+' resolves now, as if activated in this phase.','imp');
+      window.ruActFree(who,l?l.card:{id:e.data.id,name:e.data.name,type:'action',sub:a.sub,M:a.M},null,{noM:true});
     },{defer:true});
   };
   // a skill Retrograde Rift let you use without its cost: the cost is paid when that card is drawn — or the game is lost
@@ -29373,6 +29383,7 @@ window.ruSpecPace=function(base){
         runAsTimer(waits.splice(k,1)[0].cb); checkpoint();
       }
     } finally { settling=false; armWaits(); }
+    if(window.ruTimelineDrive) window.ruTimelineDrive();   // a past being played again goes on once the table has settled
   }
   // cond: when the continuation may go on (default: at once). If it already holds, cb runs right here, as the first
   // tick of a polling loop did; opts.defer instead always waits for the end of the current input / the next poll
@@ -29413,7 +29424,10 @@ window.ruSpecPace=function(base){
   function ids(a){ return (a||[]).map(function(c){ return c&&c.id; }).join(','); }
   function stateSig(){
     var g=G_(); if(!g) return '';
-    var parts=[g.turn,g.phase,g.mode,g.exchange,g._turnNo||0,g.gameOver?1:0,g._phaseSeq||0];   // _phaseSeq: a phase that begins again (a second Battle Phase) is a new position
+    var parts=[g.turn,g.phase,g.mode,g.exchange,g._turnNo||0,g.gameOver?1:0,g._phaseSeq||0,g._tlReplay?g._tlReplay.i:'',
+      // the attack being declared: its attacker and Addons (choosing an Addon changes only these — without them an Addon
+      // click looked like nothing at all, so the bots never attacked with more than one card)
+      g.selAttacker?(g.selAttacker.zone+':'+((g.selAttacker.card&&g.selAttacker.card.id)||'')):'-',(g._addons||[]).map(function(x){ return x&&x.card&&x.card.id; }).join(',')];   // _phaseSeq: a phase that begins again (a second Battle Phase) is a new position; _tlReplay: how far a rewritten past has been played again
     (g.sideOrder||['player','ai']).forEach(function(w){ var p=g[w]; if(!p) return;
       // full ordered contents (not just counts): a different card in a hand or deck order is a desync too
       parts.push(w,p.mp,p.cas,ids(p.hand),ids(p.deck),ids(p.discard),ids(p.deadzone),(p.bank||[]).length,
@@ -29441,6 +29455,7 @@ window.ruSpecPace=function(base){
     var g=G_(); if(!a||!g||g._replaying||g._inInput) return false;   // never re-emit while applying, nor for an input nested inside a recorded one
     if(a.s==null) a.s=localSeat();
     if(online()) a.sig=stateSig();
+    if(window.ruTimelineNote) window.ruTimelineNote(a);            // the game's own record of what was played (changing the past)
     if(g._recording){ (g._actionLog=g._actionLog||[]).push(a); }   // local replay-test log
     if(window.ruOnLocalAction){ try{ window.ruOnLocalAction(a); }catch(e){} }  // network hook — set by net.js
     return true;
@@ -29743,6 +29758,7 @@ window.ruSpecPace=function(base){
   window.ruApplyAction=function(a){
     var g=G_(); if(!g||!a) return false;
     var seat=(a.s&&g[a.s])?a.s:(online()?g.turn:'player');
+    if(!g._replaying&&window.ruTimelineNote) window.ruTimelineNote(Object.assign({s:seat},a));
     var prev=g._replaying; g._replaying=true;
     // Another player's input: if it changes nothing here (a refused / illegal click), what it printed was feedback
     // for that player only — this screen doesn't show it. Anything that DID happen is shown on every screen.

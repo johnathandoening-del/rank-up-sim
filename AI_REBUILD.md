@@ -114,7 +114,9 @@ does need touching:
   its own (a trigger asks, a reaction answers) goes through `ruOfferSkill` / `ruUseSkill` (`ruFx.offerSkill / useSkill /
   skillLocked`) and is declared with `ruTriggeredSkills`; one that negates an Action Card by rewinding passes
   `rewinds:true` (its cost is paid in the rewound position). The random-Bank cost is the step runner's own (it never
-  takes a card that cannot be removed).
+  takes a card that cannot be removed). The older classes' "when attacked" skills are one list (`reactiveDefenses` in
+  index.html: one definition per card, from its printed text) offered in one window through the same point. Wording:
+  "a player" includes you, "an opponent" does not.
 - **Action Card activations** — every activation (a hand effect, or a Deadzone effect: Dead Draw / Casualty Counter /
   Sabatoric Draw) is a record from its commit to the end of its resolution, and what it DID is observed by the field
   rules for any card: the NP/RP it changed, the cards it removed, the cards that left a Deadzone, its board-pick
@@ -133,14 +135,19 @@ does need touching:
   - Locks ("cannot use / activate Action Cards [of a type]") are `ruActLock`; every play entry checks `ruActLocked`.
 - **Time** (field rules, TIME) — cards that reach into the past or the future use the game's history, never their
   own bookkeeping: `G._hist` (every turn's start: where every card was, MP, Casualty Counts — `ruTurnStart`,
-  `ruTurnsOf`, `ruRestoreTo`), `G._battles` (every attack with the NP/RP it was fought at — `ruRetroBattles` re-fights a
-  past Battle Phase and applies the difference now), `ruLater(kind, seat, when)` with `window.ruTimeFx[kind]` (an
-  effect at the next turn / your next turn / Battle Phase / Damage Step), `ruDelayCasualties` / `ruBlockCasualties`,
+  `ruTurnsOf`, `ruRestoreTo`), `G._battles` (every attack with the NP/RP it was fought at — `ruBattleOutcome`), the
+  timeline (`G._tl`: a position at the start of each seat's last Battle Phases and every input since — a card that
+  changes the past calls `ruRewritePast(ruPastMark(seat), change, auto)`: the game goes back there, the change is made,
+  and every input since is played again on top of it — the butterfly effect; register a predicate in
+  `window.ruTimelineUsers` so the timeline is kept while such a card is in the game), `ruLater(kind, seat, when)` with
+  `window.ruTimeFx[kind]` (an effect at the next turn / your next turn / Battle Phase / a phase — 'myPhase' / Damage
+  Step), `ruActFree` (an Action Card activated without paying its cost, as a whole activation), `ruDelayCasualties` /
+  `ruBlockCasualties`,
   `ruAasW` (a card's A stat becomes a W stat of the same value — A: Ⅱ → W: Ⅱ, no A — while a duration or a "while this card stays in …" condition lasts), `ruMoraleLostThisTurn`,
   `ruLoseGame`. Other shared points: `ruSkillNegation` (every Numeral-skill negation goes through it, so a card can
   negate the negation), the `targeted` hook (before the Safeguard window), `drawn`, `phaseRedirect` (a second Battle
-  Phase), `ruActMoveChanges` (an activation's NP/RP changes moved to another time), `ruActNegate(…, 'delay')` with
-  `ruActReplay` (a declarative card's effect resolved later, its costs not paid again). A skill with a cost that may be
+  Phase), `ruActNegate(…, 'delay')` with `ruActFree` (a declarative card's effect resolved later — in the same phase of
+  the next turn — its costs not paid again). A skill with a cost that may be
   skipped ("without paying its cost") and paid later keeps its cost and its effect apart (see TSK in temporal-class).
 - **New card effects** — offer choices as prompts the owning seat answers (`openModal` / the picker, owned by that
   seat), never "if a bot, pick X": in solo games every bot seat is input-driven and decides through those prompts
@@ -301,3 +308,24 @@ does need touching:
   first and their cost is paid in the rewound position. Found on the way: the random-Bank cost had four copies in
   the step runner's wrappers (one asked the player to choose — the cards say random) and none kept Ochre 0 in the
   Bank; one copy remains.
+- **2026-10-15** — User rulings, and the rules they exposed. Temporal 4 now changes the past for real: the field rules
+  keep a timeline (a position at the start of each seat's last two Battle Phases, encoded as a string so copying a game
+  stays cheap, and every input since — noted by the input layer on every screen); `ruRewritePast` goes back, past you
+  activates the Star there (`ruActFree`), and the recorded inputs are played again at each settle (`ruTimelineDrive`):
+  an input the new past no longer allows does nothing, an answer whose prompt never comes is dropped, a prompt the new
+  past asks first is answered live by its owner. The old "move this turn's NP change onto old battles" is gone
+  (`ruRetroBattles`, `ruActMoveChanges`). Retrograde Rift's delayed card resolves in the same phase of that player's next
+  turn as a whole activation (`ruActFree`; it fired at the next turn's start before). "A player" includes you (Kismet
+  1/3/4, Kismet 9's Skill 2; "the opponent" of an answer to your own card is your opponent). Kismet 7 counts its cost's
+  cards. The older classes' reactive skills: ten stacked offer layers with up to three different copies of a card's rule
+  are one definition per card, from its printed text, through the skill point (so Shining Justice / Seven Heaven negate
+  them and Shadow 6 answers them); a Rank³⁺ Numeral leaving a Deadzone for the Drop now gets its owner's hand-or-Drop
+  choice in the field rules too.
+  Bots and Addons (the user: "they CAN attack with all cards together"): an Addon click changed only the attack being
+  built (`G.selAttacker`, `G._addons`), which the state fingerprint did not include — so to the bots (and `__M.legal`)
+  every Addon click looked refused, and the search cut an attack off at attacker → target anyway. The fingerprint now
+  carries the attack being declared, and the search expands an attack as one action: attacker, any set of Addons (each
+  set once, in zone order), target. Stand Downs, measured (bot vs bot, Talented 2 / Distinguished 1): nearly all are
+  one line — Stand Down the Rank Zone card after it attacked, so the top Bank card comes up and attacks again (the
+  engine gives it a fresh attack); the evaluation takes the trade because Morale is valued on a log curve and the lost
+  Rank Zone card costs only its NP (Rank / RP weighs 0). Asked the user whether that fresh attack is a rule.

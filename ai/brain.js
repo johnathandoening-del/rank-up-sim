@@ -37,6 +37,7 @@ var BRAIN_CODE = `
   function field(p){ return [p.rankZone, p.leftFlank, p.rightFlank, p.rearFlank, p.delta && p.delta[0]].filter(Boolean); }
   function lowlands(){ return seats().some(function(s){ return G[s] && (G[s].deadzone||[]).some(function(c){ return c && c.name === 'The Lowlands'; }); }); }
   function clamp(x,a,b){ return x < a ? a : x > b ? b : x; }
+  var ZORDER = ['rank', 'left-flank', 'right-flank', 'rear-flank', 'delta'];
 
   // ── features & evaluation (antisymmetric: evaluate(opp) == -evaluate(me)) ──
   // Features of w against ONE opponent o (default: the first living one — the only one in a 1v1).
@@ -292,11 +293,18 @@ var BRAIN_CODE = `
     var d = dec();
     // (switchdraw is not a board mode to bundle: every switch reveals a new card, so each one is its own decision)
     var inMode = d.kind === 'turn' && d.seat === mover && d.mode && d.mode !== 'normal' && d.mode !== 'switchdraw';
-    // one complete action per move (attack: attacker → target); a further attack is the next move of the phase search
-    if (!inMode || depth >= 2) { cb(inputs, { base: base, tail: inputs }); return; }
+    // one complete action per move (attack: attacker → its Addons → target); a further attack is the next move of the
+    // phase search. An attack being built (Addon mode) goes on until its target is chosen.
+    var building = inMode && d.mode === 'addon';
+    if (!inMode || (depth >= 2 && !building)) { cb(inputs, { base: base, tail: inputs }); return; }
     // a board mode for the mover: each way to complete it is a move of its own
     var modeSnap = __S.snap(), sig = ruStateSig();
     var C = __M.candidates(mover).filter(function(c){ return c.t !== 'cancel'; });
+    // the Addons are a set: each is offered in zone order after the last one added, so no set is tried twice
+    if (building) {
+      var last = (G._addons || []).reduce(function(m, x){ return Math.max(m, ZORDER.indexOf(x.zone)); }, -1);
+      C = C.filter(function(c){ return !(c.t === 'zone' && c.o === mover && ZORDER.indexOf(c.z) <= last); });
+    }
     var dirty = false;
     for (var i = 0; i < C.length && budget.evals < budget.max; i++) {
       if (dirty) { rewind(modeSnap); dirty = false; }
@@ -537,7 +545,8 @@ var BRAIN_CODE = `
     var d = dec(); if (isOver(d) || d.seat !== w) return null;
     CUR = budget;
     NOISE = +opts.noise || 0; NR = NOISE ? mb((((opts.seed >>> 0) || 1) ^ 0x9e3779b9) >>> 0) : null;
-    // explain (debugging): think this decision afresh — not by the plan being followed — and keep that plan
+    // explain (debugging): think this decision afresh — not by the plan being followed, nor leaving out what was already
+    // chosen in this situation — and keep that plan
     var kept = cache; if (opts.explain) cache = null;
     if ((G._turnNo || 0) !== answeredTurn) { answered = {}; answeredTurn = G._turnNo || 0; }
     var sit = situation(w), r;
@@ -577,7 +586,7 @@ var BRAIN_CODE = `
     var undo = {};
     if (!quietNow) {
       var CR = __M.candidates(w);
-      if (CR.length > 1) CR.forEach(function(c){ rewind(anchor); for (var q = 0; q < path.length; q++) apply(path[q]); apply(c); if (!G.gameOver && __S.quiet() && answered[situation(w)]) undo[key(c)] = 1; });
+      if (CR.length > 1 && !opts.explain) CR.forEach(function(c){ rewind(anchor); for (var q = 0; q < path.length; q++) apply(path[q]); apply(c); if (!G.gameOver && __S.quiet() && answered[situation(w)]) undo[key(c)] = 1; });
       rewind(anchor); for (var q2 = 0; q2 < path.length; q2++) apply(path[q2]);
     }
     var known = seenInHand;
@@ -611,7 +620,7 @@ var BRAIN_CODE = `
         if (__S.quiet()) {
           budget.end = tStart + share;
           LOOKING = true;
-          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6, dd.mode, answered[sit]);
+          S = candidatesFrom(turnSearch(w, __S.snap(), cfg.own, budget), opts.cands || opts.topK || 6, dd.mode, opts.explain ? null : answered[sit]);
           LOOKING = false;
           // this world scores them with the search's own lines (the best play after each, found by the larger search)
           budget.end = wEnd; vals = [];
@@ -623,7 +632,7 @@ var BRAIN_CODE = `
         } else {
           // a prompt: the actions are its answers — with many, a quick look at each in this world (the answer, what
           // it opens finished) keeps the best few, and the way to decline when there is one
-          var C0 = __M.candidates(w), nc = opts.cands || opts.topK || 6, gone = sit && answered[sit];
+          var C0 = __M.candidates(w), nc = opts.cands || opts.topK || 6, gone = !opts.explain && sit && answered[sit];
           if (gone && C0.some(function(c){ return !gone[key(c)]; })) C0 = C0.filter(function(c){ return !gone[key(c)]; });
           if (C0.some(function(c){ return !undo[key(c)]; })) C0 = C0.filter(function(c){ return !undo[key(c)]; });
           // an answer that leaves the prompt and the game exactly as they were is not a choice (answering it again and
