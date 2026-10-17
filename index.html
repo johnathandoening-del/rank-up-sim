@@ -29494,6 +29494,10 @@ window.ruSpecPace=function(base){
     var me=ruLocalSeatId(), owner;
     if(a.t==='pick'){ owner=(pickerEl()&&pickerEl()._ruOwner)||g.turn; return owner===me?'':('Waiting for '+sideNameLabel(owner)+' to choose.'); }
     if(a.t==='modal'){ owner=(modalEl()&&modalEl()._ruOwner)||g.turn; return owner===me?'':('Waiting for '+sideNameLabel(owner)+' to choose.'); }
+    // A card an effect waits for on the board (a board pick) is a prompt like a picker: the click — or Cancel, which ends
+    // the pick — is the answer of the seat whose pick it is, at any moment. Casualty Draws resolving included: a Dead Draw
+    // resolving in that line may be the very effect waiting for it (refusing it there left both waiting on each other).
+    if(g.mode==='oppzonepick'&&(a.t==='zone'||a.t==='cancel')){ owner=ruModeOwner()||g.turn; return owner===me?'':('Waiting for '+sideNameLabel(owner)+' to choose.'); }
     if(a.t==='concede') return '';   // a player may concede at any moment
     if(sharedOpen(pickerEl())||sharedOpen(modalEl())){ owner=inputOwner(); return owner===me?'Resolve the current prompt first.':('Waiting for '+sideNameLabel(owner)+' to choose.'); }
     if(window._RUcbusy||(window._RUcq&&window._RUcq.length)) return 'Resolving Casualty Draws — one moment.';
