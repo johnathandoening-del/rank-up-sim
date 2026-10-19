@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Rank Up Online Regression Tests</title>
+<style>
+body{margin:0;background:#17191b;color:#eee;font:15px system-ui}header{padding:12px}button{padding:8px 16px}pre{white-space:pre-wrap;margin:10px}section{display:grid;grid-template-columns:1fr 1fr}iframe{width:100%;height:690px;border:1px solid #777;box-sizing:border-box}
+</style>
+<header><strong>Online regression fixtures, not natural-play matches.</strong> Two rendered clients, actual WebSocket relay, owned buttons and pickers. <button id="run">Run Tests</button></header>
+<pre id="report">Ready.</pre>
+<section><iframe id="p1" src="/index.html"></iframe><iframe id="p2" src="/index.html"></iframe></section>
+<script>
+const report=document.getElementById('report');
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const frames=()=>[document.getElementById('p1').contentWindow,document.getElementById('p2').contentWindow];
+const say=s=>{report.textContent+='\n'+s;};
+async function until(check,label){for(let i=0;i<200;i++){if(check())return;await sleep(25);}throw Error('Timeout: '+label);}
+function check(ok,label){if(!ok)throw Error(label);}
+function runCode(w,code){return w.eval(code);}
+async function sync(){
+  await until(()=>frames().every(w=>!w.ruInboxBusy()),'inboxes clear');
+  await sleep(120);
+  await until(()=>frames()[0].ruStateSig()===frames()[1].ruStateSig(),'P1/P2 state parity');
+  check(frames().every(w=>!w.RUNet.state().desync),'transport reported a desync');
+}
+function invoke(w,fn){
+  const b=w.document.createElement('button');b.textContent='Regression input';b.onclick=fn;w.document.body.appendChild(b);b.click();b.remove();
+}
+async function input(a){
+  document.getElementById('report').dataset.lastInput=JSON.stringify(a);
+  const w=frames()[a.s==='player'?0:1],other=frames()[a.s==='player'?1:0];
+  if(a.t==='modal'){
+    const m=w.document.getElementById('modal'),mirror=other.document.getElementById('modal');
+    check(m.classList.contains('open')&&!m._ruMirror,'owner modal is not actionable');
+    check(mirror._ruMirror&&other.document.getElementById('m-btns').children.length===0,'remote modal exposed controls');
+    const b=w.document.getElementById('m-btns').children[a.i];check(!!b,'missing modal button');b.click();
+  }else if(a.t==='pick'){
+    check(!w.document.getElementById('picker-modal')._ruMirror,'owner picker is a mirror');
+    check(other.document.getElementById('pk-cards').children.length===0,'opponent sees private picker cards');
+    for(const ix of a.ix)w.document.getElementById('pk-cards').children[ix].click();
+    w.document.getElementById('pk-confirm').click();
+  }else if(a.t==='playAction'){
+    invoke(w,()=>{const p=runCode(w,'G')[a.s],i=p.hand.findIndex(c=>c.id===a.id);w.playAction(i,p.hand[i]);});
+  }else if(a.t==='promote'){
+    invoke(w,()=>w.tryPromote(runCode(w,'G')[a.s].hand.find(c=>c.id===a.id)));
+  }else if(a.t==='end')w.document.getElementById('btn-end').click();
+  else if(a.t==='adv')w.document.getElementById('btn-adv').click();
+  else throw Error('Unsupported regression input '+a.t);
+  await sync();
+}
+document.getElementById('run').onclick=async function(){
+  this.disabled=true;report.textContent='Starting local online relay...';
+  try{
+    await until(()=>frames().every(w=>w.RUNet&&w.ruApplyAction),'game loaded');
+    const room='REGRESSION'+Date.now();
+    // Iframes share the parent tab's session storage; supply the distinct tab identities real browser tabs have.
+    frames()[0].sessionStorage.setItem('ru_tab_client_id',room+'P1');
+    frames()[0].RUNet.connect('ws://'+location.host,room,'Regression P1',{cls:'light'});
+    await until(()=>frames()[0].RUNet.state().seat==='player1','P1 joins');
+    frames()[1].sessionStorage.setItem('ru_tab_client_id',room+'P2');
+    frames()[1].RUNet.connect('ws://'+location.host,room,'Regression P2',{cls:'kismet'});
+    await until(()=>frames().every(w=>w.RUNet.state().active),'both real connections start');
+    const cases=await (await fetch('/tools/headless/data/online-regression.json')).json();
+    for(const c of cases){
+      say('RUN '+c.label);
+      for(let i=0;i<2;i++){
+        const w=frames()[i];runCode(w,c.setup[i][0]);runCode(w,c.setup[i][1]);
+      }
+      await sleep(500);
+      for(let i=0;i<2;i++)runCode(frames()[i],c.setup[i][2]);
+      await sync();
+      for(const op of c.operations){
+        if(op.code){frames().forEach(w=>runCode(w,op.code));await sleep(40);}
+        else await input(op.action);
+      }
+      await sync();
+      for(let i=0;i<2;i++){
+        check(JSON.stringify(runCode(frames()[i],'[G.player.mp,G.ai.mp]'))===JSON.stringify(c.expected[i].mp),c.label+' Morale outcome differs');
+        check(frames()[i].ruStateSig()===c.expected[i].sig,c.label+' differs from asserted fixture outcome');
+      }
+      say('PASS '+c.label+'; owned UI, private choices hidden, relay synchronized, asserted outcome');
+    }
+    say('ALL '+cases.length+' BROWSER CASES PASSED');
+  }catch(e){
+    say('FAIL '+e.stack+'\nLast input: '+report.dataset.lastInput);
+    frames().forEach((w,i)=>say('P'+(i+1)+' '+JSON.stringify({sig:w.ruStateSig(),net:w.RUNet.state(),history:w.ruNetHistory().slice(-2),log:w.document.getElementById('log').textContent.slice(-1000)})));
+  }
+  finally{this.disabled=false;}
+};
+</script>
+</html>

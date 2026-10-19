@@ -107,7 +107,7 @@
   // sim resolves it deterministically to Discard — the parity harness avoids the
   // Rank³-into-negative case, and the eval treats a kept Rank³ as a hand asset).
   function simDzAdd(side, c){
-    if ((side.cas||0) < 0){ side.cas = (side.cas||0) + 1; side.discard.push(c); return; }
+    if ((side.cas||0) < 0){ side.cas = (side.cas||0) + 1; ruDrop(side,c); return; }
     side.deadzone.push(c); side.cas = (side.cas||0) + 1;
   }
   function simCasDraw(side, n){
@@ -120,7 +120,7 @@
     var e = side.delta && side.delta[0]; if (!e) return;
     side.delta = [];
     simDzAdd(side, e);
-    (e.elements || []).forEach(function(x){ side.discard.push(x); });
+    (e.elements || []).forEach(function(x){ ruDrop(side,x); });
   }
   // Canonical defeat resolution — identical rule set to the live applyDefeatCasualty.
   function applyDefeatCasualty(loserSide, loserZone, loserCard, extraDraws){
@@ -228,7 +228,7 @@
       if (d8lost > 0){
         DP.mp += d8lost;                                          // refund the Morale Damage
         var milled = 0, want = d8lost * 2;
-        while (milled < want && DP.deck.length){ DP.discard.push(DP.deck.shift()); milled++; }
+        while (milled < want && DP.deck.length){ ruDrop(DP,DP.deck.shift()); milled++; }
         att._d8Hits = (att._d8Hits || 0) + 1;
         att._d8MilledBucket = (att._d8MilledBucket || 0) + milled;
         if (att._d8Hits % 3 === 0){ AP.mp += (att._d8MilledBucket || 0); att._d8MilledBucket = 0; }
@@ -365,7 +365,7 @@
   function applyChiefFlank(st, seat, cardId, slot){
     var p = st[seat]; var i = findInHand(p, cardId); if (i === -1) return st;
     var big = p.hand.splice(i,1)[0];
-    if (p[slot]) p.discard.push(p[slot]);
+    if (p[slot]) ruDrop(p,p[slot]);
     p.mp += (big.M||0);
     p[slot] = Object.assign({}, big, { currentNP:big.numeral, currentRP:(big.rank||0), attacksLeft:1, usedSkill:false, frozen:false });
     return st;
