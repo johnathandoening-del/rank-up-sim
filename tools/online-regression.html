@@ -42,6 +42,10 @@ async function input(a){
     invoke(w,()=>{const p=runCode(w,'G')[a.s],i=p.hand.findIndex(c=>c.id===a.id);w.playAction(i,p.hand[i]);});
   }else if(a.t==='promote'){
     invoke(w,()=>w.tryPromote(runCode(w,'G')[a.s].hand.find(c=>c.id===a.id)));
+  }else if(a.t==='atkMode')w.document.getElementById('btn-atk').click();
+  else if(a.t==='zone')w.document.getElementById(w.zId(a.o,a.z)).click();
+  else if(a.t==='sdDone'){
+    invoke(w,()=>w.finishSwitchdraw(a.first));
   }else if(a.t==='end')w.document.getElementById('btn-end').click();
   else if(a.t==='adv')w.document.getElementById('btn-adv').click();
   else throw Error('Unsupported regression input '+a.t);
@@ -50,18 +54,25 @@ async function input(a){
 document.getElementById('run').onclick=async function(){
   this.disabled=true;report.textContent='Starting local online relay...';
   try{
-    await until(()=>frames().every(w=>w.RUNet&&w.ruApplyAction),'game loaded');
-    const room='REGRESSION'+Date.now();
-    // Iframes share the parent tab's session storage; supply the distinct tab identities real browser tabs have.
-    frames()[0].sessionStorage.setItem('ru_tab_client_id',room+'P1');
-    frames()[0].RUNet.connect('ws://'+location.host,room,'Regression P1',{cls:'light'});
-    await until(()=>frames()[0].RUNet.state().seat==='player1','P1 joins');
-    frames()[1].sessionStorage.setItem('ru_tab_client_id',room+'P2');
-    frames()[1].RUNet.connect('ws://'+location.host,room,'Regression P2',{cls:'kismet'});
-    await until(()=>frames().every(w=>w.RUNet.state().active),'both real connections start');
-    const cases=await (await fetch('/tools/headless/data/online-regression.json')).json();
+    const all=await (await fetch('/tools/headless/data/online-regression.json')).json();
+    const requested=new URLSearchParams(location.search).get('case');
+    const cases=requested?all.filter(c=>c.label===requested):all;
+    check(cases.length>0,'no matching regression fixture');
     for(const c of cases){
       say('RUN '+c.label);
+      // A new game page per fixture keeps abandoned timers/closures from another test out of this match.
+      await Promise.all(['p1','p2'].map(id=>new Promise(resolve=>{
+        const frame=document.getElementById(id);frame.onload=resolve;frame.src='/index.html?fixture='+Date.now()+id;
+      })));
+      await until(()=>frames().every(w=>w.RUNet&&w.ruApplyAction),'game loaded');
+      const room='REGRESSION'+Date.now();
+      // Iframes share the parent tab's storage; real separate tabs have distinct identities.
+      frames()[0].sessionStorage.setItem('ru_tab_client_id',room+'P1');
+      frames()[0].RUNet.connect('ws://'+location.host,room,'Regression P1',{cls:'light'});
+      await until(()=>frames()[0].RUNet.state().seat==='player1','P1 joins');
+      frames()[1].sessionStorage.setItem('ru_tab_client_id',room+'P2');
+      frames()[1].RUNet.connect('ws://'+location.host,room,'Regression P2',{cls:'kismet'});
+      await until(()=>frames().every(w=>w.RUNet.state().active),'both real connections start');
       for(let i=0;i<2;i++){
         const w=frames()[i];runCode(w,c.setup[i][0]);runCode(w,c.setup[i][1]);
       }

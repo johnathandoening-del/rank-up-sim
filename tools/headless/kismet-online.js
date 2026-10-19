@@ -5,12 +5,12 @@ const { MATCH_CODE } = require('../../ai/match');
 const assert = require('node:assert/strict');
 const REPORT=[];
 
-function fixture(localSeat, reactingSeat = 'ai') {
+function fixture(localSeat, reactingSeat = 'ai', classes) {
   const e = createEngine({ seed: 912 });
   e.testSetup=[];
   const setup=code=>{e.testSetup.push(code); return e.run(code);};
   setup(MATCH_CODE);
-  setup(`__H.start({seed:912,mySeat:${localSeat === null ? 'null' : localSeat},spectator:${localSeat === null},seat0Class:'${reactingSeat === 'player' ? 'kismet' : 'light'}',seat1Class:'${reactingSeat === 'ai' ? 'kismet' : 'light'}',firstSeat:0,name0:'P1',name1:'P2',allowEvolutions:false,deltaDecks:{player:[],ai:[]}})`);
+  setup(`__H.start({seed:912,mySeat:${localSeat === null ? 'null' : localSeat},spectator:${localSeat === null},seat0Class:'${classes&&classes.player||(reactingSeat === 'player' ? 'kismet' : 'light')}',seat1Class:'${classes&&classes.ai||(reactingSeat === 'ai' ? 'kismet' : 'light')}',firstSeat:0,name0:'P1',name1:'P2',allowEvolutions:false,deltaDecks:{player:[],ai:[]}})`);
   e.settle(1000);
   setup(`
     closeModal(); document.getElementById('picker-modal').classList.remove('open'); PCK=null; _modalQueue.length=0; SF=null; ruSettleReset();
@@ -31,8 +31,8 @@ function fixture(localSeat, reactingSeat = 'ai') {
   return e;
 }
 
-function pair(reactingSeat) {
-  const engines = [fixture(0, reactingSeat), fixture(1, reactingSeat)];
+function pair(reactingSeat, classes) {
+  const engines = [fixture(0, reactingSeat, classes), fixture(1, reactingSeat, classes)];
   const p = {
     engines,
     operations:[],
@@ -282,4 +282,4 @@ if (require.main === module) {
   fs.mkdirSync(path.join(__dirname,'data'),{recursive:true});
   fs.writeFileSync(path.join(__dirname,'data','online-regression.json'),JSON.stringify(REPORT,null,2));
 }
-module.exports = { fixture, pair };
+module.exports = { fixture, pair, REPORT };
