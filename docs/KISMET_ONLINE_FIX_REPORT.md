@@ -1,5 +1,7 @@
 # Kismet and Haste Online Fix Verification
 
+Later ruling: Kismet 8 settles only the increase in the cumulative all-player Action-drop count on each qualifying attack. The original full-total-per-attack behavior described below is superseded by [the response/accounting fix report](KISMET_ACCOUNTING_FIX_REPORT.md).
+
 ## Scope
 
 Direct edits to the existing game engine and card data. No added runtime override layer.

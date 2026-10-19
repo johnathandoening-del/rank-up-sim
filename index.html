@@ -23926,7 +23926,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   //   the end                   its resolution is over. A flow that goes on after an activation — the attack after a
   //                             Safeguard, the Casualty Draws in line after a Dead Draw, the Retaliatory window — ends it
   //                             first (ruActFlush / ruActAfter); otherwise it ends once the table is quiet.
-  // At its end, what it DID is read off the game: the NP/RP of every Battlefield card before its effect and after
+  // At its end, what it DID is read off the game: every Numeral's NP/RP before its effect and after, in any location
   // (changes), the cards it removed from a Battlefield (removed — G._removed .by), the cards that left a Deadzone
   // while it resolved, costs included (left), the cards it targeted (targets — every board pick of its flow), and every
   // Casualty Draw records the activation that caused it (G._casBy). Then the cards that answer such an activation
@@ -23938,7 +23938,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // changed goes back; the rest of its effect stands).
   var ACT_SNAP={};                                      // rec.n -> the game as it was when that activation's effect started
   // Where NP/RP lives: on a card, and on the table (a modifier that waits for cards to enter, a change that outlasts a reset).
-  var NP_FIELDS=['currentNP','currentRP','_areaNPMod','_areaRPMod','_ru157NPMod','_ru157NPModOwner','_ru157NPModEndCount'];
+  var NP_FIELDS=['currentNP','currentRP','_areaNPMod','_areaRPMod','_ru157NPMod','_ru157NPModOwner','_ru157NPModEndCount','_nmsTurn'];
   var NP_TABLE=['_bfNP','_bfRP','_durableNP'];
   // Step-runner steps that come before the effect: costs, targeting, and checks (guard:true); a step marked cost:true /
   // effect:true says so itself.
@@ -23952,9 +23952,12 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   };
   function rp(c){ return c?Number(c.currentRP!=null?c.currentRP:(c.rank||0))||0:0; }
   function seats(){ return G.sideOrder||['player','ai']; }
-  function fieldNP(){
-    var o={};
-    seats().forEach(function(s){ var p=G[s]; if(!p)return; ZONES.forEach(function(z){ var c=zc(p,z); if(c&&isNum(c))o[c.id]=[np(c),rp(c),s,z,c.name]; }); });
+  function cardNP(){
+    var o={},inv=timeInventory();
+    Object.keys(inv.cards).forEach(function(id){
+      var c=inv.cards[id]; if(!isNum(c))return;
+      var at=parseLoc(inv.at[id]); o[id]=[np(c),rp(c),at.s,at.place,c.name];
+    });
     return o;
   }
   function dzIds(){ var o={}; seats().forEach(function(s){ var p=G[s]; if(p)o[s]=(p.deadzone||[]).map(function(c){ return c.id; }); }); return o; }
@@ -24044,7 +24047,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     }
     return rec;
   };
-  function startEffect(rec){ rec.np0=fieldNP(); ACT_SNAP[rec.n]=capture(); }
+  function startEffect(rec){ rec.np0=cardNP(); ACT_SNAP[rec.n]=capture(); }
   window.ruActEffect=function(){ var rec=current(); if(!rec||rec.effect)return; rec.effect=true; startEffect(rec); };
   // the step runner, before each step: the first step that is not a cost starts the effect of the card it resolves
   // (a step marked marksEffect pays a cost of its own first and calls ruActEffect itself)
@@ -24097,7 +24100,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function observe(rec){
     window.ruFieldWatch();                              // removals not yet seen are its own (it is the innermost)
-    var now=fieldNP(),was=rec.np0||{};
+    var now=cardNP(),was=rec.np0||{};
     rec.changes=[];
     Object.keys(now).forEach(function(id){ var a=was[id],b=now[id]; if(!a)return; var dn=b[0]-a[0],dr=b[1]-a[1]; if(dn||dr)rec.changes.push({id:id,owner:b[2],zone:b[3],name:b[4],dNP:dn,dRP:dr}); });
     rec.left=[];
@@ -24145,7 +24148,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function describe(rec){
     var bits=[];
-    rec.changes.forEach(function(c){ bits.push(c.name+(c.dNP?' '+(c.dNP>0?'+':'')+c.dNP+' NP':'')+(c.dRP?' '+(c.dRP>0?'+':'')+c.dRP+' RP':'')); });
+    rec.changes.forEach(function(c){
+      var name=FIELD[c.zone]||c.zone==='discard'||c.zone==='deadzone'?c.name:'a card in '+sidePossLower(c.owner)+' '+c.zone;
+      bits.push(name+(c.dNP?' '+(c.dNP>0?'+':'')+c.dNP+' NP':'')+(c.dRP?' '+(c.dRP>0?'+':'')+c.dRP+' RP':''));
+    });
     if(rec.removed.length)bits.push('removed '+rec.removed.map(function(x){ return x.name; }).join(', '));
     if(rec.left.length)bits.push('took '+rec.left.map(function(x){ return x.name; }).join(', ')+' out of a Deadzone');
     if(rec.targets.length)bits.push('targeted '+rec.targets.map(function(x){ return x.name; }).join(', '));
@@ -24154,13 +24160,13 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   // ---- negation ----
   function undoChanges(rec,s){
-    var tot=0;
+    var tot=0,cards=timeInventory().cards;
     rec.changes.forEach(function(ch){
       tot+=Math.abs(ch.dNP)+Math.abs(ch.dRP);
-      var f=onField({id:ch.id}); if(!f)return;
-      var was=s&&s.map.get(f.card);
-      if(was)NP_FIELDS.forEach(function(k){ if(OPS.call(was,k))f.card[k]=was[k]; else delete f.card[k]; });
-      else{ f.card.currentNP=np(f.card)-ch.dNP; f.card.currentRP=rp(f.card)-ch.dRP; }
+      var c=cards[ch.id]; if(!c)return;
+      var was=s&&s.map.get(c);
+      if(was)NP_FIELDS.forEach(function(k){ if(OPS.call(was,k))c[k]=was[k]; else delete c[k]; });
+      else{ c.currentNP=np(c)-ch.dNP; c.currentRP=rp(c)-ch.dRP; }
     });
     var g0=s&&s.map.get(G);
     if(g0)NP_TABLE.forEach(function(k){ if(OPS.call(g0,k)){ G[k]=g0[k]; rewindFrom(G[k],s); } else delete G[k]; });
@@ -25944,10 +25950,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function toDeadzone(id){ var l=locate(id); if(!l||l.pile==='deadzone')return null; var a=G[l.s][l.pile]; a.splice(a.indexOf(l.card),1); dzAdd(G[l.s],l.card); return l; }
 
   // ═══ ANSWERS TO WHAT AN ACTIVATION DID ═══
-  // An opponent's Advantageous Action Card whose activation changed the NP or RP of a card: Kismet 1 (from your hand),
+  // Any player's Advantageous Action Card whose activation changed the NP or RP of a card: Kismet 1 (from your hand),
   // Kismet 3 (from your Drop or Deadzone) and Kismet 4 (on your Battlefield) may answer it.
   // "if a player activates …" includes you (only "an opponent" leaves your own cards out)
-  function npChanger(rec,s){ return rec.sub==='Advantageous'&&!rec.negated&&rec.changes.length>0; }
+  function npChanger(rec){ return rec.sub==='Advantageous'&&!rec.negated&&rec.changes.length>0; }
   // "the opponent" of an answer to an activation: the player who activated it — or, when that was you, your opponent
   function theOpponent(s,rec,label,cb){
     if(rec.who!==s){ cb(rec.who); return; }
@@ -25958,7 +25964,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var out=[];
     living().forEach(function(s){
       var p=side(s);
-      if(npChanger(rec,s)){
+      if(npChanger(rec)){
         var k1=heldThen(rec,p.hand).find(named('Kismet 1')),k3=k3Pool(rec,p)[0],k4=onFieldThen(rec,p).find(named('Kismet 4'));
         if(onceFree(p,'Kismet 1')&&k1&&!skillLocked(s,k1))
           out.push({seat:s,label:'Kismet 1 — negate the effect of '+rec.name,use:function(r,done){ kismet1(s,r,done); }});
@@ -26005,7 +26011,12 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       done:function(){ done(); }});
   }
   // Kismet 3 — send it from your Drop or Deadzone to your Bank: negate that Action Card's activation
-  function k3Pool(rec,p){ return heldThen(rec,p.discard).concat(heldThen(rec,p.deadzone)).filter(named('Kismet 3')); }
+  function k3Pool(rec,p){
+    var drop=window.ruActWas(rec,p.discard),dead=window.ruActWas(rec,p.deadzone),was=(drop||[]).concat(dead||[]);
+    return p.discard.concat(p.deadzone).filter(function(c){
+      return c.name==='Kismet 3'&&(!drop&&!dead||was.indexOf(c)!==-1);
+    });
+  }
   function kismet3(s,rec,done){
     var p=side(s),pool=k3Pool(rec,p);
     var go=function(c){
@@ -26239,13 +26250,13 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       }}
     ]};
   // Kismet 8 — once per turn, discard all Action Cards in your hand: it may attack up to that many times this turn (S1 +?:
-  // that many MP). After each attack, drawn Actions are dropped; damage and S2 count all players' Action drops this turn.
+  // that many MP, once). After each attack, drawn Actions are dropped; S2 settles only new all-player Action drops.
   SDEFS['Kismet 8']={source:'field',phases:['main','standby','battle'],opponentTurn:true,
     check:function(w,card){
       return !(card._k8&&card._k8.turn===tn())&&side(w).hand.some(isAction);
     },
     steps:[
-      {type:'async',activation:true,fn:function(w,card,next){ card._k8={turn:tn(),n:0}; next(true); }},
+      {type:'async',activation:true,fn:function(w,card,next){ card._k8={turn:tn(),n:0,settledDrops:0}; next(true); }},
       {type:'async',cost:true,key:'n',fn:function(w,card,next){
         var p=side(w),acts=p.hand.filter(isAction); acts.forEach(function(c){ fromHand(p,c,'discard'); });
         var n=acts.length; card._k8.n=n;
@@ -26276,9 +26287,13 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     acts.forEach(function(x){ fromHand(side(x.w),x.c,'discard'); });
     if(acts.length){
       say('Kismet 8: the Action Card'+(acts.length>1?'s':'')+' drawn '+(acts.length>1?'are':'is')+' dropped.','info');
-      var dropped=window.ruActionDropsThisTurn();
-      damage(s.dWho,dropped,'Kismet 8');
-      side(s.aWho).mp+=dropped; say('Kismet 8: '+sideVerbLabel(s.aWho,'gain','gains')+' '+dropped+' MP (all players\' Action Cards dropped this turn).','heal');
+      var total=window.ruActionDropsThisTurn(),dropped=Math.max(0,total-(c._k8.settledDrops||0));
+      c._k8.settledDrops=total;
+      if(dropped){
+        damage(s.dWho,dropped,'Kismet 8');
+        skillMP(s.aWho,c,dropped);
+        say('Kismet 8: '+dropped+' new Action drop(s) settled ('+total+' total this turn).','info');
+      }
     }
   });
 

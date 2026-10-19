@@ -205,10 +205,10 @@ function skillTests() {
       assert.equal(p.run(`G.${other}.mp`),17,'eight tie damage plus all five Action drops, not two draws');
       assert.equal(p.run(`G.${seat}.mp`),29,'S1 two Morale, eight tie damage, S2 five Morale');
       p.button('Kismet 8 ->'); p.decline();
-      assert.equal(p.run(`G.${other}.mp`),3,'second tie and six cumulative drops');
-      assert.equal(p.run(`G.${seat}.mp`),27);
+      assert.equal(p.run(`G.${other}.mp`),8,'second tie and only one new drop (six minus five)');
+      assert.equal(p.run(`G.${seat}.mp`),22,'S1 is not paid again; S2 pays only the new drop');
       p.finish(`${seat} Kismet 8`);
-      console.log(`PASS ${seat} Kismet 8: A1, off-turn attacks, reveal/drop, cumulative all-player damage and Morale`);
+      console.log(`PASS ${seat} Kismet 8: A1, off-turn attacks, one-time S1 and incremental all-player S2`);
     }
   }
 }
