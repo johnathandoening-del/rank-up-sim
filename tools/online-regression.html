@@ -18,6 +18,13 @@ function check(ok,label){if(!ok)throw Error(label);}
 function runCode(w,code){return w.eval(code);}
 async function sync(){
   await until(()=>frames().every(w=>!w.ruInboxBusy()),'inboxes clear');
+  await until(()=>frames().every(w=>{
+    if(!runCode(w,'G._tlReplay'))return true;
+    const m=w.document.getElementById('modal'),pk=w.document.getElementById('picker-modal');
+    if(pk.classList.contains('open'))return true;
+    const bs=m._ruStash?m._ruStash.btns:Array.from(w.document.getElementById('m-btns').children);
+    return m.classList.contains('open')&&bs.length>0&&!(bs.length===1&&bs[0].textContent==='Continue');
+  }),'historical consequences settle or need a real choice');
   await sleep(120);
   await until(()=>frames()[0].ruStateSig()===frames()[1].ruStateSig(),'P1/P2 state parity');
   check(frames().every(w=>!w.RUNet.state().desync),'transport reported a desync');
@@ -44,6 +51,7 @@ async function input(a){
     invoke(w,()=>w.tryPromote(runCode(w,'G')[a.s].hand.find(c=>c.id===a.id)));
   }else if(a.t==='atkMode')w.document.getElementById('btn-atk').click();
   else if(a.t==='zone')w.document.getElementById(w.zId(a.o,a.z)).click();
+  else if(a.t==='delta')w.document.getElementById(w.zId(a.w,'delta')).click();
   else if(a.t==='sdDone'){
     invoke(w,()=>w.finishSwitchdraw(a.first));
   }else if(a.t==='end')w.document.getElementById('btn-end').click();

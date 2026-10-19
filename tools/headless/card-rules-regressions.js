@@ -137,20 +137,21 @@ function temporalFour(seat,star,source,newCasualty){
   assert.equal(p.run('G._turnNo'),6,'replay reaches the present turn');
   const np={ 'Rank Star':5,'Battle Star':7,'Draw Star':4,'Multi-Star':8,'Flank Star':5,'Thrash Star':9,'Encore Star':4,'Orchestral Star':4 }[star];
   assert.equal(p.run('G._battles.find(b=>b.turn===4).aNP'),np,'Star changes the actual historical battle');
-  const m=p.run(`AC['${star}'].M`),pastLoss=np===5?5:(np<5?1:0);
+  const m=p.run(`AC['${star}'].M`),pastLoss=star==='Encore Star'?5:(np===5?5:(np<5?1:0));
   assert.equal(p.run(`G.${seat}.mp`),30+m+4-pastLoss-1,'real Star M, free costs, changed past damage, S4 and current damage');
   assert.equal(p.run(`G.${seat}.discard.filter(c=>c.name==='${star}').length`),1,'the Star has one physical location in the new timeline');
   if(np>=5)assert.equal(p.run(`G.${seat}.hand.some(c=>c.id===originalTop)`),true,'the former Casualty is now a later drawn hand card');
   if(star==='Draw Star')assert.equal(p.run(`G.${seat}.hand.length`),5,'three past draws ripple into the later hand');
   if(star==='Battle Star'||star==='Multi-Star'||star==='Thrash Star')assert.ok(p.run(`G.${other}.cas`)>0,'new past Casualties really enter the other player\'s Deadzone');
   if(newCasualty){
-    assert.equal(newDecision,true,'changed history must offer the new E2 choice');
+    assert.equal(newDecision,false,'additional historical Casualties must not offer E2');
+    assert.equal(p.run(`document.getElementById('log').textContent.includes('Secondary Effect is negated')`),true,'negated E2 is explained in the log');
     assert.equal(p.run(`G.${other}.deadzone.some(c=>c.name==='Protect')`),true,'formerly drawn Action is now a real past Casualty');
     assert.equal(p.run(`G.${other}.hand.some(c=>c.name==='Protect')`),false,'obsolete future hand card is gone');
   }
   assert.equal(p.run(`document.getElementById('log').textContent.includes('The timeline has been rewritten')`),true);
   assert.equal(p.run(`document.getElementById('log').textContent.includes('Superseded timeline sentinel')`),false,'obsolete timeline log rows are replaced');
-  p.finish(seat+' Temporal 4 '+star+' from '+source+(newCasualty?' with new E2 choice':''));
+  p.finish(seat+' Temporal 4 '+star+' from '+source+(newCasualty?' with negated extra E2':''));
   console.log('PASS '+seat+' Temporal 4 '+star+' from '+source+': actual past effect, future draws/Casualties, costs, Morale and completed replay');
 }
 

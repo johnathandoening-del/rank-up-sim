@@ -15,6 +15,8 @@ The previous code already applied positive M but skipped negative M. The shared 
 
 ### Temporal 4
 
+The Temporal 4 behavior and its additional-Casualty E2 ruling were subsequently refined. See [Temporal 4 and Addon Attack Allowances](TEMPORAL_ADDON_FIX_REPORT.md) for the current implementation and follow-up verification. The replay description and newly offered E2 checks below describe the earlier release, not the superseding rule.
+
 Temporal 4 selects a non-Neo, generic Advantageous Star from Deck or Discard after paying its seven-card mill. It no longer offers a paid activation when there is no previous Battle Phase to change.
 
 The existing timeline engine restores the recorded past position, automatically activates the selected Star there without its costs, and replays the intervening inputs using the changed state. This changes actual battles, Morale, Casualty Draws, subsequent Deck positions, and cards drawn later; it is not a present-turn statistical adjustment.

@@ -1344,7 +1344,9 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
 
     function cont(){ win2(); render2(); if(R()&&G.gameOver){ window._RUcq=[]; window._RUcbusy=false; return; } step(); }
 
+    var temporalExtra=window.ruTimelineCasualty?window.ruTimelineCasualty(who):false;
     var hasE2 = (card.type==='action') && !toDiscard;
+    if(temporalExtra&&hasE2){log2('Temporal 4: '+card.name+' is an additional historical Casualty; its Secondary Effect is negated.','info');hasE2=false;}
     if(hasE2){
       var _revOpp=!!(G._reverseNegate&&G._reverseNegate!==who);   // the OTHER player's Reverse negates this owner's Dead Draw
       if(_revOpp){ log2('Reverse: '+card.name+"'s Dead Draw effect is negated.",'heal'); hasE2=false; }
@@ -4268,6 +4270,13 @@ function hlSel(){
 }
 // Remaining attacks for a card: undefined → 1, but an explicit 0 stays 0.
 function atkLeft(c){if(!c)return 0;if(c._shadow6NoAtk)return 0;return (c.attacksLeft==null)?1:c.attacksLeft;}
+function ruSpendAttack(w,card,asAddon){
+  if(!card||(asAddon&&card.attackAdditionally))return;
+  card.attacksLeft=Math.max(0,atkLeft(card)-1);
+  const p=G[w];p.attacksUsed=p.attacksUsed||{};
+  if(card.attacksLeft<=0)p.attacksUsed[card.id]=true;
+  else delete p.attacksUsed[card.id];
+}
 // The last side to take its first turn is the first side allowed to attack (generalizes the old
 // single-flag _firstPlayerNoAtk===w&&exchange===1 check to any number of sides): a side may attack
 // once every OTHER side in the turn order has completed at least one turn. At N=2 this reduces to
@@ -4536,7 +4545,7 @@ function zoneClickL1(owner,zone){
   if(owner!==me&&G[owner]){
     const isTargetable=livingOpponentsOf(me).indexOf(owner)!==-1;
     if(isTargetable&&(G.mode==='addon'||G.mode==='atk')&&G.selAttacker&&ruIsLegalAttackTarget(me,owner,zone)){
-      if(!card){ruNotice(me,'No card there.');return;}let addonNP=0;const mp=G[me];G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);if(!a.card.attackAdditionally){mp.attacksUsed[a.card.id]=true;a.card.attacksLeft=0;}});G._addons=[];}
+      if(!card){ruNotice(me,'No card there.');return;}let addonNP=0;const mp=G[me];G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
       const aZone=G.selAttacker.zone;
       G.selAttacker=null;G.selAddon=null;G._deltaActionCap=null;clearHL();
       // The defender answers the attack first (reactive skills, Safeguards), then it resolves; then the
@@ -5452,7 +5461,7 @@ function _aiBase(ph){
         let addonNP=0;
         if(zone==='rank'&&ai.leftFlank&&!ai.attacksUsed[ai.leftFlank.id]){
           const fRP=ai.leftFlank.currentRP||ai.leftFlank.rank||0;const aRP=card.currentRP||card.rank||0;
-          if(aRP<3||(aRP-fRP)>=2){addonNP=ai.leftFlank.currentNP||ai.leftFlank.numeral;if(!ai.leftFlank.attackAdditionally){ai.attacksUsed[ai.leftFlank.id]=true;ai.leftFlank.attacksLeft=0;}log(`AI Addon: +${addonNP} NP from ${ai.leftFlank.name}.`,'info');}
+          if(aRP<3||(aRP-fRP)>=2){addonNP=ai.leftFlank.currentNP||ai.leftFlank.numeral;ruSpendAttack('ai',ai.leftFlank,true);log(`AI Addon: +${addonNP} NP from ${ai.leftFlank.name}.`,'info');}
         }
         // Re-find target (state may have changed after defense)
         const hasFl=pl.leftFlank||pl.rightFlank;let realTgt=tgt;
@@ -10104,7 +10113,8 @@ ADEFS['Seven Heaven']={
     }
     if(who!==me&&(G.mode==='addon'||G.mode==='atk')&&G.selAttacker&&card&&ruIsLegalAttackTarget(me,who,'delta')){
       const mp=G[me];let addonNP=0;
-      if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=(a.card.currentNP||a.card.numeral||0);mp.attacksUsed[a.card.id]=true;a.card.attacksLeft=0;});G._addons=[];}
+      G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};
+      if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
       const aZone=G.selAttacker.zone;G.selAttacker=null;clearHL();
       ruDeclareAttack(me,aZone,who,'delta',addonNP,function(){
         const att=zoneCard(mp,aZone);if(att){att.attacksLeft=Math.max(0,atkLeft(att)-1);if(att.attacksLeft<=0)mp.attacksUsed[att.id]=true;}
@@ -24219,9 +24229,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   //   and every player's MP and Casualty Count. ruTurnStart(T), ruTurnsOf(seat) read it; ruRestoreTo(entry, which) puts
   //   cards back where they were then (a card that cannot be removed stays — the field watch).
   // • Battles (G._battles): every resolved attack with the NP/RP it was fought at (ruBattleOutcome: what a battle does).
-  // • The timeline (G._tl): a position at the start of each seat's last Battle Phases and every input since. A card that
-  //   changes the past (ruRewritePast) goes back to such a position, makes its change there, and every input played since
-  //   is played again on top of it — what follows is what would have followed: other draws, battles, Casualties.
+  // • The timeline (G._tl): attack-declaration positions and the subsequent committed inputs. Temporal 4 amends the
+  //   last resolved attack on an earlier turn; reconstructing subsequent consequences preserves earlier attacks and
+  //   never reopens that Battle Phase for different attack choices.
   // • Later (G._timeQ, ruLater): an effect set for a later point — 'nextTurn' (the start of the next turn), 'myTurn' /
   //   'myBattle' (the start of that seat's next turn / Battle Phase), 'myPhase' (data.phase of that seat's next turn),
   //   'myDamage' (that seat's next Damage Step: its next resolved attack, or the end of that Battle Phase without one).
@@ -24309,6 +24319,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var r=G._battleResult; if(!r||r.aNP==null||!s||!s.att||!s.def||r.attId!==s.att.id)return;
     var T=tn(); G._battles=(G._battles||[]).filter(function(b){ return b.turn>T-HIST_KEEP; });
     G._battles.push({turn:T,aWho:s.aWho,dWho:s.dWho,aZone:s.aZone,dZone:s.dZone,attId:r.attId,defId:r.defId,aNP:r.aNP,dNP:r.dNP,aRP:r.aRP||0,dRP:r.dRP||0});
+    var mark=G._tl&&G._tl.tracking;
+    if(mark&&mark.attack.attId===r.attId&&mark.turn===T)mark.resolved=true;
   }
   // what a battle does at those NP/RP: Morale Damage, Casualty Draws, defeated cards that leave (a Rank Zone card stays)
   function outcome(b){
@@ -24321,7 +24333,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.ruBattleOutcome=outcome;
   // ---- the timeline: changing the past ----
   // Kept only while a card that can use it is in the game (window.ruTimelineUsers: predicates its class registers). A
-  // position is kept at the start of each seat's last TL_KEEP Battle Phases — at the first input of that Battle Phase, with
+  // position is kept before an attack's target input, across each seat's last TL_KEEP attacking turns, with
   // the table settled — encoded as a string (copying a game position stays cheap), with every input from then on: the
   // input, and for an answer the prompt it answered (its title, the button's label, the cards picked).
   window.ruTimelineUsers=window.ruTimelineUsers||[];
@@ -24371,13 +24383,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function modalLabels(){ var m=document.getElementById('modal'),r=document.getElementById('m-btns'); return ((m&&m._ruStash)?m._ruStash.btns:(r?[].slice.call(r.children):[])).map(function(b){ return b.textContent; }); }
   function pickPool(){ return (typeof PCK!=='undefined'&&PCK&&PCK.pool)||[]; }
-  function tlMark(tl){
+  function tlMark(tl,attack){
     var g2={}; for(var k in G){ if(!TL_OWN[k])g2[k]=G[k]; }
-    tl.marks.push({seat:G.turn,turn:tn(),seq:G._phaseSeq||0,n:tl.base+tl.inputs.length,
+    var mark={seat:attack.who,turn:tn(),seq:G._phaseSeq||0,n:tl.base+tl.inputs.length,attack:attack,casualties:{},resolved:false,
       snap:tlEncode({G:g2,rng:window.ruRngState(),cq:(window._RUcq||[]).slice()}),
-      log:[].slice.call((document.getElementById('log')||{}).children||[]).map(function(e){return {text:e.textContent,cls:e.className};})});
+      log:[].slice.call((document.getElementById('log')||{}).children||[]).map(function(e){return {text:e.textContent,cls:e.className};})};
+    tl.marks.push(mark);tl.tracking=mark;
     var per={};
-    for(var i=tl.marks.length-1;i>=0;i--){ var m=tl.marks[i]; per[m.seat]=(per[m.seat]||0)+1; if(per[m.seat]>TL_KEEP)tl.marks.splice(i,1); }
+    for(var i=tl.marks.length-1;i>=0;i--){var m=tl.marks[i],turns=per[m.seat]||(per[m.seat]=[]);if(turns.indexOf(m.turn)<0)turns.push(m.turn);if(turns.indexOf(m.turn)>=TL_KEEP)tl.marks.splice(i,1);}
     var from=Math.min.apply(null,tl.marks.map(function(x){ return x.n; }));
     if(from>tl.base){ tl.inputs.splice(0,from-tl.base); tl.base=from; }
   }
@@ -24386,7 +24399,14 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!G||!a||G.gameOver)return;
     var tl=G._tl;
     if(!tl){ if(!tlNeeded())return; tl=G._tl={marks:[],inputs:[],base:0}; }
-    if(G.phase==='battle'&&tlQuiet()&&!tl.marks.some(function(m){ return m.seat===G.turn&&m.turn===tn()&&m.seq===(G._phaseSeq||0); }))tlMark(tl);
+    if(a.t!=='modal'&&a.t!=='pick'&&a.t!=='pickCancel')tl.tracking=null;
+    var sel=G.selAttacker,owner=a.t==='delta'?a.w:a.o,zone=a.t==='delta'?'delta':a.z;
+    if((a.t==='zone'||a.t==='delta')&&sel&&G.mode==='addon'&&tlQuiet()&&ruIsLegalAttackTarget(a.s,owner,zone)){
+      var target=window.zCard(G[owner],zone);
+      tlMark(tl,{who:a.s,zone:sel.zone,attId:sel.card.id,targetWho:owner,targetZone:zone,targetId:target.id,
+        addons:(G._addons||[]).map(function(x){return {zone:x.zone,id:x.card.id};}),
+        field:ZONES.map(function(z){var c=zc(G[a.s],z);return c&&{zone:z,id:c.id};}).filter(Boolean)});
+    }
     if(!tl.marks.length)return;
     var x={}; for(var k in a){ if(k!=='sig')x[k]=a[k]; }
     var e={a:x,p:promptKey()};
@@ -24395,23 +24415,38 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(a.t==='zone'||a.t==='delta')e.m=G.mode;
     tl.inputs.push(e);
   };
-  // Seat w's previous Battle Phase (the one before the Battle Phase it is in now): its kept position, or null.
+  // The last resolved attack, not the start of a whole Battle Phase or the attack currently being declared.
   window.ruPastMark=function(w){
     var tl=G._tl; if(!tl)return null;
-    var mine=tl.marks.filter(function(m){ return m.seat===w&&!(m.turn===tn()&&m.seq===(G._phaseSeq||0)); });
+    var mine=tl.marks.filter(function(m){ return m.seat===w&&m.resolved&&m.turn<tn(); });
     return mine.length?mine[mine.length-1]:null;
+  };
+  window.ruTimelineCasualty=function(w){
+    var mark=G._tl&&G._tl.tracking;
+    if(mark)mark.casualties[w]=(mark.casualties[w]||0)+1;
+    var R=G._tlReplay,a=R&&R.amend;
+    if(a&&a.active){a.drawn[w]=(a.drawn[w]||0)+1;return a.drawn[w]>(a.baseline[w]||0);}
+    return false;
   };
   // Change the past at kept position m: once the input that asked for it is over, the game goes back to m; change(next)
   // makes the change there; then every input played since m is played again (ruTimelineDrive). auto: kept in the
   // rewritten game for the card that made the change (it meets its own use again on the way).
-  window.ruRewritePast=function(m,change,auto){
+  window.ruRewritePast=function(m,change,auto,amend){
     var tl=G._tl,list=tl.inputs.slice(m.n-tl.base);
     G._tlPending=true;
     window.ruWhenSettled(null,function(){
       tlRestore(m);
       G._tl={marks:[],inputs:[],base:0};
       if(auto)G._tlAuto=auto;
-      change(function(){ G._tlReplay={list:list,i:0}; refresh(); });
+      change(function(){
+        if(amend){
+          var att=window.zCard(G[m.attack.who],m.attack.zone);
+          G.selAttacker={zone:m.attack.zone,card:att};G.mode='addon';
+          G._addons=(m.attack.addons||[]).map(function(f){return {zone:f.zone,card:window.zCard(G[m.attack.who],f.zone)};}).filter(function(f){return f.card;});
+          amend.attack=m.attack;amend.baseline=Object.assign({},m.casualties);amend.drawn={};amend.active=false;
+        }
+        G._tlReplay={list:list,i:0,amend:amend||null};refresh();
+      });
     },{defer:true});
   };
   function tlRestore(m){
@@ -24466,6 +24501,26 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           }
         }
         if(tlBusy()){ window.ruWhenSettled(function(){ return !tlBusy(); },function(){},{defer:true}); break; }
+        var amendment=R.amend;
+        if(amendment&&amendment.active&&!open&&tableQuiet()){
+          if(amendment.encore){
+            var original=amendment.attack,ap=G[original.who],def=window.zCard(G[original.targetWho],original.targetZone);
+            var extra=original.field.find(function(f){var c=window.zCard(ap,f.zone);return c&&c.id===f.id&&c.canAttack!==false&&!c.frozen&&!window.ruAttackBanned(c)&&atkLeft(c)>0&&!ap.attacksUsed[c.id];});
+            if(extra&&def&&def.id===original.targetId&&!ruAttackBlock(original.who)){
+              var attacker=window.zCard(ap,extra.zone),left=atkLeft(attacker);
+              say('Temporal 4 / Encore Star: '+window.zCard(ap,extra.zone).name+' also attacked the original target.','imp');
+              window.ruApplyAction({t:'atkMode',s:original.who});
+              window.ruApplyAction(extra.zone==='delta'?{t:'delta',s:original.who,w:original.who}:{t:'zone',s:original.who,o:original.who,z:extra.zone});
+              window.ruApplyAction(original.targetZone==='delta'?{t:'delta',s:original.who,w:original.targetWho}:{t:'zone',s:original.who,o:original.targetWho,z:original.targetZone});
+              if(window.zCard(ap,extra.zone)===attacker&&atkLeft(attacker)===left){
+                if(!promptKey()&&tableQuiet())console.error('Historical Encore attack did not advance',extra.zone,G.mode);
+                break;
+              }
+              continue;
+            }
+          }
+          amendment.active=false;amendment.done=true;
+        }
         if(!e){if(!open)tlFinish();break;}
         if(answer){
           if(!open){ R.i++; continue; }
@@ -24473,6 +24528,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           R.i++; window.ruApplyAction(b); continue;
         }
         if(open)break;
+        if(amendment&&!amendment.done&&R.i===0)amendment.active=true;
         R.i++; window.ruApplyAction(a);
       }
     } finally { tlDriving=false; }
@@ -26756,25 +26812,24 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     }
   };
   // Temporal 4 — (when it attacks) mill 7: a non-Neo, generic Advantageous Star from your Deck or Drop is activated without paying
-  // its cost; its effects apply to your previous Battle Phase instead of this one
+  // its cost; amend the last resolved attack on an earlier turn, then reconcile the recorded future
   function genericStar(c){ var a=c&&AC[c.name]; return !!(c&&c.type==='action'&&a&&a.isStar&&a.starType==='generic'&&a.sub==='Advantageous'&&ACDEFS[c.name]); }
-  // The Star goes back in time: the game returns to the start of your previous Battle Phase, past you activates it there,
-  // and everything played since is played again on top of it (the field rules' timeline) — that Battle Phase, the turns
-  // after it, this one, up to Temporal 4's attack, which then goes on in the present that follows.
+  // The attack snapshot preserves everything that already happened before the last attack. Subsequent recorded inputs
+  // reconcile the changed draws/results; they do not reopen the earlier Battle Phase or offer different attacks.
   TSK['Temporal 4']={
     canPay:function(w){ return side(w).deck.length>=7; },
     cost:function(w,card,cb){ millN(w,7); cb(true); },
     skill:function(w,card,done){
       var p=side(w),past=window.ruPastMark(w);
-      if(!past){ say('Temporal 4: '+sideSubjectLabel(w)+' '+(isLocalHumanSeat(w)?'have':'has')+' no previous Battle Phase to go back to.','info'); done(); return; }
-      pick(w,'Temporal 4 — choose a generic Advantageous Star from your Deck or Drop for your previous Battle Phase.',p.deck.concat(p.discard).filter(genericStar),1,1,function(pk){
+      if(!past){ say('Temporal 4: no resolved attack from an earlier turn to amend.','info'); done(); return; }
+      pick(w,'Temporal 4 — choose a generic Advantageous Star from your Deck or Drop for your last attack.',p.deck.concat(p.discard).filter(genericStar),1,1,function(pk){
         var s=pk&&pk[0]; if(!s){ say('Temporal 4: no such Star in '+sidePossLower(w)+' Deck or Drop.','info'); done(); return; }
-        say('Temporal 4: '+s.name+' goes back to the start of '+sidePossLower(w)+' previous Battle Phase (turn '+past.turn+').','imp');
+        say('Temporal 4: '+s.name+' changes '+sidePossLower(w)+' last attack (turn '+past.turn+').','imp');
         window.ruRewritePast(past,function(next){
           var f=window.ruFindCard(s.id);
-          say('Temporal 4: past '+sideSubjectLabel(w)+' '+(isLocalHumanSeat(w)?'activate':'activates')+' '+s.name+' — everything since is played again.','imp');
+          say('Temporal 4: past '+sideSubjectLabel(w)+' '+(isLocalHumanSeat(w)?'activate':'activates')+' '+s.name+'; later consequences are reconciled.','imp');
           if(f)window.ruActFree(w,f.card,next,{toDrop:true}); else next();
-        },{kind:'t4',id:card.id,turn:tn()});
+        },{kind:'t4',id:card.id,turn:tn()},{encore:s.name==='Encore Star'});
         done();
       });
     }
@@ -26982,7 +27037,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       return false;
     }
     if(!window.ruPastMark(aw)||!TSK['Temporal 4'].canPay(aw)||!p.deck.concat(p.discard).some(genericStar)||skillLocked(aw,c))return false;
-    ask(aw,'Temporal 4 — mill 7?','Mill 7: past you activates a non-Neo, generic Advantageous Star from your Deck or Drop at the start of your previous Battle Phase, without paying its cost — and everything since plays out again from there (S: +4 MP).','Use Temporal 4',function(){
+    ask(aw,'Temporal 4 — mill 7?','Mill 7: apply a generic Advantageous Star from your Deck or Drop to your last attack on an earlier turn, without its costs. Reconcile the changed future; additional Casualties have their Secondary Effects negated (S: +4 MP).','Use Temporal 4',function(){
       c._t4=tn(); useSkill(aw,c,'Temporal 4',function(){ refresh(); if(!G._tlPending)resume(); });
     },function(){ c._t4=tn(); resume(); });
     return true;
