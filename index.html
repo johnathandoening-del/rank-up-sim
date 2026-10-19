@@ -3632,6 +3632,7 @@ function beginPhase(ph){
       try{ if(window.ruPhaseEnding&&G&&!G.gameOver&&G.phase&&G.phase!==ph)window.ruPhaseEnding(G.phase); }catch(e){console.error(e);}
       // "After the Battle Phase" effects that need a choice (Shooting Star) resolve before the End Phase hands the turn on
       if(ph==='end'&&window.ruBeforeEnd&&window.ruBeforeEnd(function(){beginPhase('end');}))return;
+      if(ph==='draw'&&window.ruCaptureTurnStart&&G&&!G.gameOver)window.ruCaptureTurnStart();
       var r=beginPhaseL35.apply(this,arguments);
       try{
         if(ph==='draw'&&G&&G.turn){
@@ -23823,7 +23824,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       seenNow();
       if(G._removed&&G._removed.length&&G._removed[0].turn<T)G._removed=G._removed.filter(function(r){ return r.turn>=T; });
       fired.forEach(function(x){ HOOKS.removed.forEach(function(f){ try{ f(x.rec,x.card); }catch(e){ console.error(e); } }); });
-      entered.forEach(function(x){ HOOKS.entered.forEach(function(f){ try{ f(x.card,x.seat,x.zone); }catch(e){ console.error(e); } }); });
+      entered.forEach(function(x){
+        (G._fieldEntries=G._fieldEntries||[]).push({id:x.card.id,seat:x.seat,zone:x.zone,turn:T,seq:G._fieldEntrySeq=(G._fieldEntrySeq||0)+1});
+        HOOKS.entered.forEach(function(f){ try{ f(x.card,x.seat,x.zone); }catch(e){ console.error(e); } });
+      });
+      if(G._fieldEntries)G._fieldEntries=G._fieldEntries.filter(function(e){return e.turn>=T-HIST_KEEP;});
       areaWatch();
       awWatch();
       mpWatch();
@@ -24241,34 +24246,44 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   //   no Action Card slots then) while a duration / condition lasts; then its own A and W come back.
   var HIST_KEEP=12;                                     // turns whose card positions are kept (MP / Casualty Counts: all)
   var FIELD={'rank':1,'left-flank':1,'right-flank':1,'rear-flank':1,'delta':1};
-  function where(){
-    var m={};
+  function timeInventory(){
+    var at={},cards={},roots=[];
+    function add(c,seat,place,index,parent){
+      if(!c||!c.id||cards[c.id])return;
+      cards[c.id]=c;at[c.id]=seat+'|'+place+'|'+(parent?parent+'|':'')+index;roots.push({card:c,seat:seat});
+    }
     seats().forEach(function(s){ var p=G[s]; if(!p)return;
-      ZONES.forEach(function(z){ var c=zc(p,z); if(c)m[c.id]=s+'|'+z+'|0'; });
-      PILES.forEach(function(k){ (p[k]||[]).forEach(function(c,i){ if(c&&c.id&&!m[c.id])m[c.id]=s+'|'+k+'|'+i; }); });
+      ZONES.forEach(function(z){add(zc(p,z),s,z,0);});
+      PILES.concat(['evolutions']).forEach(function(k){(p[k]||[]).forEach(function(c,i){add(c,s,k,i);});});
     });
-    return m;
+    // Physical pile/field membership takes priority over a defeated Evolution's stale Element references.
+    for(var i=0;i<roots.length;i++){
+      var host=roots[i];(host.card.elements||[]).forEach(function(c,j){add(c,host.seat,'element',j,host.card.id);});
+    }
+    return {at:at,cards:cards};
   }
-  function parseLoc(v){ var a=String(v).split('|'); return {s:a[0],place:a[1],i:Number(a[2])||0}; }
+  function where(){return timeInventory().at;}
+  function parseLoc(v){var a=String(v).split('|');return {s:a[0],place:a[1],parent:a[1]==='element'?a[2]:null,i:Number(a[a[1]==='element'?3:2])||0};}
   function histPush(){
     var T=tn(),h=(G._hist||[]).filter(function(e){ return e.turn!==T; });
-    var e={turn:T,seat:G.turn,mp:{},cas:{},at:where()};
+    var e={turn:T,seat:G.turn,mp:{},cas:{},at:where(),entrySeq:G._fieldEntrySeq||0};
     seats().forEach(function(s){ if(G[s]){ e.mp[s]=G[s].mp; e.cas[s]=G[s].cas||0; } });
     h.push(e);
     h.forEach(function(x){ if(x.at&&x.turn<T-HIST_KEEP)delete x.at; });
     G._hist=h;
   }
+  window.ruCaptureTurnStart=function(){if(!(G._hist||[]).some(function(e){return e.turn===tn();})){window.ruFieldWatch();histPush();}};
   window.ruTurnStart=function(T){ return (G._hist||[]).find(function(e){ return e.turn===T; })||null; };
   // the turns seat has had, latest last (the current one included once it has begun)
   window.ruTurnsOf=function(seat){ return (G._hist||[]).filter(function(e){ return e.seat===seat; }); };
-  function liveCards(){
-    var m={};
-    seats().forEach(function(s){ var p=G[s]; if(!p)return;
-      ZONES.forEach(function(z){ var c=zc(p,z); if(c)m[c.id]=c; });
-      PILES.forEach(function(k){ (p[k]||[]).forEach(function(c){ if(c&&c.id&&!m[c.id])m[c.id]=c; }); }); });
-    return m;
+  window.ruEnteredSince=function(entry){
+    return new Set((G._fieldEntries||[]).filter(function(e){return entry.entrySeq!=null?e.seq>entry.entrySeq:e.turn>=entry.turn;}).map(function(e){return e.id;}));
+  };
+  function historyPile(loc,cards){
+    if(loc.place==='element'){var host=cards[loc.parent];return host&&(host.elements||(host.elements=[]));}
+    return G[loc.s]&&(G[loc.s][loc.place]||(G[loc.s][loc.place]=[]));
   }
-  function takeOut(loc,c){
+  function takeOut(loc,c,cards){
     var p=G[loc.s]; if(!p)return false;
     if(FIELD[loc.place]){
       if(loc.place==='rank'){ if(p.rankZone!==c)return false; p.rankZone=ruEmptyRank('t-'+uid()); }
@@ -24277,11 +24292,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       ruLeaveOtherSides(p,c);
       return true;
     }
-    var a=p[loc.place]||[],i=a.indexOf(c); if(i===-1)return false;
+    var a=historyPile(loc,cards)||[],i=a.indexOf(c); if(i===-1)return false;
     a.splice(i,1); if(loc.place==='deadzone')p.cas=Math.max(-7,(p.cas||0)-1);
     return true;
   }
-  function putIn(loc,c){
+  function putIn(loc,c,cards){
     var p=G[loc.s]; if(!p)return false;
     if(FIELD[loc.place]){
       if(!isNum(c))return false;
@@ -24294,23 +24309,25 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(loc.place==='deck'){ p.deck.splice(Math.min(loc.i,p.deck.length),0,isNum(c)?fresh(c):c); return true; }
     if(loc.place==='hand'){ p.hand.push(isNum(c)?fresh(c):c); return true; }
     if(loc.place==='bank'){ bankInsert(p,c); return true; }
-    (p[loc.place]=p[loc.place]||[]).push(c); return true;
+    var a=historyPile(loc,cards);if(!a)return false;
+    a.splice(Math.min(loc.i,a.length),0,c);return true;
   }
   // Cards go back where they were at the start of that turn: each card for which which(card, now, then) is true (now /
   // then: {s, place, i}) leaves its place and returns to its place then. A Battlefield zone a card that stays still
   // holds sends that card back where it was now. Returns the cards that moved.
   window.ruRestoreTo=function(entry,which){
     if(!entry||!entry.at)return [];
-    var now=where(),cards=liveCards(),plan=[],moved=[];
+    var inv=timeInventory(),now=inv.at,cards=inv.cards,plan=[],moved=[];
     Object.keys(entry.at).forEach(function(id){
       var c=cards[id]; if(!c||!now[id])return;
       var t=parseLoc(entry.at[id]),n=parseLoc(now[id]);
-      if(n.s===t.s&&n.place===t.place)return;
+      if(n.s===t.s&&n.place===t.place&&n.parent===t.parent&&n.i===t.i)return;
       if(which(c,n,t))plan.push({c:c,n:n,t:t});
     });
-    plan=plan.filter(function(x){ return takeOut(x.n,x.c); });
+    plan=plan.filter(function(x){ return takeOut(x.n,x.c,cards); });
+    plan.forEach(function(x){Object.keys(cards).forEach(function(id){var a=cards[id].elements,i;if(a)while((i=a.indexOf(x.c))!==-1)a.splice(i,1);});});
     plan.sort(function(a,b){ return a.t.i-b.t.i; });
-    plan.forEach(function(x){ if(putIn(x.t,x.c))moved.push(x.c); else putIn(x.n,x.c); });
+    plan.forEach(function(x){ if(putIn(x.t,x.c,cards))moved.push(x.c); else putIn(x.n,x.c,cards); });
     window.ruFieldWatch();
     return moved;
   };
@@ -24596,7 +24613,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       var T=tn(),held=(G._casHold||[]).filter(function(h){ return h.turn<T; });
       G._casHold=(G._casHold||[]).filter(function(h){ return h.turn>=T; });
       held.forEach(function(h){ if(h.n)(G._timeQ=G._timeQ||[]).push({kind:'casualties',w:h.owner,when:h.when,from:h.turn,data:{seat:h.seat,n:h.n,by:h.by}}); });
-      mpWatch(); G._mpLost={turn:tn()}; awWatch(); histPush(); runLater(function(e){ return tn()>e.from&&(e.when==='nextTurn'||(e.when==='myTurn'&&e.w===G.turn)); }); }
+      mpWatch(); G._mpLost={turn:tn()}; awWatch(); runLater(function(e){ return tn()>e.from&&(e.when==='nextTurn'||(e.when==='myTurn'&&e.w===G.turn)); }); }
     if(ph==='battle')runLater(function(e){ return tn()>e.from&&e.when==='myBattle'&&e.w===G.turn; });
     // (a phase that did not come in that turn: the next one that does)
     runLater(function(e){ return tn()>e.from&&e.when==='myPhase'&&e.w===G.turn&&PH.indexOf(ph)>=PH.indexOf(e.data.phase); });
@@ -26947,8 +26964,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       },function(){});
     },{defer:true});
   });
-  // Temporal 9 — once per exchange, mill 15: every other card on every Battlefield goes back to where it was in the Draw
-  // Phase of your previous turn; +1 NP per card that moved. Declaring an attack with it cedes the last card of your Deck:
+  // Temporal 9 — once per exchange, mill 15: Numerals that entered since your previous Draw Phase return to their
+  // locations then, even if they have since left; +1 NP per Numeral returned. Declaring an attack cedes the last Deck card:
   // a Numeral — the damage that NP adds comes at the start of your next Battle Phase; otherwise as if in your last one (now).
   TSK['Temporal 9']={
     canPay:function(w){ return side(w).deck.length>=15; },
@@ -26956,10 +26973,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     skill:function(w,card,done){
       var prev=prevTurnOf(w);
       if(!prev||!prev.at){ say('Temporal 9: '+sideSubjectLabel(w)+' '+(isLocalHumanSeat(w)?'have':'has')+' no previous turn to return to.','info'); done(); return; }
-      var moved=window.ruRestoreTo(prev,function(c,now){ return c.id!==card.id&&!!{'rank':1,'left-flank':1,'right-flank':1,'rear-flank':1,'delta':1}[now.place]; });
+      var entrants=window.ruEnteredSince(prev);
+      var moved=window.ruRestoreTo(prev,function(c){ return c.id!==card.id&&isNum(c)&&entrants.has(c.id); });
       var n=moved.length,me=onField(card);
       if(me&&n){ me.card.currentNP=np(me.card)+n; me.card._t9={turn:tn(),bonus:n}; }
-      say('Temporal 9: '+n+' card(s) on the Battlefields return to where they were in the Draw Phase of '+sidePossLower(w)+' previous turn ('+names(moved)+')'+(me&&n?'; Temporal 9 +'+n+' NP':'')+'.','imp');
+      say('Temporal 9: '+n+' Numeral(s) that entered the Battlefield return to where they were in the Draw Phase of '+sidePossLower(w)+' previous turn, including those that have since left ('+names(moved)+')'+(me&&n?'; Temporal 9 +'+n+' NP':'')+'.','imp');
       done();
     }
   };
@@ -29589,6 +29607,7 @@ window.ruSpecPace=function(base){
       // full ordered contents (not just counts): a different card in a hand or deck order is a desync too
       parts.push(w,p.mp,p.cas,ids(p.hand),ids(p.deck),ids(p.discard),ids(p.deadzone),(p.bank||[]).length,
         (p.delta||[]).length,cid(p.rankZone),cid(p.leftFlank),cid(p.rightFlank),cid(p.rearFlank),cid(p.delta&&p.delta[0]),p.actUsed||0,
+        ids(p.evolutions),(p.delta||[]).map(function(c){return c.id+':'+ids(c.elements);}).join(';'),
         Object.keys(p.attacksUsed||{}).sort().join(','),p._attackedThisTurn?1:0);
     });
     var m=modalEl(), pk=pickerEl();

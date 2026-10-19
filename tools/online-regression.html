@@ -49,7 +49,14 @@ async function input(a){
     invoke(w,()=>{const p=runCode(w,'G')[a.s],i=p.hand.findIndex(c=>c.id===a.id);w.playAction(i,p.hand[i]);});
   }else if(a.t==='promote'){
     invoke(w,()=>w.tryPromote(runCode(w,'G')[a.s].hand.find(c=>c.id===a.id)));
+  }else if(a.t==='activateArea'){
+    invoke(w,()=>{const p=runCode(w,'G')[a.s],i=p.hand.findIndex(c=>c.id===a.id);w.activateArea(i,p.hand[i]);});
+  }else if(a.t==='startSkill'){
+    invoke(w,()=>w.startSkill(a.s,a.source,w.ruFindCard(a.id).card));
+  }else if(a.t==='amalgRank'){
+    invoke(w,()=>w.ruAsInput(a,()=>w.performAmalgamationByIdsAI1(a.s,a.evoId,a.elementIds,a.evoCardId)));
   }else if(a.t==='atkMode')w.document.getElementById('btn-atk').click();
+  else if(a.t==='sdMode')w.document.getElementById('btn-sd').click();
   else if(a.t==='zone')w.document.getElementById(w.zId(a.o,a.z)).click();
   else if(a.t==='delta')w.document.getElementById(w.zId(a.w,'delta')).click();
   else if(a.t==='sdDone'){
@@ -85,7 +92,10 @@ document.getElementById('run').onclick=async function(){
         const w=frames()[i];runCode(w,c.setup[i][0]);runCode(w,c.setup[i][1]);
       }
       await sleep(500);
-      for(let i=0;i<2;i++)runCode(frames()[i],c.setup[i][2]);
+      for(let i=0;i<2;i++){
+        runCode(frames()[i],c.setup[i][2]);
+        frames()[i].ruCloseSwitchdrawDialog();
+      }
       await sync();
       for(const op of c.operations){
         if(op.code){frames().forEach(w=>runCode(w,op.code));await sleep(40);}
@@ -95,6 +105,7 @@ document.getElementById('run').onclick=async function(){
       for(let i=0;i<2;i++){
         check(JSON.stringify(runCode(frames()[i],'[G.player.mp,G.ai.mp]'))===JSON.stringify(c.expected[i].mp),c.label+' Morale outcome differs');
         check(frames()[i].ruStateSig()===c.expected[i].sig,c.label+' differs from asserted fixture outcome');
+        if(c.verify)check(JSON.stringify(runCode(frames()[i],c.verify.code))===JSON.stringify(c.verify.expected),c.label+' card locations/Elements differ');
       }
       say('PASS '+c.label+'; owned UI, private choices hidden, relay synchronized, asserted outcome');
     }
