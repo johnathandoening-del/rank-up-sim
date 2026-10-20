@@ -88,6 +88,16 @@ for(const w of ['player','ai']){
     assert.ok(p.run(`!!G['${w}'].delta[0]`));
     p.finish(`${w} Temporal 3 response continues into Fullmetal 5`);
   }
+  {
+    const {p}=prepare(w,5,true);
+    p.run(`G._lastAtkInfo={aWho:'${w}'};
+      G['${w}'].rankZone=mkNum({n:2,r:1,A:1,M:0,S:null,ca:true,st:'Basic'},'classless');
+      G._actor='${other}';ruWithActor('${other}',()=>doCounterAttack(0,{direct:true}));G._actor=null;`);
+    p.button('Skill 1:');p.pick([0]);p.pick([0]);settle(p);
+    assert.equal(p.run(`G['${w}'].rankZone.numeral`),2);
+    assert.equal(p.run(`G['${w}'].mp`),33+2,'counterattack negated, only entry M and S gained');
+    p.finish(`${w} Fullmetal 5 negates actual retaliation counterattack`);
+  }
   console.log('PASS',w,'all nine phase transitions quiet; damage/Casualty prompts own seat and source-specific');
 }
 fs.writeFileSync(path.join(__dirname,'data','evolution-refinements.json'),JSON.stringify(REPORT,null,2));

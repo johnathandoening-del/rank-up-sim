@@ -6812,9 +6812,14 @@ function doCounterAttack(npBonus,opts){
     if(!defCard){log('Counterattack: no target available.','info');return;}
     const myNP=p.rankZone.currentNP||p.rankZone.numeral, theirNP=defCard.currentNP||defCard.numeral;
     G._defState={};
-    resolveAtk(me,'rank',targetSide,tz,0);
-    if(opts.millOnHit&&myNP>theirNP){mill(targetSide,opts.millOnHit);log(`Counterattack hit \u2014 ${targetLabel} mills ${opts.millOnHit}.`,'dmg');}
-    renderAll();
+    const resolve=()=>{
+      if(G._defState&&G._defState.negate){log('Counterattack negated.','heal');G._defState={};renderAll();return;}
+      resolveAtk(me,'rank',targetSide,tz,0);
+      if(opts.millOnHit&&myNP>theirNP){mill(targetSide,opts.millOnHit);log(`Counterattack hit \u2014 ${targetLabel} mills ${opts.millOnHit}.`,'dmg');}
+      renderAll();
+    };
+    if(window.ruTargetedHook&&window.ruTargetedHook(me,'rank',targetSide,tz,resolve,0))return;
+    resolve();
   };
   if(targets.length===1){ doResolve(targets[0].zone); return; }
   ruOwnPrompt(me);
