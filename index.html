@@ -1071,6 +1071,14 @@ window.finalizeDeckOut=function(w){
   return EG('ai',r);
 };
 // Every entry into the Drop is recorded immediately, even if an effect retrieves it before rendering.
+function ruLoseMP(p,amount,cause){
+  if(!p)return 0;
+  let loss=Number(amount)||0;
+  const seat=(G.sideOrder||['player','ai']).find(w=>G[w]===p);
+  if(loss>0&&seat&&window.RUFullmetal)loss=RUFullmetal.morale(seat,loss,cause||RUFullmetal.source());
+  p.mp-=loss;
+  return loss;
+}
 function ruDrop(p,...cards){
   if(G){
     const turn=G._turnNo||0;
@@ -1296,7 +1304,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
     // Fission skill's hand-cost or Deck-search prompt) — that silently orphans this draw's
     // E2 prompt and permanently stalls the whole queue. Wait for the UI to go idle first.
     if(uiBusy()){ setTimeout(step,40); return; }
-    var who = window._RUcq[0];
+    var entry=window._RUcq[0],who=typeof entry==='string'?entry:entry.who;
     // REDIRECT (Reverse E2): Casualty Draws "after this" go to the player who gave the casualty.
     // G._casRedirect holds the side that played Reverse; their incoming casualties go to the opponent.
     var actual = (G._casRedirect===who) ? oppOf(who) : who;
@@ -1304,16 +1312,18 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
     // / any effect that set G._casDrawPrevented for that side, or the global negate flag.)
     // If so, the rest of the line is turned away and NEVER drawn — they stay in the Deck.
     if(isNeg(actual)){
-      var n=window._RUcq.length; window._RUcq=[];
-      log2('Casualty Draws are negated — the remaining '+n+' card(s) are turned away and never enter the Deadzone.','heal');
-      window._RUcbusy=false; render2(); return;
+      window._RUcq.shift();
+      if(window.RUFullmetal)window.RUFullmetal.negated(actual,entry);
+      log2('Casualty Draw negated before entering the Deadzone.','heal');
+      return step();
     }
     window._RUcq.shift();
     if(actual!==who){ log2('Reverse: this Casualty Draw is redirected to '+(window.sideObjectLabel?sideObjectLabel(actual):(sideObjectLabel(actual)))+'.','info'); }
     who = actual; // the recipient takes over for drawing, E2 resolution, and placement
+    if(window.RUFullmetal&&!window.RUFullmetal.casualty(who,typeof entry==='string'?null:entry))return step();
     var p=G[who];
     if(G.eliminated&&G.eliminated[who]){ log2((window.sideSubjectLabel?sideSubjectLabel(who):who)+' is already eliminated; the Casualty Draw is ignored.','info'); return step(); }
-    if(p.noCasDmgTurns>0){ log2((window.sideVerbLabel?sideVerbLabel(who,'are','is'):(sideVerbLabel(who,'are','is')))+' protected from Casualty Damage this turn.','heal'); return step(); }
+    if(p.noCasDmgTurns>0){ if(window.RUFullmetal)window.RUFullmetal.negated(who,entry);log2((window.sideVerbLabel?sideVerbLabel(who,'are','is'):(sideVerbLabel(who,'are','is')))+' protected from Casualty Damage this turn.','heal'); return step(); }
     if(!p.deck || !p.deck.length){ G._deckOutPending=G._deckOutPending||{}; if(!G._deckOutPending[who]){G._deckOutPending[who]=true; try{ log2((window.sideVerbLabel?sideVerbLabel(who,'have','has'):(sideVerbLabel(who,'have','has')))+' no cards left to draw — deck-out is checked at end of phase.','dmg'); }catch(e){}} return step(); }   // (this draw can't happen: the queue moves on — stopping here left it stuck forever)
 
     // Draw ONE card; it enters the Deadzone (signed-counter aware: deficit fills go to Discard).
@@ -1357,7 +1367,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
       // subtracted instead of added -- resolved here instead of through the normal E2 prompt.
       else if(G._shadow9Victims && G._shadow9Victims[who] && card.sub==='Advantageous'){
         var _s9m=Number(card.M||0);
-        if(_s9m){ p.mp-=Math.abs(_s9m); log2('Shadow 9: '+card.name+' Morale Boost is subtracted instead of added ('+(-Math.abs(_s9m))+' MP).','dmg'); }
+        if(_s9m){ ruLoseMP(p,Math.abs(_s9m)); log2('Shadow 9: '+card.name+' Morale Boost is subtracted instead of added ('+(-Math.abs(_s9m))+' MP).','dmg'); }
         log2('Shadow 9: '+card.name+"'s Dead Draw effect is negated.",'heal');
         hasE2=false;
       }
@@ -1389,7 +1399,9 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
   function casDraw(who){
     if(!R()||G.gameOver) return null;
     if(window.ruCasualtyHeld&&window.ruCasualtyHeld(who)) return null;   // held back to a later point (field rules, TIME)
-    window._RUcq.push(who);
+    const meta=arguments[1]||{};
+    const cause=meta.source||(window.RUFullmetal?window.RUFullmetal.source():'rule');
+    window._RUcq.push({who,source:cause,additional:meta.additional!=null?meta.additional:cause==='action'||cause==='numeral'});
     if(!window._RUcbusy){ window._RUcbusy=true; step(); }
     return null;
   }
@@ -1420,29 +1432,29 @@ function applyE2Base(who,card){
   else if(nm==='Reduce'){if(p.hand.length){window.cChoose(who,p.hand,1,'Reduce (E2) — choose 1 hand card to Drop.',function(pk){const _rc=pk&&pk[0];if(_rc){const i=p.hand.indexOf(_rc);if(i>=0)p.hand.splice(i,1);ruDrop(p,_rc);log('Reduce (E2): dropped this and 1 from hand ('+_rc.name+').','info');}});}else{log('Reduce (E2): dropped this card; no hand card to also drop.','info');}}
   else if(nm==='Divide'){window.cChoose(who,p.hand,Math.min(2,p.hand.length),'Divide (E2) — choose up to 2 hand cards to Drop.',function(pk){(pk||[]).forEach(c=>{const i=p.hand.indexOf(c);if(i>=0)p.hand.splice(i,1);ruDrop(p,c);});const _dvPool=p.deadzone.filter(c=>c.name!=='The Lowlands');const n=Math.floor(_dvPool.length/2);if(!n){log('Divide (E2): dropped '+(pk?pk.length:0)+' from hand; fewer than 2 Deadzone cards to halve.','heal');return;}window.cChoose(who,_dvPool,n,'Divide (E2) — choose '+n+' Deadzone card(s) to Drop (half).',function(pk2){(pk2||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});log('Divide (E2): dropped '+(pk?pk.length:0)+' from hand and '+(pk2?pk2.length:0)+' chosen from Deadzone (half).','heal');});});}
   else if(nm==='Counterattack'){const _caGrant=function(){if(p.rankZone){p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}log('Counterattack (E2): dropped 1 from hand; Rank Zone can attack this turn.','heal');if(p.rankZone)window.offerCounterAttackRA(who,p.rankZone);};if(p.hand.length){window.cChoose(who,p.hand,1,'Counterattack (E2) — choose 1 hand card to Drop.',function(pk){const _cc=pk&&pk[0];if(_cc){const i=p.hand.indexOf(_cc);if(i>=0)p.hand.splice(i,1);ruDrop(p,_cc);}_caGrant();});}else{_caGrant();}}
-  else if(nm==='Counterstrike'){const _csPool=[o.leftFlank,o.rightFlank].filter(Boolean);if(!_csPool.length){log('Counterstrike (E2): opponent has no Flank target.','info');}else{window.cChoose(who,_csPool,1,'Counterstrike (E2) — choose a card in opponent Flank Zones to send to Deadzone.',function(pk){var f=pk[0];if(f){if(o.leftFlank===f)o.leftFlank=null;else o.rightFlank=null;dzAdd(o,f);o.mp-=2;log(`Counterstrike (E2): ${f.name} sent to opponent Deadzone; opponent loses 2 MP.`,'dmg');}});}}
-  else if(nm==='Strike'){o.mp-=2;oppCas();log('Strike (E2): opponent -2 MP and 1 Casualty Draw.','dmg');}
+  else if(nm==='Counterstrike'){const _csPool=[o.leftFlank,o.rightFlank].filter(Boolean);if(!_csPool.length){log('Counterstrike (E2): opponent has no Flank target.','info');}else{window.cChoose(who,_csPool,1,'Counterstrike (E2) — choose a card in opponent Flank Zones to send to Deadzone.',function(pk){var f=pk[0];if(f){if(o.leftFlank===f)o.leftFlank=null;else o.rightFlank=null;dzAdd(o,f);ruLoseMP(o,2);log(`Counterstrike (E2): ${f.name} sent to opponent Deadzone; opponent loses 2 MP.`,'dmg');}});}}
+  else if(nm==='Strike'){ruLoseMP(o,2);oppCas();log('Strike (E2): opponent -2 MP and 1 Casualty Draw.','dmg');}
   else if(nm==='Betray'){acDropTop(who,2,'discard');acMoveKnown(p,card,'deadzone');acDropTop(ow,1,'deadzone');log('Betray (E2): top cards moved; this card shifts into opponent pressure line.','dmg');}
-  else if(nm==='Subtract'){const loss=ruLastMoraleTo(who);if(p.hand.length)window.cChoose(who,p.hand,1,'Subtract (E2) — choose a card from hand to Drop.',function(pk){var c=pk[0];if(c)acMoveKnown(p,c,'discard');});acDropFromDead(who,1,'discard');acDropTop(who,1,'discard');o.mp-=loss;p.mp+=loss;acMoveKnown(p,card,'deadzone');logAs(who,`Subtract (E2): {Opp} {opp:lose|loses} ${loss} MP and {you} {gain|gains} ${loss}.`,'dmg',ow);}
+  else if(nm==='Subtract'){const loss=ruLastMoraleTo(who);if(p.hand.length)window.cChoose(who,p.hand,1,'Subtract (E2) — choose a card from hand to Drop.',function(pk){var c=pk[0];if(c)acMoveKnown(p,c,'discard');});acDropFromDead(who,1,'discard');acDropTop(who,1,'discard');ruLoseMP(o,loss);p.mp+=loss;acMoveKnown(p,card,'deadzone');logAs(who,`Subtract (E2): {Opp} {opp:lose|loses} ${loss} MP and {you} {gain|gains} ${loss}.`,'dmg',ow);}
   else if(nm==='Discard'){if(o.hand.length>=2){let dropped=0;while(dropped<2&&o.hand.length){ruDrop(o,o.hand.shift());dropped++;}log('Discard (E2): opponent dropped 2 from hand.','dmg');}else{acMoveKnown(p,card,'deadzone');acDropTop(ow,1,'discard');log('Discard (E2): opponent lacked 2 hand cards; this goes to their Deadzone and they mill 1.','dmg');}}
-  else if(nm==='Deckstroy'){acMoveKnown(p,card,'deadzone');acDropTop(ow,3,'discard');o.mp-=3;log('Deckstroy (E2): opponent mills 3 and loses 3 MP.','dmg');}
+  else if(nm==='Deckstroy'){acMoveKnown(p,card,'deadzone');acDropTop(ow,3,'discard');ruLoseMP(o,3);log('Deckstroy (E2): opponent mills 3 and loses 3 MP.','dmg');}
   else if(nm==='Battle Star'){for(let i=0;i<2;i++)oppCas();log('Battle Star (E2): opponent takes 2 Casualty Draws.', 'dmg');}
   else if(nm==='Neo Rank Star'){const _nrsPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_nrsPool,Math.min(2,_nrsPool.length),'Neo Rank Star (E2) — choose up to 2 Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});for(let i=0;i<2;i++)oppCas();log('Neo Rank Star (E2): dropped '+(pk?pk.length:0)+' chosen from Deadzone; opponent takes 2 Casualty Draws.','dmg');});}
   else if(nm==='Draw Star'){if(p.hand.length)window.cChoose(who,p.hand,1,'Draw Star (E2) — choose a card from hand to Drop.',function(pk){var c=pk[0];if(c)acMoveKnown(p,c,'discard');});acDropTop(who,1,'deadzone');draw(who,3);log('Draw Star (E2): paid cost and drew 3.','heal');}
   else if(nm==='Multi-Star'){acDropTop(who,4,'deadzone');const n=o.cas*2;for(let i=0;i<n;i++)oppCas();log(`Multi-Star (E2): opponent takes ${n} Casualty Draws.`, 'dmg');}
-  else if(nm==='Neo Battle Star'){const _nbsPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_nbsPool,Math.min(2,_nbsPool.length),'Neo Battle Star (E2) — choose up to 2 Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});acDropTop(who,1,'discard');o.mp-=2;for(let i=0;i<2;i++)oppCas();log('Neo Battle Star (E2): dropped '+(pk?pk.length:0)+' chosen from Deadzone and top Deck; opponent -2 MP and 2 Casualty Draws.','dmg');});}
+  else if(nm==='Neo Battle Star'){const _nbsPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_nbsPool,Math.min(2,_nbsPool.length),'Neo Battle Star (E2) — choose up to 2 Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});acDropTop(who,1,'discard');ruLoseMP(o,2);for(let i=0;i<2;i++)oppCas();log('Neo Battle Star (E2): dropped '+(pk?pk.length:0)+' chosen from Deadzone and top Deck; opponent -2 MP and 2 Casualty Draws.','dmg');});}
   else if(nm==='Neo Draw Star'){const _ndsPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_ndsPool,Math.min(1,_ndsPool.length),'Neo Draw Star (E2) — choose 1 Deadzone card to Drop.',function(pk){const c=pk[0];if(c){acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);}acDropBottom(who,2,'discard');acDropTop(ow,3,'discard');draw(who,3);logAs(who,'Neo Draw Star (E2): dropped '+(c?c.name:'no Deadzone card')+'; {opp} {opp:mill|mills} 3; {you} {draw|draws} 3.','heal',ow);});}
   else if(nm==='Shining Star'){const _shPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_shPool,Math.min(2,_shPool.length),'Shining Star (E2) — choose up to 2 Deadzone cards to Drop.',function(pk){const dropped=(pk||[]).map(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);return c;});const high=Math.max(0,...dropped.filter(c=>c.class==='light'&&c.type==='numeral').map(acRank));for(let i=0;i<high;i++)oppCas();log(`Shining Star (E2): dropped ${dropped.length} chosen Deadzone card(s); opponent takes ${high} Casualty Draw(s).`,'dmg');});}
-  else if(nm==='Burning Star'){window.ruEachOpp(who,function(s,op){op.mp-=(op.deadzone||[]).length;});log('Burning Star (E2): each opponent loses MP equal to their own Deadzone size.','dmg');}
+  else if(nm==='Burning Star'){window.ruEachOpp(who,function(s,op){ruLoseMP(op,(op.deadzone||[]).length);});log('Burning Star (E2): each opponent loses MP equal to their own Deadzone size.','dmg');}
   else if(nm==='Freezing Star'){const _fzPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_fzPool,Math.min(2,_fzPool.length),'Freezing Star (E2) — choose up to 2 Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});const r=G._lastAtkInfo&&G._lastAtkInfo.attacker?acRank(G._lastAtkInfo.attacker):1;p.noCasDmgTurns=Math.max(p.noCasDmgTurns||0,r);log(`Freezing Star (E2): dropped ${pk?pk.length:0} chosen Deadzone card(s); no Casualty Damage for ${r} turn(s).`,'heal');});}
   else if(nm==='Shaded Star'){const _ssPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_ssPool,Math.min(3,_ssPool.length),'Shaded Star (E2) — choose up to 3 Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});for(let i=0;i<3;i++)oppCas();o.mp=Math.floor(o.mp/2);log('Shaded Star (E2): dropped '+(pk?pk.length:0)+' chosen from Deadzone; opponent takes 3 Casualty Draws and Morale is halved.','dmg');});}
-  else if(nm==='MAX Star'){const _msMyPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_msMyPool,Math.min(2,_msMyPool.length),'MAX Star (E2) — choose up to 2 of your Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});const _msOppPool=o.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(ow,_msOppPool,Math.min(2,_msOppPool.length),'MAX Star (E2) — opponent chooses up to 2 Deadzone cards to Drop.',function(pk2){(pk2||[]).forEach(c=>{acRem(o.deadzone,c);o.cas=Math.max(-7,(o.cas||0)-1);ruDrop(o,c);});const hi=Math.max(0,...[...acNumerals(p),...acNumerals(o)].map(acRank));o.mp-=hi;log(`MAX Star (E2): both dropped chosen Deadzone cards; opponent loses ${hi} MP.`,'dmg');});});}
+  else if(nm==='MAX Star'){const _msMyPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_msMyPool,Math.min(2,_msMyPool.length),'MAX Star (E2) — choose up to 2 of your Deadzone cards to Drop.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});const _msOppPool=o.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(ow,_msOppPool,Math.min(2,_msOppPool.length),'MAX Star (E2) — opponent chooses up to 2 Deadzone cards to Drop.',function(pk2){(pk2||[]).forEach(c=>{acRem(o.deadzone,c);o.cas=Math.max(-7,(o.cas||0)-1);ruDrop(o,c);});const hi=Math.max(0,...[...acNumerals(p),...acNumerals(o)].map(acRank));ruLoseMP(o,hi);log(`MAX Star (E2): both dropped chosen Deadzone cards; opponent loses ${hi} MP.`,'dmg');});});}
   else if(nm==='Drop Star'){if(o.hand.length)window.cChoose(ow,o.hand,1,'Drop Star (E2) — opponent: choose a hand card to Drop.',function(pk){var c=pk[0];if(c){var i=o.hand.indexOf(c);if(i>=0)o.hand.splice(i,1);ruDrop(o,c);}});acDropTop(ow,o.cas,'discard');log('Drop Star (E2): opponent drops 1 hand card and mills cards equal to Casualty count.','dmg');}
-  else if(nm==='Minus Star'){const hs=[...o.hand].filter(c=>c.type==='numeral').sort((a,b)=>acNP(b)-acNP(a)).slice(0,2);let dmg=0;hs.forEach(c=>{acRem(o.hand,c);dzAdd(o,c);dmg+=acRank(c);});o.mp-=dmg;log(`Minus Star (E2): opponent cedes ${hs.length} high Numeral(s) and loses ${dmg} MP.`, 'dmg');}
+  else if(nm==='Minus Star'){const hs=[...o.hand].filter(c=>c.type==='numeral').sort((a,b)=>acNP(b)-acNP(a)).slice(0,2);let dmg=0;hs.forEach(c=>{acRem(o.hand,c);dzAdd(o,c);dmg+=acRank(c);});ruLoseMP(o,dmg);log(`Minus Star (E2): opponent cedes ${hs.length} high Numeral(s) and loses ${dmg} MP.`, 'dmg');}
   else if(nm==='Motivate'){const _mPool=p.deadzone.filter(c=>c.type==='numeral'&&(c.rank||0)<=2);window.cChoose(who,_mPool,2,'Motivate (E2) — choose 2 low Numerals from Deadzone.',function(pk){const nums=(pk||[]).filter(Boolean);if(nums.length<2){log('Motivate (E2): fewer than 2 eligible Numerals selected.','info');return;}window.cChoose(who,nums,1,'Motivate (E2) — choose which of the two goes to Drop (the other goes to hand).',function(pk2){const toDrop=pk2&&pk2[0]||nums[0];const toHand=nums.find(c=>c!==toDrop)||nums[1];acMoveKnown(p,toDrop,'discard');acMoveKnown(p,toHand,'hand');const gain=Math.min(acRank(toDrop),acRank(toHand));p.mp+=gain;log(`Motivate (E2): dropped ${toDrop.name}, added ${toHand.name} to hand; gained ${gain} MP.`, 'heal');});});}
   else if(nm==='Boost'){window.cChoose(who,p.deadzone.filter(x=>x.name!=='The Lowlands'),1,'Boost (E2) — choose a Deadzone card to Drop for NP.',function(pk){var c=pk[0];if(c){var r=acRank(c);acMoveKnown(p,c,'discard');if(p.rankZone)p.rankZone.currentNP+=r;log('Boost (E2): dropped '+c.name+'; Rank Zone +'+r+' NP.','heal');}});}
   else if(nm==='Draw'){draw(who,1);log('Draw (E2): draw 1.','heal');}
-  else if(nm==='Wander'){const b=p.bank.shift();if(b){dzAdd(p,b);}let revealed=[],found=null;while(p.deck.length){const c=p.deck.shift();revealed.push(c);if(c.type==='area'){found=c;p.hand.push(c);break;}}revealed.filter(c=>c!==found).forEach(c=>p.deck.push(c));const classless=revealed.filter(c=>c.class==='classless').length;if(classless)p.mp-=classless;log(`Wander (E2): cede Bank card, revealed to ${found?found.name:'no Area'}, bottomed the rest, lost ${classless} MP for Classless Numerals revealed.`, 'info');}
+  else if(nm==='Wander'){const b=p.bank.shift();if(b){dzAdd(p,b);}let revealed=[],found=null;while(p.deck.length){const c=p.deck.shift();revealed.push(c);if(c.type==='area'){found=c;p.hand.push(c);break;}}revealed.filter(c=>c!==found).forEach(c=>p.deck.push(c));const classless=revealed.filter(c=>c.class==='classless').length;if(classless)ruLoseMP(p,classless);log(`Wander (E2): cede Bank card, revealed to ${found?found.name:'no Area'}, bottomed the rest, lost ${classless} MP for Classless Numerals revealed.`, 'info');}
   else if(nm==='Reanimate'){acDropTop(who,1,'discard');window.cChoose(who,p.deadzone.filter(x=>x.type==='numeral'&&(x.rank||0)<=2&&(x.numeral||0)<=6),1,'Reanimate (E2) — choose a Numeral from Deadzone to revive.',function(pk){var c=pk[0];if(!c)return;window.cChoose(who,p.deadzone.filter(x=>x!==c),1,'Reanimate (E2) — choose an additional Deadzone card to drop as cost.',function(pk2){var cost=pk2&&pk2[0];if(cost){acRem(p.deadzone,cost);p.cas=Math.max(-7,p.cas-1);if(cost.type==='numeral'&&(cost.rank||0)>=3){window.RUr3DeadToDiscard(p,cost);}else{ruDrop(p,cost);}}if(acFlankCard(p,c)){acRem(p.deadzone,c);p.cas=Math.max(-7,p.cas-1);log('Reanimate (E2): dropped '+(cost?cost.name:'no card')+' from Deadzone; '+c.name+' revived to Flank.','heal');}});});}
   else if(nm==='Recycle'){window.cChoose(who,p.deadzone.filter(x=>x.class==='classless'&&x.type==='numeral'),1,'Recycle (E2) — choose a Classless Numeral from Deadzone to recover.',function(pk){var c=pk[0];if(c)acMoveKnown(p,c,'hand');});log('Recycle (E2): recovered an eligible Classless Numeral if available.','heal');}
   else if(nm==='Nullify'){G._nullifyBaseline=G._nullifyBaseline||{};if(G._nullifyBaseline[who]==null)G._nullifyBaseline[who]=p.deadzone.length;logAs(who,'Nullify (E2): Casualty Draws given to {you} this turn will be dropped at end of turn.','heal');}
@@ -1484,7 +1496,7 @@ function applyE2L4(who,card){
     }
     if(nm==='Subtract'){
       const recent=ruLastMoraleTo(who)||(window.lastAttack()[who+'MoraleLost']||0);
-      const finish=()=>{window.moveToRAE4(ow,card,'deadzone');window.millN(who,1,'discard');o.mp-=recent;p.mp+=recent;log(`Subtract (E2): paid costs; ${sideVerbLabel(ow,'lose','loses')} ${recent} MP and ${sideVerbLabel(who,'gain','gains')} ${recent} MP.`, 'dmg');checkWin();renderAll();};
+      const finish=()=>{window.moveToRAE4(ow,card,'deadzone');window.millN(who,1,'discard');ruLoseMP(o,recent);p.mp+=recent;log(`Subtract (E2): paid costs; ${sideVerbLabel(ow,'lose','loses')} ${recent} MP and ${sideVerbLabel(who,'gain','gains')} ${recent} MP.`, 'dmg');checkWin();renderAll();};
       if(isHumanSeat(who))window.chooseHandCostRAE4(1,'Subtract (E2) — Drop 1 card from hand.',ok=>{if(!ok)return;window.chooseDeadCostRAE4(1,'Subtract (E2) — Drop 1 card from Deadzone.',ok2=>{if(ok2)finish();},who);},c=>c===card,who);else{if(p.hand.length)ruDrop(p,p.hand.shift());window.moveFromDeadRAE4(who,1,'discard');finish();}
       return;
     }
@@ -1952,7 +1964,7 @@ function applyE2L17(w,card){
             if(c.class==='classless'&&c.type==='numeral')classless++;
           }
           revealed.filter(function(c){return c!==found;}).forEach(function(c){p.deck.push(c);});
-          p.mp-=classless;
+          ruLoseMP(p,classless);
           window.safeLogSG7('Wander (E2): ceded '+bankCard.name+', revealed '+revealed.length+' card(s), '+(found?'added '+found.name:'found no Area')+', lost '+classless+' MP from Classless Numerals.','info');
           done();
         });
@@ -2274,7 +2286,7 @@ function applyE2L19(w,card){
           var nums=(o.hand||[]).filter(window.isNumRAE19).sort(function(a,b){return window.npRAE19(b)-window.npRAE19(a);}).slice(0,2);
           var loss=0;
           nums.forEach(function(c){loss+=window.rankValRAE19(c);window.moveToRAE19(o,c,'deadzone');});
-          o.mp-=loss;
+          ruLoseMP(o,loss);
           window.safeLogRD4('Minus Star (E2): opponent sent '+nums.length+' highest hand Numeral(s) to Deadzone and lost '+loss+' MP.','dmg');window.renderSafeRD4();window.checkSafeRAtk16();
           return;
         }
@@ -2294,7 +2306,7 @@ function applyE2L19(w,card){
           window.payHandRD4(w,'Subtract (E2) - choose 1 hand card to Drop.',1,function(){
             window.payDeadRAE19(w,card,'Subtract (E2) - choose 1 Deadzone card to Drop.',1,function(){
               window.dropTopRAE19(w,1,'discard');
-              o.mp-=recent;p.mp+=recent;
+              ruLoseMP(o,recent);p.mp+=recent;
               window.safeLogRD4(ruPOV(w,'Subtract (E2): {Opp} {opp:lose|loses} '+recent+' MP and {you} {gain|gains} '+recent+' MP.'),'dmg');window.renderSafeRD4();window.checkSafeRAtk16();
             });
           });
@@ -2543,7 +2555,7 @@ function applyE2L22(w,card){
         return;
       }
       if(nm==='Strike'){
-        window.addMRAE22(w,card);window.moveToRAE22(p,card,'discard');o.mp-=2;casDraw(window.otherRAE22(w));window.safeLogRAtk19('Strike (E2): opponent loses 2 MP and takes 1 Casualty Draw.','dmg');window.doneE2RAE22();return;
+        window.addMRAE22(w,card);window.moveToRAE22(p,card,'discard');ruLoseMP(o,2);casDraw(window.otherRAE22(w));window.safeLogRAtk19('Strike (E2): opponent loses 2 MP and takes 1 Casualty Draw.','dmg');window.doneE2RAE22();return;
       }
       if(nm==='Counterstrike'){
         window.addMRAE22(w,card);window.moveToRAE22(p,card,'discard');
@@ -2561,7 +2573,7 @@ function applyE2L22(w,card){
             window.topDeckRAE22(w,1,'discard');
             window.moveToRAE22(o,card,'deadzone');
             var loss=ruLastMoraleTo(w);
-            o.mp-=loss;p.mp+=loss;
+            ruLoseMP(o,loss);p.mp+=loss;
             window.safeLogRAtk19('Subtract (E2): opponent loses '+loss+' MP and '+((sideVerbLabel(w,'gain')+' '))+loss+' MP.','dmg');window.doneE2RAE22();
           };
           var _subPool=window.deadPoolRAE22(w,card);
@@ -2580,7 +2592,7 @@ function applyE2L22(w,card){
         return;
       }
       if(nm==='Burning Star'){
-        window.addMRAE22(w,card);window.moveToRAE22(p,card,'discard');window.ruEachOpp(w,function(s,op){op.mp-=(op.deadzone||[]).length;});window.safeLogRAtk19('Burning Star (E2): each opponent loses MP equal to their own Deadzone size.','dmg');window.doneE2RAE22();return;
+        window.addMRAE22(w,card);window.moveToRAE22(p,card,'discard');window.ruEachOpp(w,function(s,op){ruLoseMP(op,(op.deadzone||[]).length);});window.safeLogRAtk19('Burning Star (E2): each opponent loses MP equal to their own Deadzone size.','dmg');window.doneE2RAE22();return;
       }
       return applyE2L21.apply(this,arguments);
     }
@@ -2642,7 +2654,7 @@ function applyE2L23(w,card){
         return;
       }
       if(nm==='Strike'){
-        window.addMRAE23(w,card);window.moveToRAE23(p,card,'discard');o.mp-=2;casDraw(window.otherRAE23(w));window.safeLogSG8('Strike (E2): opponent loses 2 MP and takes 1 Casualty Draw.','dmg');window.doneE2RAE23();return;
+        window.addMRAE23(w,card);window.moveToRAE23(p,card,'discard');ruLoseMP(o,2);casDraw(window.otherRAE23(w));window.safeLogSG8('Strike (E2): opponent loses 2 MP and takes 1 Casualty Draw.','dmg');window.doneE2RAE23();return;
       }
       if(nm==='Counterstrike'){
         window.addMRAE23(w,card);window.moveToRAE23(p,card,'discard');
@@ -2840,7 +2852,7 @@ function applyE2L26(who,card){
         var _msOppPool = (o.deadzone || []).filter(function(c){return c && c.name !== 'The Lowlands';});
         var _msFinish = function(){
           var high = window.battlefieldNumeralsPA11('player').concat(window.battlefieldNumeralsPA11('ai')).reduce(function(m,e){ return Math.max(m,window.rpRAE26(e.card)); },0);
-          o.mp -= high;
+          ruLoseMP(o,high);
           window.finishPA11('MAX Star E2: both players dropped chosen Deadzone cards; opponent lost ' + high + ' MP equal to highest Battlefield RP.','dmg');
         };
         var _msDoOpp = function(){
@@ -3041,7 +3053,7 @@ function beginPhaseBase(ph){
     // Shining Star: drop 1 from Deadzone after the Battle Phase
     if(G._shiningStarDrop){const w=G._shiningStarDrop;G._shiningStarDrop=null;if(G[w]&&G[w].deadzone&&G[w].deadzone.length)takeFromDeadzone(w,1,'Shining Star: drop 1 from your Deadzone','discard');}
     // Resolve queued end-of-step effects
-  if(G._inferno4){const w=G._inferno4;G._inferno4=null;const iw=oppOf(w);G[iw].mp-=3;log('Inferno 4 end-step: '+sideVerbLabel(iw,'lose','loses')+' 3 MP.','dmg');checkWin();}
+  if(G._inferno4){const w=G._inferno4;G._inferno4=null;const iw=oppOf(w);ruLoseMP(G[iw],3,'numeral');log('Inferno 4 end-step: '+sideVerbLabel(iw,'lose','loses')+' 3 MP.','dmg');checkWin();}
   if(G._d0millQueued){const{who:mw,count:mc}=G._d0millQueued;G._d0millQueued=null;mill(mw,mc);log(`Deckstructive 0: ${sideVerbLabel(mw,'mill')} ${mc} card(s).`,'dmg');}
   if(G._blizzard6opp){const bw=G._blizzard6opp;G._blizzard6=false;G._blizzard6opp=null;const bp=G[bw];if(bp.deadzone.length){ruOwnedPicker(oppOf(bw),`Opponent Deadzone — Blizzard 6: Drop 1 card.`,bp.deadzone,1,1,false,(picks)=>{picks.forEach(c=>{const i=bp.deadzone.indexOf(c);if(i!==-1){bp.deadzone.splice(i,1);bp.cas=Math.max(-7,(bp.cas||0)-1);if(c&&c.type==='numeral'&&(c.rank||0)>=3&&typeof window.RUr3DeadToDiscard==='function')window.RUr3DeadToDiscard(bp,c);else ruDrop(bp,c);}});if(picks.length)log(`Blizzard 6 end-turn: Opponent drops ${picks[0].name} from Deadzone.`,'dmg');});}else{bp.cas=Math.max(-7,(bp.cas||0)-1);log(`Blizzard 6 end-turn: opponent's Deadzone is empty, so it counts anyway (Deadzone: ${bp.cas}).`,'dmg');}
   if(G._nullifyBaseline){(G.sideOrder||['player','ai']).forEach(sw=>{
@@ -3253,7 +3265,7 @@ function beginPhaseL14(ph){
       if(ph==='end'){
         if(G._halcyonStarDrawQueue){const n=G._halcyonStarDrawQueue;G._halcyonStarDrawQueue=0;(G.sideOrder||['player','ai']).forEach(function(w){if(G[w])for(let i=0;i<n;i++)window.drawNRBP13(w,1);});window.logSafeAI8('Halcyon Star: End Phase draw resolves for all players ('+n+').','heal');}
         if(G._seventhStarQueued){(G.sideOrder||['player','ai']).forEach(w=>{let n=G._seventhStarQueued[w]||0;if(!n)return;const p=window.psideRA9(w);let dropped=0;while(n>0&&p.hand.length){ruDrop(p,p.hand.shift());n--;dropped++;}const milled=window.dropTopRBP13(w,n,'discard').length;window.logSafeAI8('Seventh Star: '+window.pnameRBP13(w)+' dropped '+(dropped+milled)+' card(s) from hand/deck.','dmg');G._seventhStarQueued[w]=0;});}
-        if(G._counterstrikeQueuedMP){(G.sideOrder||['player','ai']).forEach(w=>{const n=G._counterstrikeQueuedMP[w]||0;if(n){window.psideRA9(w).mp-=n;window.logSafeAI8(ruPOV(w,'Counterstrike: {You} {lose|loses} '+n+' MP at End Phase.'),'dmg');G._counterstrikeQueuedMP[w]=0;}});}
+        if(G._counterstrikeQueuedMP){(G.sideOrder||['player','ai']).forEach(w=>{const n=G._counterstrikeQueuedMP[w]||0;if(n){ruLoseMP(window.psideRA9(w),n);window.logSafeAI8(ruPOV(w,'Counterstrike: {You} {lose|loses} '+n+' MP at End Phase.'),'dmg');G._counterstrikeQueuedMP[w]=0;}});}
         (G.sideOrder||['player','ai']).forEach(w=>{
           const p=window.psideRA9(w);if(!p||!p._hhLockTurns)return;
           if(turnBefore===w){
@@ -3425,7 +3437,7 @@ function beginPhaseL28(ph){
         if(G._neoBattleStarMPAtEnd){
           Object.keys(G._neoBattleStarMPAtEnd).forEach(function(w){
             const n=G._neoBattleStarMPAtEnd[w]||0;
-            if(n&&window.sideRAE13(w)){window.sideRAE13(w).mp-=n;window.safeLogRAE13(ruPOV(w,'Neo Battle Star: {You} {lose|loses} '+n+' MP at End Phase.'),'dmg');}
+            if(n&&window.sideRAE13(w)){ruLoseMP(window.sideRAE13(w),n);window.safeLogRAE13(ruPOV(w,'Neo Battle Star: {You} {lose|loses} '+n+' MP at End Phase.'),'dmg');}
           });
           G._neoBattleStarMPAtEnd={};
         }
@@ -3467,7 +3479,7 @@ function beginPhaseL28(ph){
         if(G._deckstroyEndMP){
           (G.sideOrder||['player','ai']).forEach(function(w){
             const n=G._deckstroyEndMP[w]||0;
-            if(n&&window.sideSG6(w)){window.sideSG6(w).mp-=n;window.safeLogSG6(ruPOV(w,'Deckstroy: {You} {lose|loses} '+n+' MP at End Phase.'),'dmg');}
+            if(n&&window.sideSG6(w)){ruLoseMP(window.sideSG6(w),n);window.safeLogSG6(ruPOV(w,'Deckstroy: {You} {lose|loses} '+n+' MP at End Phase.'),'dmg');}
           });
           G._deckstroyEndMP={};
         }
@@ -3507,7 +3519,7 @@ function beginPhaseL28(ph){
     try{
       if(ph==='end'&&G&&G._ru154EndMP&&G._ru154EndMP.length){
         var q=G._ru154EndMP.splice(0);
-        q.forEach(function(e){var p=window.sideRA12(e.who);if(p){p.mp-=e.amount;window.safeLogRD3((e.label||'Delayed effect')+': '+((sideVerbLabel(e.who,'lose')+' '))+e.amount+' MP at End Phase.','dmg');}});
+        q.forEach(function(e){var p=window.sideRA12(e.who);if(p){ruLoseMP(p,e.amount);window.safeLogRD3((e.label||'Delayed effect')+': '+((sideVerbLabel(e.who,'lose')+' '))+e.amount+' MP at End Phase.','dmg');}});
         window.checkSafeRAE18();window.renderSafeRD3();
       }
     }catch(e){}
@@ -3539,7 +3551,7 @@ function beginPhaseL35(ph){
           window.removeNeg3IfExpiredRBP29(ending);
           if(G._ru155EndMP&&G._ru155EndMP.length){
             var q29=G._ru155EndMP.splice(0);
-            q29.forEach(function(e){var p=window.sideRAtk16(e.who);if(p){p.mp-=e.amount;window.safeLogRD4((e.label||'Delayed effect')+': '+((sideVerbLabel(e.who,'lose')+' '))+e.amount+' MP at End Phase.','dmg');}});
+            q29.forEach(function(e){var p=window.sideRAtk16(e.who);if(p){ruLoseMP(p,e.amount);window.safeLogRD4((e.label||'Delayed effect')+': '+((sideVerbLabel(e.who,'lose')+' '))+e.amount+' MP at End Phase.','dmg');}});
           }
           window.checkSafeRAtk16();window.renderSafeRD4();
         }
@@ -3549,7 +3561,7 @@ function beginPhaseL35(ph){
         if(ph==='end'&&G){
           if(G._ru156LightEndMP&&G._ru156LightEndMP.length){
             var q30=G._ru156LightEndMP.splice(0);
-            q30.forEach(function(e){var p=window.sideL7(e.who);if(p){p.mp-=e.amount;window.safeLogL7((e.label||'Light delayed effect')+': '+((sideVerbLabel(e.who,'lose')+' '))+e.amount+' MP at End Phase.','dmg');}});
+            q30.forEach(function(e){var p=window.sideL7(e.who);if(p){ruLoseMP(p,e.amount);window.safeLogL7((e.label||'Light delayed effect')+': '+((sideVerbLabel(e.who,'lose')+' '))+e.amount+' MP at End Phase.','dmg');}});
           }
           window.allFieldEntriesRBP30().forEach(function(e){
             var c=e.card;
@@ -3602,7 +3614,7 @@ function beginPhaseL35(ph){
       try{
         if(ph==='end'&&G){
           if(G._ru158EndMP){
-            (G.sideOrder||['player','ai']).forEach(function(w){var n=G._ru158EndMP[w]||0;if(n){window.sideRAtk19(w).mp-=n;window.safeLogRAtk19('Inferno 4: '+((sideVerbLabel(w,'lose')+' '))+n+' MP at End Phase.','dmg');G._ru158EndMP[w]=0;}});
+            (G.sideOrder||['player','ai']).forEach(function(w){var n=G._ru158EndMP[w]||0;if(n){ruLoseMP(window.sideRAtk19(w),n,'numeral');window.safeLogRAtk19('Inferno 4: '+((sideVerbLabel(w,'lose')+' '))+n+' MP at End Phase.','dmg');G._ru158EndMP[w]=0;}});
           }
           if(G._ru158Inferno4Pending&&ending)G._ru158Inferno4Pending[ending]=0;
           window.allBattlefieldCardsRBP32().forEach(function(c){if(c&&c._ru158Inferno8Hits&&ending){delete c._ru158Inferno8Hits;delete c._ru158Inferno8Bank;}});
@@ -3612,7 +3624,7 @@ function beginPhaseL35(ph){
       // (was L33 after) ru159 Neo Battle Star MP + Phantom cleanup
       try{
         if(ph==='end'&&G){
-          if(G._ru159EndMP){(G.sideOrder||['player','ai']).forEach(function(w){var n=G._ru159EndMP[w]||0;if(n){window.sideSG8(w).mp-=n;window.safeLogSG8('Neo Battle Star: '+((sideVerbLabel(w,'lose')+' '))+n+' MP at End Phase.','dmg');G._ru159EndMP[w]=0;}});}
+          if(G._ru159EndMP){(G.sideOrder||['player','ai']).forEach(function(w){var n=G._ru159EndMP[w]||0;if(n){ruLoseMP(window.sideSG8(w),n);window.safeLogSG8('Neo Battle Star: '+((sideVerbLabel(w,'lose')+' '))+n+' MP at End Phase.','dmg');G._ru159EndMP[w]=0;}});}
           window.fieldEntriesRBP33('player').concat(window.fieldEntriesRBP33('ai')).forEach(function(e){if(e.card){delete e.card._ru159Phantom4PaidThisTurn;delete e.card._ru159Phantom8Hits;delete e.card._ru159Phantom8Bank;delete e.card._ru159Phantom8Rank;}});
           window.checkSafeSG8();window.renderSafeSG8();
         }
@@ -3708,6 +3720,7 @@ function endTurn(){
 function endTurnCore(){
   if(G&&G.gameOver)return;
   if(G&&G.phase!=='end'){return;}   /* spin-out fix: only one hand-off per end phase; a duplicate (turn-spine recovery + normal flow) would skip a turn */
+  if(window.RUFullmetal)RUFullmetal.endTurn();
   (G.sideOrder||['player','ai']).forEach(function(w){
     if(G[w]){G[w].attacksUsed={};G[w]._fastTrackRankUpUsed=false;G[w]._rankedToHasteThisTurn=false;}
   });
@@ -4094,7 +4107,7 @@ function applySkillFx(who,zone,card){
   if(nm.includes(' 2')&&['light','inferno','shadow','negative','maximum'].some(cls=>nm.startsWith(cls.charAt(0).toUpperCase()+cls.slice(1)))&&card.skillText.includes('another attack')){
     if(p.rankZone){p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}log(`${nm} skill: Rank Zone gets another attack.`,'info');
   }
-  if(nm==='Inferno 3'){opp.mp-=3;log('Inferno 3 skill: Opponent -3 MP.','dmg');}
+  if(nm==='Inferno 3'){ruLoseMP(opp,3,'numeral');log('Inferno 3 skill: Opponent -3 MP.','dmg');}
   if(nm==='Inferno 4'){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;log('Inferno 4 skill: Rank Zone gets another attack. Opponent loses 3 MP at end of Damage Step.','info');}
   if(nm==='Blizzard 2'){if(opp.rankZone){opp.rankZone.currentNP=Math.max(0,opp.rankZone.currentNP-1);opp.rankZone.frozen=true;}log('Blizzard 2: Opponent\'s Rank Zone -1 NP, frozen.','dmg');}
   if(nm==='Negative 2'){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=Math.max(0,opp.rankZone.currentNP-2);log('Negative 2: Rank Zone gets another attack; opponent\'s Rank Zone -2 NP.','info');}
@@ -4516,12 +4529,12 @@ function zoneClickL1(owner,zone){
         if(G._wildfireNegateFreeze===me){G._wildfireNegateFreeze=null;card.frozen=false;log(`Wildfire: negated the freeze on ${card.name}.`,'heal');}
         else{ruNotice(me,`${card.name} is frozen this turn.`);return;}
       }
-      G.selAttacker={zone,card};G.mode='addon';G._addons=[];if(zone==='delta')G._deltaActionCap=card.A||0;clearHL();hlAddon(zone);hlTgt();setHint(`${card.type==='evolution'?'Amalgamation':card.name} selected. Click blue zone(s) for Addon(s), or click a red target.`);renderAll();return;
+      G.selAttacker={zone,card};G.mode='addon';G._addons=[];if(zone==='delta')G._deltaActionCap=card.A||0;clearHL();hlAddon(zone);hlTgt();setHint(`${card.name} selected. Click blue zone(s) for Addon(s), or click a red target.`);renderAll();return;
     }
     if(G.mode==='addon'){
       // An Addon is legal by RULE (canAddonTo etc.), checked from state — never from this screen's glow, so the
       // same click resolves identically on every client.
-      if(ruIsLegalAddon(me,zone)){G._addons=G._addons||[];G._addons.push({zone,card});clearHL();hlAddon(G.selAttacker.zone);hlTgt();const tot=G._addons.reduce((s,a)=>s+window.npOf(a.card),0);setHint(`Addons: ${G._addons.map(a=>a.card.type==='evolution'?'Amalgamation':a.card.name).join(', ')} (+${tot} NP). Add another blue zone or click red target.`);renderAll();return;}
+      if(ruIsLegalAddon(me,zone)){G._addons=G._addons||[];G._addons.push({zone,card});clearHL();hlAddon(G.selAttacker.zone);hlTgt();const tot=G._addons.reduce((s,a)=>s+window.npOf(a.card),0);setHint(`Addons: ${G._addons.map(a=>a.card.name).join(', ')} (+${tot} NP). Add another blue zone or click red target.`);renderAll();return;}
       if(card&&mine)showCardModal(card);return;
     }
     if(G.mode==='standdown'){
@@ -4571,7 +4584,7 @@ function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
     addonNP=addonNP||0;const AP=G[aWho],DP=G[dWho],att=zCard(AP,aZone),def=zCard(DP,dZone);if(!att||!def)return;const ds=G._defState||{};let aNP=npOf(att)+addonNP;if(ds.reduceAttackerNP&&dZone!=='rank'){aNP=Math.max(0,aNP-effRank(att));log(`Reduce: attacking ${att.name} loses ${effRank(att)} NP (now ${aNP}).`,'heal');}const dNP=npOf(def),aRP=effRank(att),dRP=effRank(def),an=sideSubjectLabel(aWho),dn=sideSubjectLabel(dWho);
     if(ds.negate){G._defState={};log(`${ds.negateLabel||'Safeguard'}: ${sidePossessiveLabel(aWho)} attack with ${att.name} is negated!`,'heal');checkWin();return;}
     const negated=checkSkillFlags_preCombat(aWho,aZone,dWho,dZone,aNP,dNP,att,def);if(negated){checkWin();return;}
-    log(`⚔ ${an}: ${att.type==='evolution'?'Amalgamation':att.name}${addonNP?` +${addonNP} Addon`:''} (NP:${aNP}) vs ${sidePossLower(dWho)} ${def.type==='evolution'?'Amalgamation':def.name} (NP:${dNP})`,'imp');
+    log(`⚔ ${an}: ${att.name}${addonNP?` +${addonNP} Addon`:''} (NP:${aNP}) vs ${sidePossLower(dWho)} ${def.name} (NP:${dNP})`,'imp');
     // Canonical defeat resolution — the single source of truth for where a defeated card goes and
     // how many Rank-Difference Casualty Draws its owner takes. Used by both destroyDef and destroyAtt
     // so every defeat (rank/flank/rear/delta, attacker or defender) follows one rule:
@@ -4587,14 +4600,14 @@ function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
       if(loserZone==='delta'){window.defeatDeltaRA3(loserWho);}
       else if(loserZone==='rank'){/* rank card survives; the Deck-pull draws below are the casualty */}
       else{zSet(LP,loserZone,null);dzAdd(LP,loserCard);log(`${sidePossessiveLabel(loserWho)} ${loserCard.name} sent to Deadzone.`,'dmg');}
-      for(let i=0;i<Math.max(0,extraDraws|0);i++)casDraw(loserWho);
+      for(let i=0;i<Math.max(0,extraDraws|0);i++)casDraw(loserWho,{source:'battle',additional:loserZone!=='rank'||i>0});
     }
     function destroyDef(){
       const rd=Math.max(0,aRP-dRP);
       if(dZone!=='rank'&&window.ruSurvivesBattle&&window.ruSurvivesBattle(dWho,dZone,def,'defender',(G._battleResult||{}).winner))return;
       // Protect (protectCas) + Zero 2 / Restorative 3 (checkSkillFlags) reduce the DEFENDER's casualty
       // draws, exactly as they already did for the Rank Zone — now applied to Flank/Delta draws too.
-      const casFlags=function(n){if(ds.protectCas){n=Math.max(0,n-ds.protectCas);log(`Protect: ${ds.protectCas} fewer Casualty Draw(s).`,'heal');}return checkSkillFlags_casualtyCalc(aWho,dWho,att,def,n);};
+      const casFlags=function(n){const before=n;if(ds.protectCas){n=Math.max(0,n-ds.protectCas);log(`Protect: ${ds.protectCas} fewer Casualty Draw(s).`,'heal');}n=checkSkillFlags_casualtyCalc(aWho,dWho,att,def,n);if(window.RUFullmetal)RUFullmetal.state(dWho).negatedAdditional+=Math.min(rd,Math.max(0,before-n));return n;};
       if(dZone==='rank'){if(rd>0)log(`+${rd} extra Casualty Draw(s) from Rank advantage.`,'info');applyDefeatCasualty(dWho,'rank',def,casFlags(1+rd));return;}
       if(dZone==='delta'){if(rd>0)log(`+${rd} extra Casualty Draw(s) from Rank advantage.`,'info');applyDefeatCasualty(dWho,'delta',def,rd>0?casFlags(rd):0);return;}
       // flank / rear — destruction can be prevented outright before any casualty
@@ -4614,7 +4627,7 @@ function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
       if(aZone==='delta'){applyDefeatCasualty(aWho,'delta',att,rd);return;}
       applyDefeatCasualty(aWho,aZone,att,rd);
     }
-    G._battleResult={aWho:aWho,dWho:dWho,attId:att.id,defId:def.id,winner:aNP>dNP?'attacker':(dNP>aNP?'defender':'tie'),aNP:aNP,dNP:dNP,aRP:aRP,dRP:dRP};
+    G._battleResult={aWho:aWho,dWho:dWho,attId:att.id,defId:def.id,winner:aNP>dNP?'attacker':(dNP>aNP?'defender':'tie'),aNP:aNP,dNP:dNP,aRP:aRP,dRP:dRP,addonNP:addonNP,attPrintedNP:att.numeral||0,defPrintedNP:def.numeral||0};
     if(aNP>dNP){let diff=aNP-dNP;diff=checkSkillFlags_moraleCalc(aWho,dWho,att,def,diff);if(ds.halveMorale){diff=Math.ceil(diff/2);log('Divide: Morale Damage halved.','heal');}if(ds.noMorale){diff=0;log('No Morale Damage from this attack.','heal');}if(window.ruShieldDamage)diff=window.ruShieldDamage(dWho,diff);ruSetLastMoraleTo(dWho,diff);DP.mp-=diff;log(`${sideVerbLabel(dWho,'lose')} ${diff} MP. (${sidePossessiveLabel(dWho)} MP: ${DP.mp})`,'dmg');destroyDef();}
     else if(dNP>aNP){let diff=dNP-aNP;if(window.ruShieldDamage)diff=window.ruShieldDamage(aWho,diff);AP.mp-=diff;log(`${sideVerbLabel(aWho,'lose')} ${diff} MP. (${sidePossessiveLabel(aWho)} MP: ${AP.mp})`,'dmg');destroyAtt();}
     else{const aD=window.ruShieldDamage?window.ruShieldDamage(aWho,aNP):aNP,dD=window.ruShieldDamage?window.ruShieldDamage(dWho,aNP):aNP;AP.mp-=aD;DP.mp-=dD;log(`Tie! Both take ${aNP} Morale Damage.`,'dmg');if(aZone!=='rank')destroyAtt();if(dZone!=='rank')destroyDef();}
@@ -4660,9 +4673,10 @@ function resolveAtkL5(aWho,aZone,dWho,dZone,addonNP){
     const defenderWouldBeDefeated=defender&&dWho!==aWho&&dZone!=='rank'&&aNP>=dNP;
     const DP5=G[dWho];
     const replaced=function(replaceFn){
-      G._battleResult={aWho:aWho,dWho:dWho,attId:attacker&&attacker.id,defId:defender.id,winner:aNP>dNP?'attacker':'tie'};
+      G._battleResult={aWho:aWho,dWho:dWho,attId:attacker&&attacker.id,defId:defender.id,winner:aNP>dNP?'attacker':'tie',addonNP:addonNP||0,attPrintedNP:attacker&&attacker.numeral||0,defPrintedNP:defender.numeral||0};
       const beforeMP=DP5.mp,beforeCas=DP5.cas,beforeDead=DP5.deadzone.length;
       let diff=Math.max(0,aNP-dNP); if(ds.halveMorale)diff=Math.ceil(diff/2); if(ds.noMorale)diff=0;
+      if(window.ruShieldDamage)diff=window.ruShieldDamage(dWho,diff);
       if(diff){DP5.mp-=diff;ruSetLastMoraleTo(dWho,diff);log(`${sideVerbLabel(dWho,'lose','loses')} ${diff} MP. (${sidePossessiveLabel(dWho)} MP: ${DP5.mp})`,'dmg');}
       replaceFn(dWho,defender);
       const last={aWho,aZone,dWho,dZone,attacker,defender};
@@ -4938,7 +4952,7 @@ function resolveAtkL19(aWho,aZone,dWho,dZone,addonNP){
         if(wasInferno8&&beforeANP>beforeDNP){
           att._ru158Inferno8Hits=(att._ru158Inferno8Hits||0)+1;
           var loss=Math.max(0,targetRank);
-          if(loss){window.sideRAtk19(dWho).mp-=loss;window.safeLogRAtk19('Inferno 8: successful attack '+att._ru158Inferno8Hits+' - opponent loses '+loss+' MP equal to target Rank.','dmg');}
+          if(loss){ruLoseMP(window.sideRAtk19(dWho),loss,'numeral');window.safeLogRAtk19('Inferno 8: successful attack '+att._ru158Inferno8Hits+' - opponent loses '+loss+' MP equal to target Rank.','dmg');}
           else window.safeLogRAtk19('Inferno 8: successful attack '+att._ru158Inferno8Hits+' - target Rank was 0, so no extra MP loss.','info');
           if(att._ru158Inferno8Hits===2){
             var gain=window.npRAtk19(att._ru158Inferno8Bank);
@@ -6495,7 +6509,7 @@ function buildCard(card){
   }
   if(card.type==='evolution'){
     const evoNp=card.currentNP!==undefined?card.currentNP:(card.numeral||0);
-    d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">Δ&#xE002;${window.ruRDisp(card)}</span><div class="cnp">${evoNp}</div><div class="csb">A:${ruADisp(card.A)}<br>M:${window.ruMDisp(card)}<br>S:${window.ruSDisp(card)}</div></div><div class="cname">${window.amalgShortName(card)}</div>`;
+    d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">Δ&#xE002;${window.ruRDisp(card)}</span><div class="cnp">${evoNp}</div><div class="csb">A:${ruADisp(card.A)}<br>M:${window.ruMDisp(card)}<br>S:${window.ruSDisp(card)}${card.W!=null?'<br>W:'+ruADisp(ruW(card)):''}</div></div><div class="cname">${window.amalgShortName(card)}</div>`;
     return d;
   }
   const rp=window.ruRDisp(card);
@@ -6839,7 +6853,9 @@ function showCardModal(card,handIdx,extraBtns){
         body+=`<div class="cdt">${card.effectText||''}</div>`;
       } else if(card.type==='evolution'){
         const S=card.S===99?'+?':(card.S==null?'㎁':(card.S>=0?`+${card.S}`:card.S));
-        body+=`<div class="cds">Amalgamation Evolution | ${card.alignment||''} | NP: ${card.currentNP} | Rank: ${card.currentRP} | A: ${ruADisp(card.A)} | M: ${card.M>=0?'+':''}${card.M} | S: ${S}</div>`;
+        body+=`<div class="cds">${(EVOLUTION_TYPES[card.evoType]||EVOLUTION_TYPES.amalgamation).name} Evolution | ${card.alignment||''} | NP: ${card.currentNP} | Rank: ${card.currentRP} | A: ${ruADisp(card.A)} | M: ${card.M>=0?'+':''}${card.M} | S: ${S}${card.W!=null?' | W: '+ruADisp(ruW(card)):''}</div>`;
+        if(card.protection)body+=`<div class="cdt"><strong>Protection:</strong> ${card.protection}</div>`;
+        if(card.skillText2)body+=`<div class="cdt"><strong>Skill 2 (M: +0):</strong> ${card.skillCost2} ${card.skillText2}</div>`;
         if(card.requirements)body+=`<div class="cdt"><strong>Requirement:</strong> ${card.requirements}</div>`;
         if(card.skillCost)body+=`<div class="cdt"><strong>Cost:</strong> ${card.skillCost}</div>`;
         body+=`<div class="cdt"><strong>Skill:</strong> ${card.skillText||'No skill.'}</div>`;
@@ -6852,8 +6868,8 @@ function showCardModal(card,handIdx,extraBtns){
         const maxA=ruEffectiveA(mp);
         if(mp.actUsed<maxA)btns.unshift({label:`Use ${card.name}`,cls:'mb-skill',fn:()=>{closeModal();const hi=mp.hand.indexOf(card);if(hi!==-1)playAction(hi,card);}});
       }
-      if(card.type==='evolution'&&mp&&G.turn===me&&mp.delta&&mp.delta[0]===card&&['main','standby','battle'].includes(G.phase)&&!card.usedSkill){
-        btns.unshift({label:'Use Amalgamation Skill',cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill(ruActor(),card);}});
+      if(card.type==='evolution'&&mp&&(G.turn===me||card.evoType==='fullmetal')&&mp.delta&&mp.delta[0]===card&&((card.evoType==='fullmetal')||(['main','standby','battle'].includes(G.phase)&&!card.usedSkill))){
+        btns.unshift({label:'Use Evolution Skill',cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill(ruActor(),card);}});
       }
       btns.push({label:'Close',fn:()=>closeModal()});
       openModal(card.name,body,btns);
@@ -7416,7 +7432,7 @@ function execStepBase(step){
       const total=srcs.reduce((s,src)=>s+(ctx[src]||[]).reduce((t,c)=>t+(c.currentNP||c.numeral||0),0),0);
       if(total<step.min){log(`NP total (${total}) < required minimum (${step.min}). Skill cancelled.`,'dmg');SF=null;renderAll();return;}
       runStep();break;}
-    case 'effect':{step.fn(who,p,opp,fieldZone,card,ctx,G);renderAll();runStep();break;}
+    case 'effect':{if(window.RUFullmetal)window.RUFullmetal.effect(who,card,()=>step.fn(who,p,opp,fieldZone,card,ctx,G));else step.fn(who,p,opp,fieldZone,card,ctx,G);renderAll();runStep();break;}
     // A step written as code that finishes later (a choice, a target, a cost no other step type pays): fn(w,card,next,ctx)
     // calls next(ok,value) once — not ok ends the skill there; `key` keeps the value in ctx for the steps after it. Flag it
     // cost:true when it pays a cost (a free use skips it), activation:true when it is part of activating the skill (a
@@ -7622,7 +7638,7 @@ const SDEFS={
 ]},
 'Inferno 3':{source:'any',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){opp.mp-=3;log('Inferno 3: Opponent loses 3 MP.','dmg');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){ruLoseMP(opp,3,'numeral');log('Inferno 3: Opponent loses 3 MP.','dmg');}}
 ]},
 'Inferno 4':{source:'any',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},
@@ -7643,7 +7659,7 @@ const SDEFS={
     low2.forEach(c=>{const h=p.hand.indexOf(c);if(h!==-1)p.hand.splice(h,1);const b=p.bank.indexOf(c);if(b!==-1)p.bank.splice(b,1);ruDrop(p,c);});
     const h=p.hand.indexOf(high1);if(h!==-1)p.hand.splice(h,1);const b=p.bank.indexOf(high1);if(b!==-1)p.bank.splice(b,1);dzAdd(p,high1);
     const lowR=(low2[0]?low2[0].rank:0)||0;const hiRP=all.slice(1).reduce((s,c)=>s+(c.currentRP||c.rank||0),0);const dmg=lowR*hiRP;
-    opp.mp-=dmg;[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>c.attacksLeft=0);
+    ruLoseMP(opp,dmg,'numeral');[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>c.attacksLeft=0);
     log(`Inferno 9: ${low2.map(c=>c.name).join('+')} dropped; ${high1.name} to Deadzone. Opponent -${dmg} MP. Cannot attack.`,'dmg');
   }}
 ]},
@@ -7842,7 +7858,7 @@ const SDEFS={
             rest.forEach(c=>ruDrop(p,c));
             if(hits.length){hits.forEach(c=>{c._ru11FreeUse=true;p.hand.push(c);});p.mp+=highest;
               log(`Maximum 11: HIT — added ${hits.map(c=>c.name).join(', ')} to hand (usable free this turn). +${highest} MP.`,'heal');}
-            else{if(p.bank.length){const b=p.bank.shift();ruDrop(p,b);log(`Maximum 11: MISS — dropped ${b.name} from Bank.`,'dmg');}p.mp-=highest;log(`Maximum 11: MISS — lose ${highest} MP.`,'dmg');}
+            else{if(p.bank.length){const b=p.bank.shift();ruDrop(p,b);log(`Maximum 11: MISS — dropped ${b.name} from Bank.`,'dmg');}ruLoseMP(p,highest,'numeral');log(`Maximum 11: MISS — lose ${highest} MP.`,'dmg');}
             checkWin();SF=null;renderAll();
           }})).concat([{label:'Cancel',fn:()=>{closeModal();SF=null;renderAll();}}]));
       });
@@ -8513,7 +8529,7 @@ function reactiveDefenses(aWho,att,addonNP,tgt,dw){
       const z=zoneOf(tc);
       if(z&&!window.ruUnremovable(tc,dw,z)){
         const back=window.removeBattlefieldTargetL7(dw,z);
-        if(back){ const loss=window.printedRankL7(back); p.hand.push(F.fresh(back)); p.mp-=loss; log('Light 3: the attack is negated; '+back.name+' returns to '+sidePossLower(dw)+' hand; '+sideVerbLabel(dw,'lose','loses')+' '+loss+' MP.','heal'); }
+        if(back){ const loss=window.printedRankL7(back); p.hand.push(F.fresh(back)); ruLoseMP(p,loss,'numeral'); log('Light 3: the attack is negated; '+back.name+' returns to '+sidePossLower(dw)+' hand; '+sideVerbLabel(dw,'lose','loses')+' '+loss+' MP.','heal'); }
       }else log('Light 3: the attack is negated.','heal');
       done();
     }});
@@ -9073,7 +9089,7 @@ const ADEFS = {
           });
           opp.rankZone=ruEmptyRank('wf-ult-'+uid());opp.leftFlank=null;opp.rightFlank=null;
           // All other players lose 10 MP
-          opp.mp-=10;
+          ruLoseMP(opp,10,'numeral');
           log('Wildfire ULTIMATE: Opponent\'s field cleared! Opponent loses 10 MP.','imp');
           checkWin();renderAll();
         }
@@ -9216,7 +9232,7 @@ function runDeadzoneAreaEffect(who,cardId,effectIdx){
   closeModal();
   log(`${card.name}: activating ${e.label}. Cost: ${e.cost}`,'info');
   try{window.ruAreaFX&&window.ruAreaFX(who,G[who]&&G[who].class);}catch(_){}
-  e.fn(who,p,G[who==='player'?'ai':'player']);
+  if(window.RUFullmetal)RUFullmetal.areaEffect(who,card,()=>e.fn(who,p,G[oppOf(who)]));else e.fn(who,p,G[oppOf(who)]);
 }
 window.runDeadzoneAreaEffect=runDeadzoneAreaEffect;
 function activateAreaEffect(who,card,handIdx){
@@ -9253,7 +9269,7 @@ function activateAreaEffect(who,card,handIdx){
         if(handIdx!==undefined){const hi=p.hand.indexOf(card);if(hi!==-1)p.hand.splice(hi,1);}
         dzAdd(p,card);
         if(mg)log(`${card.name} activated: ${mg>0?'+':''}${mg} MP.`,mg>0?'heal':'dmg');
-        eff.fn(who,p,G[who==='player'?'ai':'player']);
+        if(window.RUFullmetal)RUFullmetal.areaEffect(who,card,()=>eff.fn(who,p,G[oppOf(who)]));else eff.fn(who,p,G[oppOf(who)]);
       }});
     });
   }
@@ -9347,8 +9363,8 @@ ADEFS['Seven Heaven']={
       check(who){return G[who]._sevenHeavenTurn!==G.exchange;},
       fn(who,p,opp){
         const has7=s=>[s.rankZone,s.leftFlank,s.rightFlank,s.rearFlank].some(c=>c&&c.type==='numeral'&&c.numeral===7);
-        if(!has7(p)){p.mp-=2;logAs(who,'Seven Heaven: {you} {control|controls} no Numeral 7 and {lose|loses} 2 MP.','dmg');}
-        if(!has7(opp)){opp.mp-=2;log('Seven Heaven: opponent controls no Numeral 7 and loses 2 MP.','dmg');}
+        if(!has7(p)){ruLoseMP(p,2);logAs(who,'Seven Heaven: {you} {control|controls} no Numeral 7 and {lose|loses} 2 MP.','dmg');}
+        if(!has7(opp)){ruLoseMP(opp,2);log('Seven Heaven: opponent controls no Numeral 7 and loses 2 MP.','dmg');}
         p._sevenHeavenTurn=G.exchange;checkWin();renderAll();
       }
     },
@@ -9584,7 +9600,7 @@ ADEFS['Seven Heaven']={
     ]},
     'Phantom 9':{source:'field',phases:['main'],steps:[
       {type:'pick_hand',count:1,min:1,to:'deadzone',filter:c=>c.class==='phantom'&&c.type==='numeral',label:'Send 1 Phantom Numeral from hand to Deadzone (its Numeral sets damage).'},
-      {type:'effect',fn(w,p,o,fz,card,ctx){const n=numVal(ctx.handPicks[0]);mill(w,n);for(let i=0;i<n;i++)casDraw(oppOf(w));o.mp-=n;draw(w,1);logAs(w,`Phantom 9: {Opp} {opp:take|takes} ${n} Casualty Draw(s) and {opp:lose|loses} ${n} MP; {you} {draw|draws} 1.`,'dmg');}}
+      {type:'effect',fn(w,p,o,fz,card,ctx){const n=numVal(ctx.handPicks[0]);mill(w,n);for(let i=0;i<n;i++)casDraw(oppOf(w));ruLoseMP(o,n,'numeral');draw(w,1);logAs(w,`Phantom 9: {Opp} {opp:take|takes} ${n} Casualty Draw(s) and {opp:lose|loses} ${n} MP; {you} {draw|draws} 1.`,'dmg');}}
     ]}
   });
 
@@ -9801,11 +9817,12 @@ ADEFS['Seven Heaven']={
   window.RU_AMALGAMATIONS=AMALGAMATION_LIBRARY;
   window.RU_PLAYER_DELTA_DECK=PLAYER_DELTA_DECK;
 
-  function clone(o){return JSON.parse(JSON.stringify(o));}
-  function libById(id){return AMALGAMATION_LIBRARY.find(c=>c.id===id);}
+  function clone(o){return o?JSON.parse(JSON.stringify(o)):null;}
+  function libById(id){return AMALGAMATION_LIBRARY.concat(FULLMETAL_LIBRARY).find(c=>c.id===id);}
   function poolName(pool){return pool==='skillcopy'?'Skill Copy':pool.charAt(0).toUpperCase()+pool.slice(1);}
   function makeAmalgamation(id){
     const b=clone(libById(id)); if(!b)return null;
+    if(b.evoType==='fullmetal')return Object.assign(b,{id:uid(),baseId:b.id,currentNP:b.numeral,currentRP:b.rank,attacksLeft:1,canAttack:true,usedSkill:false,frozen:false,elements:[]});
     const c={id:uid(),baseId:b.id,type:'evolution',evoType:'amalgamation',class:'amalgamation',name:b.displayName,
       displayName:b.displayName,pool:b.pool,alignment:b.alignment,numeral:b.numeral,rank:b.rank,A:b.A,M:b.M,S:b.S,
       skillType:b.skillType,skillCost:b.skillCost,skillText:b.skillText,requirements:b.requirements,
@@ -9819,7 +9836,8 @@ ADEFS['Seven Heaven']={
   function deltaDeckCounts(){const c={};PLAYER_DELTA_DECK.forEach(id=>c[id]=(c[id]||0)+1);return c;}
   function legalDeltaDeck(arr){
     if(!arr||arr.length===0)return {ok:true,msg:'No Δ Deck selected. Evolutions are allowed, but you will not have Evolutions until you add cards.'};
-    if(arr.length>3)return {ok:false,msg:`Current Δ Deck has ${arr.length}/3 cards. Current Amalgamation-only format is capped at 3 cards.`};
+    if(arr.length>3)return {ok:false,msg:`Current Δ Deck has ${arr.length}/3 cards. The Evolution deck is capped at 3 cards.`};
+    if(arr.some(id=>!libById(id)))return {ok:false,msg:'The Delta Deck contains an unknown Evolution.'};
     return {ok:true,msg:`Legal Δ Deck: ${arr.length}/3 card(s) selected.`};
   }
   window.legalDeltaDeck=legalDeltaDeck;
@@ -9859,7 +9877,7 @@ ADEFS['Seven Heaven']={
   // dead duplicates.
   function renderDeltaDeckRoot(){
     let body=deltaDeckPathHTML(['Δ Deck']);
-    body+=`<p style="font-size:.78rem;color:var(--text-dim);">Choose an Evolution family. Only <strong>Amalgamations</strong> are installed right now, so the current Δ Deck cap is 3 cards. You may use 1, 2, or 3 Amalgamations.</p>`;
+    body+=`<p style="font-size:.78rem;color:var(--text-dim);">Choose up to 3 Evolutions from either family.</p>`;
     body+=deltaDeckSummaryHTML();
     // Area Support selection status (a separate slot from the 1–3 Amalgamations).
     try{ var _asSel=window.RU_PLAYER_AREA_SUPPORT?((window.RU_areaSupportById&&window.RU_areaSupportById(window.RU_PLAYER_AREA_SUPPORT)||{}).name||window.RU_PLAYER_AREA_SUPPORT):null;
@@ -9867,7 +9885,7 @@ ADEFS['Seven Heaven']={
     }catch(e){}
     body+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.45rem;margin-top:.55rem;">`;
     body+=deltaSectionButton('Amalgamations','deltaBuilderFamily()',false);
-    body+=deltaSectionButton('Coming Soon','',true);
+    body+=deltaSectionButton('Fullmetal','RUFullmetal.openBuilder()',false);
     body+=deltaSectionButton('Coming Soon','',true);
     body+=deltaSectionButton('Coming Soon','',true);
     body+=deltaSectionButton('Area Support',(typeof window.openAreaSupportPool==='function')?'openAreaSupportPool()':'',(typeof window.openAreaSupportPool!=='function'));
@@ -9885,6 +9903,7 @@ ADEFS['Seven Heaven']={
     deltaOpenModal('Δ Deck — Amalgamations',body,[{label:'Back to Δ Deck',fn:()=>renderDeltaDeckRoot()},{label:'Close',fn:()=>closeModal()},{label:'Clear Δ Deck',cls:'mb-danger',fn:()=>{PLAYER_DELTA_DECK=[];window.RU_PLAYER_DELTA_DECK=PLAYER_DELTA_DECK;renderDeltaDeckFamily();}}]);
   }
   function renderDeltaDeckPool(pool){
+    if(pool==='fullmetal'){window.RUFullmetal.openBuilder();return;}
     const groups=['benevolent','malevolent','unknown','skillcopy'];
     if(!groups.includes(pool))pool='benevolent';
     let body=deltaDeckPathHTML(['Δ Deck','Amalgamations',poolName(pool)]);
@@ -10027,6 +10046,7 @@ ADEFS['Seven Heaven']={
     return out;
   }
   window.findAmalgamationOptionsAI1=findAmalgamationOptions;
+  window.findEvolutionOptions=function(who){return findAmalgamationOptions(who).concat(window.findFullmetalOptions?window.findFullmetalOptions(who):[]);};
   function restoreRankAfterMaterial(p){if(p.rankZone)return;if(p.bank.length)p.rankZone=p.bank.shift();else p.rankZone=ruEmptyRank('amalg-rz-'+uid());}
   function localOwnsAmalgSeat(who){ return ruLocalSeatActive(who); }
   function findAmalgamationMaterialById(p,id){
@@ -10051,6 +10071,8 @@ ADEFS['Seven Heaven']={
     let evoIndex=(p.evolutions||[]).findIndex(e=>e&&evoCardId&&e.id===evoCardId);
     if(evoIndex<0)evoIndex=(p.evolutions||[]).findIndex(e=>e&&(e.id===evoId||e.baseId===evoId));
     if(evoIndex<0)return false;
+    const legal=window.findEvolutionOptions(who).find(o=>o.ei===evoIndex&&o.combo.length===elementIds.length&&o.combo.every(x=>elementIds.includes(x.card.id))&&new Set(elementIds).size===3);
+    if(!legal)return false;
     const combo=[];
     for(let i=0;i<elementIds.length;i++){
       const hit=findAmalgamationMaterialById(p,elementIds[i]);
@@ -10078,8 +10100,11 @@ ADEFS['Seven Heaven']={
     restoreRankAfterMaterial(p);
     evo.elements=elements;evo.currentNP=evo.numeral;evo.currentRP=evo.rank;evo.attacksLeft=1;evo.usedSkill=false;evo.canAttack=true;
     if(usedHandElement)evo._anHandElements=true; // made via Amalgamation Nation hand Elements → returns to Deadzone when it has no Elements left
-    p.delta=[evo];if(evo.M){p.mp+=evo.M;logAs(who,`{You} {perform|performs} an Amalgamation Rank Up into ${evo.name}. ${evo.M>0?'+':''}${evo.M} MP.`,'imp');}
-    else logAs(who,`{You} {perform|performs} an Amalgamation Rank Up into ${evo.name}.`,'imp');
+    p.delta=[evo];
+    if(evo.evoType==='fullmetal')window.RUFullmetal.enter(who,evo,elements);
+    const family=EVOLUTION_TYPES[evo.evoType||'amalgamation'].name;
+    if(evo.M){p.mp+=evo.M;logAs(who,`{You} {perform|performs} a ${family} Rank Up into ${evo.name}. ${evo.M>0?'+':''}${evo.M} MP.`,'imp');}
+    else logAs(who,`{You} {perform|performs} a ${family} Rank Up into ${evo.name}.`,'imp');
     log(`Elements: ${elements.map(c=>c.name).join(', ')}.`,'info');
     playDeltaAnimation(who);checkWin();renderAll();
   }
@@ -10091,13 +10116,13 @@ ADEFS['Seven Heaven']={
     if(G.allowEvolutions===false)return '<p>Evolutions are disabled for this match.</p>';
     if(p.delta&&p.delta.length)return `<p>${sidePossessiveLabel(who)} Δ Zone already holds <strong>${p.delta[0].name}</strong>.</p><p ${dim}>Only one Evolution can be in the Δ Zone at a time.</p>`;
     if(!p.evolutions||!p.evolutions.length)return `<p>${sidePossessiveLabel(who)} Δ Deck has no Evolutions${(G._netMode&&!(G._netDeltaDecks&&(G._netDeltaDecks[who]||[]).length))?' for this match (none was chosen before joining)':' left'}.</p>`;
-    return `<p>None of ${sidePossLower(who)} Evolutions can be made right now.</p><p ${dim}>Each needs three face-up Battlefield Numerals with the same value:</p>`+
+    return `<p>None of ${sidePossLower(who)} Evolutions can be made right now.</p><p ${dim}>Each Evolution has its own three-Numeral material requirements:</p>`+
       p.evolutions.map(e=>`<div class="delta-list-card"><strong>${e.name}</strong><br><span ${dim}>${e.requirements||''}</span></div>`).join('');
   }
   function openAmalgamationMenu(who){
-    const opts=findAmalgamationOptions(who);
-    if(!opts.length){openModal('Amalgamation Rank Up',amalgUnavailableHTML(who),[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;}
-    let body=`<p style="font-size:.8rem;color:var(--text-dim);">Choose an Amalgamation from your Δ Deck. The selected three Battlefield Numerals become its <strong>Elements</strong>.</p><div style="max-height:330px;overflow-y:auto;">`;
+    const opts=window.findEvolutionOptions(who);
+    if(!opts.length){openModal('Evolution Rank Up',amalgUnavailableHTML(who),[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;}
+    let body=`<div style="max-height:330px;overflow-y:auto;">`;
     opts.forEach((o,i)=>{body+=`<div class="delta-list-card"><strong>${o.evo.name}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">Requirement: ${o.evo.requirements}</span><br><span style="font-size:.72rem;">Elements: ${o.combo.map(x=>x.card.name+' ['+x.zone+']').join(', ')}</span></div>`;});
     body+=`</div>`;
     const btns=opts.map((o,i)=>({label:`Synthesize ${o.evo.name}`,cls:'mb-skill',fn:()=>{
@@ -10108,11 +10133,11 @@ ADEFS['Seven Heaven']={
       // Recorded and applied as a SHARED input — the same id-based Rank Up every other screen applies.
       window.ruAsInput(action,function(){ performAmalgamationByIds(who,action.evoId,action.elementIds,action.evoCardId); });
     }}));btns.push({label:'Cancel',fn:()=>closeModal()});
-    openModal('Amalgamation Rank Up',body,btns);
+    openModal('Evolution Rank Up',body,btns);
     ruTagViewModal();
   }
 
-  function playDeltaAnimation(who){const z=el(sideZoneId(who,'delta'));if(!z)return;z.classList.remove('delta-summon');void z.offsetWidth;z.classList.add('delta-summon');setTimeout(()=>z.classList.remove('delta-summon'),1100);}
+  function playDeltaAnimation(who){const z=el(sideZoneId(who,'delta'));if(!z)return;const c=G[who].delta&&G[who].delta[0];z.style.setProperty('--delta-summon-rgb',c&&c.evoType==='fullmetal'?'225,228,230':'255,120,150');z.classList.remove('delta-summon');void z.offsetWidth;z.classList.add('delta-summon');setTimeout(()=>z.classList.remove('delta-summon'),1100);}
   function renderDeltaZone(who){
     const p=G[who],id=sideZoneId(who,'delta'),z=el(id);if(!z||!p)return;
     if(G.allowEvolutions===false){z.innerHTML='<span>Δ<br>ZONE</span>';return;}
@@ -10273,6 +10298,8 @@ ADEFS['Seven Heaven']={
     return true;
   }
   function startAmalgamationSkill(w,card){
+    if(card&&card.evoType==='fullmetal')return window.RUFullmetal.openSkills(w,card);
+    if(window.RUFullmetal)RUFullmetal.beginSource('numeral');
     if(!card)return startAmalgamationSkillBase(w,card);
     var key=(card.pool||'')+'-'+card.numeral;
     var p=side(w);
@@ -10587,7 +10614,7 @@ ADEFS['Seven Heaven']={
         else if(key==='benevolent-8'){const milled=[];for(let i=0;i<2&&p.deck.length;i++){const c=p.deck.shift();ruDrop(p,c);milled.push(c);}const val=(milled.find(c=>c.type==='numeral')||elCard||{numeral:0}).numeral||0;if(p.rankZone&&window.markNPMod)window.markNPMod(p.rankZone,oppOf(who),val,1);if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+([p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).length);G._amalg8BankMorale=G._amalg8BankMorale||{};G._amalg8BankMorale[who]=true;logAs(who,`${card.name}: milled 2. Rank Zone +${val} NP until the end of {opp's} next turn; extra attacks equal Flanks. {You} {gain|gains} MP equal to {your} Bank size at the end of the turn.`,'heal');}
         else if(key==='malevolent-8'){const milled=[];for(let i=0;i<2&&p.deck.length;i++){const c=p.deck.shift();ruDrop(p,c);milled.push(c);}const milledNumeral=milled.find(c=>c.type==='numeral')||elCard||{numeral:0,rank:0};const val=milledNumeral.numeral||0,rv=milledNumeral.rank!=null?milledNumeral.rank:0;if(opp.rankZone&&window.markNPMod)window.markNPMod(opp.rankZone,who,-val,1);if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+rv;G._amalg8MoraleDealt=G._amalg8MoraleDealt||{};G._amalg8MoraleDealt[who]=true;logAs(who,`${card.name}: {opp's} Rank Zone -${val} NP until the end of {opp's} next turn; {your} Rank Zone gets ${rv} additional attack(s). {You} {gain|gains} MP equal to Morale Damage dealt this turn, at the end of the turn.`,'dmg');}
         else if(key==='benevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}for(let i=0;i<2&&p.deck.length;i++)ruDrop(p,p.deck.shift());card.currentNP+=p.bank.length;card._dropOppDeadAfterAttack=true;if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: +${p.bank.length} NP. Opponent drops 1 Deadzone after each attack by this card; this card cannot attack for 2 turns after this.`, 'dmg');}
-        else if(key==='malevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}for(let i=0;i<2&&p.deck.length;i++)ruDrop(p,p.deck.shift());opp.mp-=9;if(opp.deck.length>=9)mill(oppOf(who),9);else for(let i=0;i<4;i++)casDraw(oppOf(who));if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: opponent loses 9 MP and must drop 9 cards or take 4 Dead Draws.`, 'dmg');}
+        else if(key==='malevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}for(let i=0;i<2&&p.deck.length;i++)ruDrop(p,p.deck.shift());ruLoseMP(opp,9,'numeral');if(opp.deck.length>=9)mill(oppOf(who),9);else for(let i=0;i<4;i++)casDraw(oppOf(who));if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: opponent loses 9 MP and must drop 9 cards or take 4 Dead Draws.`, 'dmg');}
         else if(key==='unknown-1'){draw(who,1);log(`${card.name}: draw 1.`, 'info');}
         else if(key==='unknown-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;log(`${card.name}: Rank Zone gets another attack.`, 'info');}
         // unknown-3 (Amalgamation 3) handled entirely by the later, unconditional
@@ -10638,7 +10665,7 @@ ADEFS['Seven Heaven']={
                 pw.deck.push(dc);pw.cas=Math.max(-7,(pw.cas||0)-1);totalReturned++;
                 if(rpOf(dc)>=3)hi++;
               });
-              if(w2!==who&&hi)pw.mp-=11*hi;
+              if(w2!==who&&hi)ruLoseMP(pw,11*hi,'numeral');
             });
             p.mp+=totalReturned;
             commonNoAtk();
@@ -10669,6 +10696,7 @@ ADEFS['Seven Heaven']={
     const localOwner=ruActor();
     const localSide=G&&G[localOwner];
     const c=localSide&&localSide.delta&&localSide.delta[0];
+    if(c&&c.evoType==='fullmetal'){window.RUFullmetal.openSkills(localOwner,c);return;}
     if(c&&G.turn===localOwner&&['main','standby','battle','draw'].includes(G.phase)&&!c.usedSkill){openModal('Use Skill',`<p>Your active Amalgamation has a usable skill.</p><div class="delta-list-card"><strong>${c.name}</strong><br><span style="font-size:.72rem;">${c.skillText}</span></div>`,[{label:`Use ${c.name}`,cls:'mb-skill',fn:()=>{closeModal();window.startAmalgamationSkill(ruActor(),c);}},{label:'Other Numeral Skills',fn:()=>{closeModal();_openSkillMenuV114();}},{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;}
     _openSkillMenuV114();
   };
@@ -10698,7 +10726,7 @@ ADEFS['Seven Heaven']={
   function amalgOptionsLocal(who){return window.findAmalgamationOptionsAI1?window.findAmalgamationOptionsAI1(who):[];}   // one legality check: the Amalgamation menu's
   window.amalgOptionsLocalRA3=amalgOptionsLocal;
   function evoLabel(c){if(!c)return 'Amalgamation';return `${c.alignment||'Unknown'} Rank${c.rank||0} Numeral ${c.numeral}`;}
-  function defeatDelta(who){const p=G[who],e=p.delta&&p.delta[0];if(!e)return;p.delta=[];window.dzAdd(p,e);(e.elements||[]).forEach(x=>ruDrop(p,x));log(`${sidePossessiveLabel(who)} ${evoLabel(e)} Amalgamation is defeated: Amalgamation → Deadzone, Elements → Drop.`,'dmg');}
+  function defeatDelta(who){const p=G[who],e=p.delta&&p.delta[0];if(!e)return;p.delta=[];window.dzAdd(p,e);const els=e.elements||[];(e.evoType==='fullmetal'?els.splice(0):els).forEach(x=>ruDrop(p,x));log(`${sidePossessiveLabel(who)} ${e.name} is defeated: Evolution → Deadzone, Elements → Drop.`,'dmg');}
   window.defeatDeltaRA3=defeatDelta;
 
 
@@ -10773,7 +10801,7 @@ ADEFS['Seven Heaven']={
     ]},
     'Wildfire':{passive:'After 3 turns in your Deadzone, during your opponent’s Main Phase all players lose MP equal to their own Battlefield RP total.',effects:[
       {label:'Blizzard Counter',cost:'Drop 1 card from hand.',check(w){return G[w].hand.length>0;},fn(w,p,o){chooseHandForCost(w,'Wildfire — Drop 1 card to counter Blizzard attack-lock skill.',1,()=>{G._wildfireNegateFreeze=w;logAs(w,'Wildfire: the next Blizzard effect that would prevent {your} attack is negated this turn.','info');renderAll();});}},
-      {label:'Ultimate: Incinerate field',cost:'Drop hand (minimum 3).',check(w){return G[w].hand.length>=3&&!G[w]._wfUltUsed;},fn(w,p,o){dropHand(w,3);G[w]._wfUltUsed=true;window.oppList(w).forEach(function(oId){['rank','left','right','rear','delta'].forEach(function(z){moveZoneToDead(oId,z);});});(G.sideOrder||['player','ai']).forEach(s=>{if(G[s])G[s].mp-=10;});G._noAttack=G._noAttack||{};G._noAttack[w]=true;logAs(w,`Wildfire Ultimate: {opp's} Rank/Flanks/Δ sent to Deadzone; all players lose 10 MP. {You} cannot attack this turn.`,'imp');checkWin();renderAll();}}
+      {label:'Ultimate: Incinerate field',cost:'Drop hand (minimum 3).',check(w){return G[w].hand.length>=3&&!G[w]._wfUltUsed;},fn(w,p,o){dropHand(w,3);G[w]._wfUltUsed=true;window.oppList(w).forEach(function(oId){['rank','left','right','rear','delta'].forEach(function(z){moveZoneToDead(oId,z);});});(G.sideOrder||['player','ai']).forEach(s=>{if(G[s])ruLoseMP(G[s],10);});G._noAttack=G._noAttack||{};G._noAttack[w]=true;logAs(w,`Wildfire Ultimate: {opp's} Rank/Flanks/Δ sent to Deadzone; all players lose 10 MP. {You} cannot attack this turn.`,'imp');checkWin();renderAll();}}
     ]},
     'Frozen Tundra':{passive:'While in Deadzone, all Blizzard and W-class Numerals gain 1 NP; all Inferno Numerals lose 1 NP.',effects:[
       {label:'Negate next opponent attack',cost:'If you control 2+ Blizzard Numerals, drop 1 Blizzard Numeral from hand.',check(w){return field(w).filter(c=>c.class==='blizzard').length>=2&&G[w].hand.some(c=>c.class==='blizzard'&&c.type==='numeral');},fn(w,p,o){ruOwnedPicker(w,'Frozen Tundra — Drop 1 Blizzard Numeral.',p.hand.filter(c=>c.class==='blizzard'&&c.type==='numeral'),1,1,false,(picks)=>{picks.forEach(c=>{const i=p.hand.indexOf(c);if(i!==-1)p.hand.splice(i,1);ruDrop(p,c);});G._ftNegateNextAttack=oppOf(w);log('Frozen Tundra: the next opponent attack is negated. If it is Inferno, that player cannot attack on their next turn.','heal');renderAll();});}}
@@ -10805,7 +10833,7 @@ ADEFS['Seven Heaven']={
     ]},
     'Seven Heaven':{passive:'While in Deadzone, Numeral 7s do not need to Relieve a Rank² Numeral 4+ to be used as Flanks.',effects:[
       {label:'Gain 2 MP per Numeral 7',cost:'Once per turn.',check(w){return canUseAreaTurn(w,'Seven Choose',1);},fn(w,p,o){markAreaTurn(w,'Seven Choose');const g=countSevensAll()*2;p.mp+=g;log(`Seven Heaven: gain ${g} MP from Numeral 7s on all Battlefields.`,'heal');checkWin();renderAll();}},
-      {label:'Players without a Numeral 7 lose 2 MP',cost:'Once per turn.',check(w){return canUseAreaTurn(w,'Seven Choose',1);},fn(w,p,o){markAreaTurn(w,'Seven Choose');(G.sideOrder||['player','ai']).forEach(s=>{if(!fieldHasSeven(s)){G[s].mp-=2;logAs(s,'{You} {control|controls} no Numeral 7 and {lose|loses} 2 MP.','dmg');}});checkWin();renderAll();}},
+      {label:'Players without a Numeral 7 lose 2 MP',cost:'Once per turn.',check(w){return canUseAreaTurn(w,'Seven Choose',1);},fn(w,p,o){markAreaTurn(w,'Seven Choose');(G.sideOrder||['player','ai']).forEach(s=>{if(!fieldHasSeven(s)){ruLoseMP(G[s],2);logAs(s,'{You} {control|controls} no Numeral 7 and {lose|loses} 2 MP.','dmg');}});checkWin();renderAll();}},
       {label:'Negation Stance',cost:'Drop 1 card from hand.',check(w){return G[w].hand.length>0&&canUseAreaTurn(w,'Seven Choose',1);},fn(w,p,o){markAreaTurn(w,'Seven Choose');chooseHandForCost(w,'Seven Heaven — Drop 1 card.',1,()=>{G._sevenNegateNext=oppOf(w);log('Seven Heaven: next Numeral 7 cost or non-7 skill activation from opponent is negated this turn.','info');renderAll();});}},
       {label:'Ultimate: 7-turn attack lock',cost:'Destroy all non-Numeral-7 cards on your Battlefield (minimum 2).',check(w){return !G[w]._sevenUltUsed&&field(w).filter(c=>c.numeral!==7).length>=2;},fn(w,p,o){const targets=field(w).filter(c=>c.numeral!==7);targets.forEach(c=>{removeFromZoneOrArray(p,c);window.dzAdd(p,c);});G[w]._sevenUltUsed=true;G._noAttackTurns=7;(G.sideOrder||['player','ai']).forEach(s=>{G._noAttack=G._noAttack||{};G._noAttack[s]=true;});log(`Seven Heaven Ultimate: destroyed ${targets.length} non-7 card(s). No one can attack for 7 turns.`,'imp');checkWin();renderAll();}}
     ]},
@@ -11016,7 +11044,7 @@ ADEFS['Seven Heaven']={
       ]},
       skill2:{label:'Hand Split',cost:'Discard cards equal to opponent hand size.',steps:[
         {type:'pick_hand',count:1,min:0,max:9,optional:true,to:'discard',label:'Discard any cards as Fission 9 cost.'},
-        {type:'effect',fn(who,p,opp,fieldZone,card){const moved=opp.hand.splice(0);moved.forEach((c,i)=>{if(i%5===0)opp.deck.push(c);else if(i%5===1)ruDrop(opp,c);else if(i%5===2){dzAdd(opp,c);}else if(i%5===3&&!opp.leftFlank&&c.type==='numeral')opp.leftFlank=c;else bankInsert(opp,c);});p.mp+=2*moved.length;opp.mp-=2*moved.length;G._noAttack=G._noAttack||{};G._noAttack[who]=true;G._fission9End={who,card};log(`Fission 9: moved ${moved.length} opponent hand card(s).`,'dmg');}}
+        {type:'effect',fn(who,p,opp,fieldZone,card){const moved=opp.hand.splice(0);moved.forEach((c,i)=>{if(i%5===0)opp.deck.push(c);else if(i%5===1)ruDrop(opp,c);else if(i%5===2){dzAdd(opp,c);}else if(i%5===3&&!opp.leftFlank&&c.type==='numeral')opp.leftFlank=c;else bankInsert(opp,c);});p.mp+=2*moved.length;ruLoseMP(opp,2*moved.length,'numeral');G._noAttack=G._noAttack||{};G._noAttack[who]=true;G._fission9End={who,card};log(`Fission 9: moved ${moved.length} opponent hand card(s).`,'dmg');}}
       ]}
     },
 
@@ -11413,7 +11441,7 @@ function useRetL2(idx,card){
     // could select Assassinate as its own cost, silently voiding the effect below.
     acSpendHand(me,1,'Assassinate — drop 1 card from hand.',()=>{const i=p.hand.indexOf(card);if(i<0)return;if(!commit())return;const c=ai.hand.shift();if(c){dzAdd(ai,c);log(`Assassinate: ${sideVerbLabel(_foe,'send')} ${c.name} from hand to Deadzone.`,'dmg');}else log('Assassinate: the attacker has no hand cards.','info');checkWin();renderAll();},c=>c!==card);return;
   }
-  if(nm==='Strike'){if(!commit())return;ai.mp-=2;casDraw(_foe);log(`Strike: ${sideVerbLabel(_foe,'lose','loses')} 2 MP and ${isLocalHumanSeat(_foe)?'take':'takes'} 1 Casualty Draw.`,'dmg');}
+  if(nm==='Strike'){if(!commit())return;ruLoseMP(ai,2);casDraw(_foe);log(`Strike: ${sideVerbLabel(_foe,'lose','loses')} 2 MP and ${isLocalHumanSeat(_foe)?'take':'takes'} 1 Casualty Draw.`,'dmg');}
   else if(nm==='Counterattack'){if(!commit())return;log('Counterattack: Rank Zone makes an immediate avenging attack.','info');doCounterAttack(0);}
   else if(nm==='Counterstrike'){if(!commit())return;
     // "Rank Zone gains 2 NP until end of your next turn": the gain outlasts this turn's End Phase reset (G._durableNP)
@@ -11422,10 +11450,10 @@ function useRetL2(idx,card){
     logAs(me,'Counterstrike: {your} Rank Zone +2 NP until the end of {your} next turn, then counterattacks.','heal');doCounterAttack(0);}
   else if(nm==='Deckstroy'){if(!commit())return;acDropTop(_foe,3,'discard');log('Deckstroy: opponent drops top 3 cards of Deck.','dmg');}
   else if(nm==='Discard'){if(!commit())return;const n=Math.max(0,p.cas);let h=0;while(h<n&&ai.hand.length){ruDrop(ai,ai.hand.shift());h++;}if(h<n)acDropTop(_foe,n-h,'discard');log(`Discard: ${sideVerbLabel(_foe,'drop','drops')} ${n} card(s) from hand/deck based on ${sidePossLower(me)} Casualties.`, 'dmg');}
-  else if(nm==='Burning Star'){if(!commit())return;const hi=Math.max(0,...acNumerals(ai).map(acNP));ai.mp-=hi;buffNP(p.rankZone,hi);log(`Burning Star: opponent loses ${hi} MP; Rank Zone gains ${hi} NP and counterattacks.`, 'dmg');doCounterAttack(0);}
-  else if(nm==='Minus Star'){if(!commit())return;const b=ai.bank.shift();if(b){dzAdd(ai,b);const val=G._lastAtkInfo&&G._lastAtkInfo.attacker?acNP(G._lastAtkInfo.attacker):0;ai.mp-=val;log(`Minus Star: opponent cedes ${b.name} from Bank and loses ${val} MP.`, 'dmg');}else log('Minus Star: opponent Bank is empty.','info');}
+  else if(nm==='Burning Star'){if(!commit())return;const hi=Math.max(0,...acNumerals(ai).map(acNP));ruLoseMP(ai,hi);buffNP(p.rankZone,hi);log(`Burning Star: opponent loses ${hi} MP; Rank Zone gains ${hi} NP and counterattacks.`, 'dmg');doCounterAttack(0);}
+  else if(nm==='Minus Star'){if(!commit())return;const b=ai.bank.shift();if(b){dzAdd(ai,b);const val=G._lastAtkInfo&&G._lastAtkInfo.attacker?acNP(G._lastAtkInfo.attacker):0;ruLoseMP(ai,val);log(`Minus Star: opponent cedes ${b.name} from Bank and loses ${val} MP.`, 'dmg');}else log('Minus Star: opponent Bank is empty.','info');}
   else if(nm==='Drop Star'){if(!commit())return;buffNP(p.rankZone,3);log('Drop Star: Rank Zone +3 NP for avenging attack; if successful, opponent mills 5.','heal');doCounterAttack(0,{millOnHit:5});}
-  else if(nm==='Betray'){if(!commit('deadzone'))return;G._defState=G._defState||{};G._defState.protectCas=99;const hi=acHighestNumeral(acNumerals(ai)),lo=acLowestNumeral(acNumerals(ai));if(hi&&lo&&hi!==lo){const d=Math.max(0,acNP(hi)-acNP(lo));ai.mp-=d;log(`Betray: Casualty Damage negated; opponent's ${hi.name} turns on ${lo.name}, causing ${d} MP loss.`, 'dmg');}else log('Betray: Casualty Damage negated.','heal');}
+  else if(nm==='Betray'){if(!commit('deadzone'))return;G._defState=G._defState||{};G._defState.protectCas=99;const hi=acHighestNumeral(acNumerals(ai)),lo=acLowestNumeral(acNumerals(ai));if(hi&&lo&&hi!==lo){const d=Math.max(0,acNP(hi)-acNP(lo));ruLoseMP(ai,d);log(`Betray: Casualty Damage negated; opponent's ${hi.name} turns on ${lo.name}, causing ${d} MP loss.`, 'dmg');}else log('Betray: Casualty Damage negated.','heal');}
   else if(nm==='Subtract'){
     // Same self-selection gap as Assassinate/Protect Star/Divide Star above.
     acSpendHand(me,1,'Subtract — drop 1 card from hand.',(picks)=>{if(!picks)return;const i=p.hand.indexOf(card);if(i<0)return;if(!commit())return;acDropTop(me,1,'discard');const dmg=ruLastMoraleTo(me);p.mp+=dmg;if(ai.rankZone)ai.rankZone.currentNP=Math.max(0,acNP(ai.rankZone)-dmg);log(`Subtract: refunded ${dmg} Morale Damage and reduced opponent Rank Zone by ${dmg} NP.`, 'heal');checkWin();renderAll();},c=>c!==card);return;
@@ -11561,14 +11589,14 @@ function useRetL2(idx,card){
     if(!hi||!lo){log('Betray: no valid self-attack pair.','info');return;}
     if(hi.card===lo.card){
       const a=npVal(hi.card);
-      F.mp-=a;
+      ruLoseMP(F,a);
       log(`Betray: ${foePoss} ${hi.card.name} is forced to attack itself, losing ${a} MP.`,'dmg');
       return;
     }
     const a=npVal(hi.card),d=npVal(lo.card); log(`Betray: ${foePoss} ${hi.card.name} is forced to attack ${lo.card.name}.`,'dmg');
-    if(a>d){const diff=a-d;F.mp-=diff; if(lo.zone==='rank'){for(let i=0;i<1+Math.max(0,rankVal(hi.card)-rankVal(lo.card));i++)casDraw(foe);}else{setZone(F,lo.zone,null);window.dzAdd(F,lo.card);log(`Betray: ${lo.card.name} is sent to ${sidePossLower(foe)} Deadzone.`,'dmg');}}
-    else if(d>a){const diff=d-a;F.mp-=diff; if(hi.zone!=='rank'){setZone(F,hi.zone,null);ruDrop(F,hi.card);log(`Betray: ${hi.card.name} loses the forced attack and is dropped.`,'dmg');}}
-    else{F.mp-=a; if(hi.zone!=='rank'){setZone(F,hi.zone,null);window.dzAdd(F,hi.card);} if(lo.zone!=='rank'){setZone(F,lo.zone,null);window.dzAdd(F,lo.card);} log('Betray: the forced attack ends in a tie.','dmg');}
+    if(a>d){const diff=a-d;ruLoseMP(F,diff); if(lo.zone==='rank'){for(let i=0;i<1+Math.max(0,rankVal(hi.card)-rankVal(lo.card));i++)casDraw(foe);}else{setZone(F,lo.zone,null);window.dzAdd(F,lo.card);log(`Betray: ${lo.card.name} is sent to ${sidePossLower(foe)} Deadzone.`,'dmg');}}
+    else if(d>a){const diff=d-a;ruLoseMP(F,diff); if(hi.zone!=='rank'){setZone(F,hi.zone,null);ruDrop(F,hi.card);log(`Betray: ${hi.card.name} loses the forced attack and is dropped.`,'dmg');}}
+    else{ruLoseMP(F,a); if(hi.zone!=='rank'){setZone(F,hi.zone,null);window.dzAdd(F,hi.card);} if(lo.zone!=='rank'){setZone(F,lo.zone,null);window.dzAdd(F,lo.card);} log('Betray: the forced attack ends in a tie.','dmg');}
   }
   window.forceOpponentSelfAttack=forceOpponentSelfAttack;
   function undoPlayerCasualtyDamageFromLastAttack(){
@@ -11830,7 +11858,7 @@ function useRetL2(idx,card){
   window.addDeltaPick=function(id,pool){
     const deck=ruDeltaDeck();
     if(deck.length>=3){
-      ruReplaceModal('Δ Deck Full','<p>Your current Amalgamation-only Δ Deck already has 3 cards. Remove a card before adding another Evolution.</p>',[
+      ruReplaceModal('Δ Deck Full','<p>Your Δ Deck already has 3 cards. Remove a card before adding another Evolution.</p>',[
         {label:'Back',cls:'mb-skill',fn:()=>ruDeltaRedraw(pool||'benevolent')},
         {label:'Close',fn:()=>closeModal()}
       ]);
@@ -13067,13 +13095,15 @@ function useRetL2(idx,card){
     if(typeof checkSkillFlags_moraleCalc==='function')diff=checkSkillFlags_moraleCalc(aWho,dWho,att,proxy,diff);
     if(ds.halveMorale){diff=Math.ceil(diff/2);log('Divide: Morale Damage halved.','heal');}
     if(ds.noMorale){diff=0;log('No Morale Damage from this direct attack.','heal');}
+    G._battleResult={aWho,dWho,attId:att.id,defId:proxy.id,winner:'attacker',addonNP:addonNP||0,attPrintedNP:att.numeral||0,defPrintedNP:0};
+    if(window.ruShieldDamage)diff=window.ruShieldDamage(dWho,diff);
     ruSetLastMoraleTo(dWho,diff);
     DP.mp-=diff;log(`${sideVerbLabel(dWho,'lose','loses')} ${diff} MP from the direct attack. (${sidePossessiveLabel(dWho)} MP: ${DP.mp})`,'dmg');
     let casualties=1+Math.max(0,rankOf(att));
     if(G._noCasualtyDamage&&G._noCasualtyDamage[aWho]){casualties=0;log(`${att.name}: this direct attack deals no Casualty Damage.`, 'heal');}
     if(ds.protectCas){casualties=Math.max(0,casualties-ds.protectCas);log(`Protect: ${ds.protectCas} fewer Casualty Draw(s).`,'heal');}
     if(typeof checkSkillFlags_casualtyCalc==='function')casualties=checkSkillFlags_casualtyCalc(aWho,dWho,att,proxy,casualties);
-    for(let i=0;i<casualties;i++)casDraw(dWho);
+    for(let i=0;i<casualties;i++)casDraw(dWho,{source:'battle',additional:i>0});
     if(att._sendToDZAfterAttack){moveCard(AP,att,'deadzone');log(`${att.name} is sent to Deadzone after its direct attack.`,'dmg');}
     // The direct-attack grant is consumed by this attack -- without this, a card that ever
     // received "may attack directly this turn" would keep hijacking every future attack it makes
@@ -13473,7 +13503,7 @@ function useRetL2(idx,card){
   function runAreaCandidate(who,cand,simulate){
     const p=P(who),o=P(other(who));
     try{
-      cand.eff.fn(who,p,o);
+      if(window.RUFullmetal)RUFullmetal.areaEffect(who,cand.card,()=>cand.eff.fn(who,p,o));else cand.eff.fn(who,p,o);
       if(!simulate){ logSafe('AI v12 uses Area effect: '+cand.card.name+(cand.eff.label?' - '+cand.eff.label:'')+'.','imp'); history[cand.id]=(history[cand.id]||0)+8; }
       return true;
     }catch(err){
@@ -14021,7 +14051,7 @@ function useRetL2(idx,card){
     ]};
     ADEFS['Seven Heaven']={passive:'While in Deadzone, Numeral 7s do not need to Relieve a Rank 2 Numeral 4+ to be used as Flanks.',effects:[
       {label:'Gain 2 MP per Numeral 7',cost:'Once per turn.',check(w){return canUseTurn(w,'Seven Heaven Choice',1);},fn(w,p){markTurn(w,'Seven Heaven Choice');const g=allSevens()*2;p.mp+=g;logSafe('Seven Heaven: gain '+g+' MP from Numeral 7s on all Battlefields.','heal');renderSafe();}},
-      {label:'Non-7 cards lose 2 MP each',cost:'Once per turn.',check(w){return canUseTurn(w,'Seven Heaven Choice',1);},fn(w){markTurn(w,'Seven Heaven Choice');(G.sideOrder||['player','ai']).forEach(s=>{const nonSevens=fieldNumerals(s).filter(c=>c&&c.numeral!==7).length;if(nonSevens){pside(s).mp-=2*nonSevens;logSafe(sideVerbLabel(s,'lose')+' '+(2*nonSevens)+' MP for '+nonSevens+' non-7 Battlefield card(s).','dmg');}});renderSafe();}},
+      {label:'Non-7 cards lose 2 MP each',cost:'Once per turn.',check(w){return canUseTurn(w,'Seven Heaven Choice',1);},fn(w){markTurn(w,'Seven Heaven Choice');(G.sideOrder||['player','ai']).forEach(s=>{const nonSevens=fieldNumerals(s).filter(c=>c&&c.numeral!==7).length;if(nonSevens){ruLoseMP(pside(s),2*nonSevens);logSafe(sideVerbLabel(s,'lose')+' '+(2*nonSevens)+' MP for '+nonSevens+' non-7 Battlefield card(s).','dmg');}});renderSafe();}},
       {label:'Negation Stance',cost:'Drop 1 card from hand.',check(w){const p=pside(w);return p&&p.hand.length>0&&canUseTurn(w,'Seven Heaven Choice',1);},fn(w){markTurn(w,'Seven Heaven Choice');dropHandCost(w,'Seven Heaven - Drop 1 card.',1,()=>{G._sevenHeavenProfile={owner:w,target:other(w)};logSafe('Seven Heaven: next own Numeral 7 skill cost is negated, or next opponent non-7 Numeral skill activation is negated.','info');renderSafe();});}},
       {label:'Ultimate: 7-turn attack lock',cost:'Destroy all non-Numeral-7 cards on your Battlefield (minimum 2).',check(w){return !pside(w)._sevenUltUsed&&field(w).filter(c=>c.numeral!==7).length>=2;},fn(w,p){const targets=field(w).filter(c=>c.numeral!==7);targets.forEach(c=>moveTo(p,c,'deadzone'));p._sevenUltUsed=true;G._noAttackTurns=7;logSafe('Seven Heaven Ultimate: destroyed '+targets.length+' non-7 card(s). No one can attack for 7 turns.','imp');renderSafe();}}
     ]};
@@ -16159,7 +16189,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           if((c._amalg5MoraleDealt||0)>3){
             var oppW=c._amalg5Opp||other(w),oppSide=side(oppW);
             if(oppSide){
-              oppSide.mp-=c._amalg5MoraleDealt;
+              ruLoseMP(oppSide,c._amalg5MoraleDealt,'numeral');
               safeLog('Malevolent Amalgamation 5: '+c._amalg5MoraleDealt+'+ Morale Damage dealt this turn -- doubled at end of turn (extra '+c._amalg5MoraleDealt+' MP loss).','dmg');
             }
           }
@@ -17604,7 +17634,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         }
         function step(i){
           if(i>=cards.length){
-            p.mp+=2*moved.length;o.mp-=2*moved.length;
+            p.mp+=2*moved.length;ruLoseMP(o,2*moved.length,'numeral');
             G._noAttack=G._noAttack||{};G._noAttack[w]=true;
             G._fission9EndQueue=G._fission9EndQueue||[];
             G._fission9EndQueue.push({who:w,cardId:card.id});
@@ -17948,7 +17978,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       if(p.rankZone)p.rankZone.currentNP=np(p.rankZone)+hi;
       safeLog(ruPOV(w,'Obelus Oubliette: Obelus Star selected {your} Numeral, so {your} Rank Zone gains '+hi+' NP.'),'heal');
     }else{
-      o.mp-=Math.max(0,hi-lo);
+      ruLoseMP(o,Math.max(0,hi-lo),'numeral');
       safeLog('Obelus Oubliette: Obelus Star selected opponent Numeral, so opponent loses '+Math.max(0,hi-lo)+' MP.','dmg');
     }
   }
@@ -20130,7 +20160,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var lowRank=rp(sorted[0]);
     var highTwoRP=rp(sorted[1])+rp(sorted[2]);
     var dmg=lowRank*highTwoRP;
-    o.mp-=dmg;
+    ruLoseMP(o,dmg,'numeral');
     lockAllAttacks(w,'Inferno 9: you cannot attack this turn.');
     safeLog('Inferno 9: '+low2.map(function(c){return c.name;}).join(' + ')+' to Drop; '+high.name+' to Deadzone. Opponent loses '+dmg+' MP.','dmg');
   }
@@ -20162,7 +20192,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     SDEFS['Inferno 3']={source:'any',phases:['main','standby','battle'],steps:[{type:'effect',fn:function(w,p,o,fieldZone,card){
       if(card._sevenHeavenFreeCost||card._copySkillFreeCost){delete card._sevenHeavenFreeCost;delete card._copySkillFreeCost;safeLog('Inferno 3: cost negated -- stays on the field.','heal');}
       else sourceToDeadzone(w,p,fieldZone,card,'inferno3');
-      window.ruEachOpp(w,function(s,op){op.mp-=3;});   // "Your opponents lose 3 MP" -> every living opponent
+      window.ruEachOpp(w,function(s,op){ruLoseMP(op,3,'numeral');});   // "Your opponents lose 3 MP" -> every living opponent
       safeLog('Inferno 3: all opponents lose 3 MP.','dmg');
       if(typeof SF!=='undefined')SF=null;renderSafe();checkSafe();
     }}]};
@@ -20221,7 +20251,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       else finish(p.hand.slice().sort(function(a,b){return np(a)-np(b);})[0]);
       return;
     }
-    p.mp-=dmg;
+    ruLoseMP(p,dmg,'numeral');
     safeLog(((sideVerbLabel(w,'lose')+' '))+dmg+' MP from Wildfire.','dmg');
   }
   window.resolveWildfireShare=resolveWildfireShare;
@@ -20489,7 +20519,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       var finishWith=function(n,sentName){
         topDeck(w,n,'discard');
         for(var i=0;i<n;i++)casDraw(other(w));
-        o.mp-=n;draw(w,1);
+        ruLoseMP(o,n,'numeral');draw(w,1);
         safeLog(ruPOV(w,'Phantom 9: '+(sentName?('sent '+sentName+' to Deadzone, '):'cost negated -- no card sent, ')+'dropped '+n+' top Deck card(s); {opp} {opp:take|takes} '+n+' Casualty Draw(s) and {opp:lose|loses} '+n+' MP, and {you} {draw|draws} 1.'),'dmg');
         if(typeof SF!=='undefined')SF=null;renderSafe();checkSafe();
       };
@@ -21714,7 +21744,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
             chooseOne(w,'Neo Flank Star E2 - choose opponent Flank to send to Deadzone.',oppFlanks.map(function(x){ var c=x[1]; c._ru161Zone=x[0]; return c; }),true,function(oppCard){
               if(oppCard){ setZone(o,oppCard._ru161Zone,null); putTo(o,oppCard,'deadzone'); }
               var loss = [p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).length;
-              o.mp -= loss;
+              ruLoseMP(o,loss,'numeral');
               finish('Neo Flank Star E2: flanked ' + toFlank.name + ', dropped ' + (toDrop ? toDrop.name : 'no card') + ', and opponent lost ' + loss + ' MP.','dmg');
             });
           });
@@ -22084,7 +22114,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     }else{
       chooseOne(w,'Maximum 11 MISS - choose 1 Bank card to Drop.',(p.bank || []).slice(),true,function(b){
         if(b) moveTo(p,b,'discard');
-        p.mp -= highest;
+        ruLoseMP(p,highest,'numeral');
         finish('Maximum 11: declared ' + declared + '; MISS. Dropped ' + (b ? b.name : 'no Bank card') + ' and lost ' + highest + ' MP.','dmg');
       });
     }
@@ -23729,6 +23759,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // removal attempt is what uses it up)
   function shieldEntry(card,seat,zone,lasting){
     if(!card)return null;
+    if(window.RUFullmetal&&window.RUFullmetal.protected(card,seat,window.RUFullmetal.source()))return {always:true};
     if(card.noRemove)return {always:true};
     var e=(G._protect||[]).find(function(x){ return x.id===card.id&&active(x.u)&&(lasting?x.uses==null:(x.uses==null||x.uses>0)); });
     if(e)return e;
@@ -23757,6 +23788,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.ruShield=function(seat,amount,until){ (G._mpShields=G._mpShields||[]).push({seat:seat,left:amount,u:until}); };
   window.ruShieldDamage=function(seat,n){
     if(!(n>0))return n;
+    if(window.RUFullmetal)n=window.RUFullmetal.morale(seat,n,'battle',G._battleResult);
     if(battleShielded(seat)){ say('No Morale Damage ('+battleShielded(seat)+').','heal'); return 0; }
     (G._mpShields||[]).forEach(function(s){ if(n>0&&s.seat===seat&&s.left>0&&active(s.u)){ var k=Math.min(n,s.left); s.left-=k; n-=k; say('Damage reduced by '+k+' MP.','heal'); } });
     return n;
@@ -23832,9 +23864,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         Object.keys(seen).forEach(function(s){ Object.keys(seen[s]).forEach(function(z){
           var id=seen[s][z]; if(here[id])return;                         // still on a Battlefield (another zone / side)
           var loc=locate(id); if(!loc)return;
-          loc.card._wField=0;                                              // what the field gave it ends with leaving it
-          if(loc.pile==='bank')return;                                     // to the Bank: not removal
+          if(loc.pile==='bank'){loc.card._wField=0;if(window.RUFullmetal)RUFullmetal.leave(s,loc.card);return;}
           if(unremovable(loc.card,s,z,true)&&restoreTo(loc,s,z)){ say(loc.card.name+' cannot be removed — it stays.','heal'); here[id]=1; return; }
+          loc.card._wField=0;
           var rec={id:id,name:loc.card.name,cls:loc.card.class,owner:s,zone:z,turn:T,phase:G.phase,to:loc.pile,toSeat:loc.s,by:actCause()};
           (G._removed=G._removed||[]).push(rec); fired.push({rec:rec,card:loc.card});
         }); });
@@ -23894,7 +23926,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var att=window.zCard(A,aZone),def=window.zCard(D,dZone);
     var rec=G._atkAddonCards; G._atkAddonCards=null; G._battleResult=null;
     var addons=(rec&&att&&rec.aWho===aWho&&rec.attId===att.id)?rec.cards.slice():[];
-    return {aWho:aWho,aZone:aZone,dWho:dWho,dZone:dZone,att:att,def:def,addons:addons};
+    var snap={aWho:aWho,aZone:aZone,dWho:dWho,dZone:dZone,att:att,def:def,addons:addons};
+    if(window.RUFullmetal)window.RUFullmetal.attackSnap(snap);
+    return snap;
   };
   window.ruAttackResolved=function(s){
     if(!s||!s.att||!s.def)return;
@@ -23928,6 +23962,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.ruPromoteBlocked=function(w,card){ for(var i=0;i<HOOKS.promoteBlocked.length;i++){ var r=HOOKS.promoteBlocked[i](w,card); if(r)return r; } return null; };
   // a card the battle would destroy that stays: role 'defender' | 'attacker', winner as G._battleResult says
   window.ruSurvivesBattle=function(seat,zone,card,role,winner){
+    if(window.RUFullmetal&&window.RUFullmetal.protected(card,seat,'battle'))return true;
     if(window.ruRefuseRemoval(card,seat,zone))return true;
     return HOOKS.survives.some(function(f){ return f(seat,zone,card,role,winner); });
   };
@@ -24726,6 +24761,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.ruUseSkill=function(w,card,o){
     var fin=o.done||function(){},choice=null,armed=null;
     var finish=function(how){ refresh(); fin(how); };
+    var effect=function(done,value,choice){
+      var previous=G._fullmetalSource;
+      G._fullmetalSource=card.type==='area'?'area':card.type==='action'?'action':'numeral';
+      o.effect(function(){try{done();}finally{G._fullmetalSource=previous;}},value,choice);
+    };
     var mark=function(){ if(o.mark)o.mark(); };
     var why=window.ruSkillLocked(w,card);
     if(why){ say(card.name+': '+why+'.','dmg'); finish('locked'); return false; }
@@ -24744,13 +24784,13 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var use=function(){
       if(o.rewinds){
         shadow6(function(){
-          o.effect(function(){ finish('used'); },function(k){ pay(function(ok,value){ k(value); }); },choice);
+          effect(function(){ finish('used'); },function(k){ pay(function(ok,value){ k(value); }); },choice);
         },function(){ mark(); pay(function(){ finish('negated'); }); });
         return;
       }
       pay(function(ok,value){
         if(!ok){ finish('unpaid'); return; }
-        shadow6(function(){ o.effect(function(){ finish('used'); },value,choice); },function(){ finish('negated'); });
+        shadow6(function(){ effect(function(){ finish('used'); },value,choice); },function(){ finish('negated'); });
       });
     };
     var start=function(){
@@ -24989,7 +25029,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // the top n cards of a Deck are ceded (sent to the Deadzone)
   function cedeTop(w,n){ var p=side(w),out=[]; for(var i=0;i<n&&p.deck.length;i++){ var c=p.deck.shift(); dzAdd(p,c); out.push(c); } return out; }
   // seat t loses n MP to an effect (morale: it is Morale Damage — the last Morale Damage taken)
-  function damage(t,n,label,morale){ if(!(n>0)||!G[t])return; G[t].mp-=n; if(morale)ruSetLastMoraleTo(t,n); say(label+': '+sideVerbLabel(t,'lose','loses')+' '+n+' MP.','dmg'); }
+  function damage(t,n,label,morale){ if(!(n>0)||!G[t])return; if(window.RUFullmetal)n=window.RUFullmetal.morale(t,n,window.RUFullmetal.source()==='rule'?(morale?'numeral':'effect'):window.RUFullmetal.source()); G[t].mp-=n; if(morale)ruSetLastMoraleTo(t,n); say(label+': '+sideVerbLabel(t,'lose','loses')+' '+n+' MP.','dmg'); }
   window.ruFx={side:side,say:say,refresh:refresh,tn:tn,np:np,rp:rp,isNum:isNum,living:living,SLOTS:SLOTS,ZONES:ZONES,realRank:realRank,
     fieldCards:fieldCards,zoneOf:zoneOf,onField:onField,locate:locate,fresh:fresh,fieldTo:fieldTo,standDown:standDown,millN:millN,
     skillMP:skillMP,fromHand:fromHand,fromDeadzone:fromDeadzone,deadzoneToDrop:deadzoneToDrop,grantAttack:grantAttack,ask:ask,choose:choose,
@@ -25097,7 +25137,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       }},
       {type:'effect',fn:function(w,p,o,zone,card,ctx){
         var t=ctx.target,live=realRank(G[t.s]);
-        if(live&&live.id===t.c.id){ fieldTo(t.s,live,'deck_bottom'); G[t.s].mp-=2; say('Celestial 7: '+sidePossessiveLabel(t.s)+' '+live.name+' goes to the bottom of the Deck; '+sideVerbLabel(t.s,'lose','loses')+' 2 MP.','dmg'); }
+        if(live&&live.id===t.c.id){ fieldTo(t.s,live,'deck_bottom'); ruLoseMP(G[t.s],2,'numeral'); say('Celestial 7: '+sidePossessiveLabel(t.s)+' '+live.name+' goes to the bottom of the Deck; '+sideVerbLabel(t.s,'lose','loses')+' 2 MP.','dmg'); }
         refresh();
       }}
     ]};
@@ -25247,7 +25287,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         living().forEach(function(s){ var r=realRank(G[s]); if(r&&fieldTo(s,r,'discard')){ dropped++; say('Celestial 9: '+sidePossessiveLabel(s)+' '+r.name+' is Stood Down.','dmg'); } });
         living().forEach(function(s){ dropped+=millN(s,1).length; });
         var dmg=4*dropped;
-        if(dmg)livingOpponentsOf(w).forEach(function(s){ G[s].mp-=dmg; ruSetLastMoraleTo(s,dmg); say('Celestial 9: '+sideVerbLabel(s,'take','takes')+' '+dmg+' Morale Damage ('+dropped+' card(s) sent to the Drop).','dmg'); });
+        if(dmg)livingOpponentsOf(w).forEach(function(s){ ruLoseMP(G[s],dmg,'numeral'); ruSetLastMoraleTo(s,dmg); say('Celestial 9: '+sideVerbLabel(s,'take','takes')+' '+dmg+' Morale Damage ('+dropped+' card(s) sent to the Drop).','dmg'); });
         G._noAttack=G._noAttack||{}; G._noAttack[w]=true;
         (G._skipStartDraw=G._skipStartDraw||{})[w]=true;
         say(ruPOV(w,'Celestial 9: {you} cannot attack this turn or draw at the start of {your} next turn.'),'info');
@@ -25267,7 +25307,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         if(!(G[owner].deadzone||[]).some(function(c){ return c&&c.name==='Asteroid Field'; }))return;
         living().forEach(function(s){
           var nums=fieldCards(G[s]).filter(isNum);
-          if(nums.length<2&&!nums.some(isCelNum)){ G[s].mp-=2; changed=true; say('Asteroid Field: '+sideVerbLabel(s,'lose','loses')+' 2 MP.','dmg'); }
+          if(nums.length<2&&!nums.some(isCelNum)){ ruLoseMP(G[s],2); changed=true; say('Asteroid Field: '+sideVerbLabel(s,'lose','loses')+' 2 MP.','dmg'); }
         });
       });
       (G._cel6Due||[]).forEach(function(e){ if(e.w===w&&e.turn==null&&T>e.armed)e.turn=T; });
@@ -25287,7 +25327,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       G._cel6Due=(G._cel6Due||[]).filter(function(e){
         if(e.w!==w||e.turn!==T)return true;
         changed=true;
-        if(!e.entered){ G[w].mp-=3; say('Celestial 6: it did not enter the Battlefield — '+sideVerbLabel(w,'lose','loses')+' 3 MP.','dmg'); }
+        if(!e.entered){ ruLoseMP(G[w],3,'numeral'); say('Celestial 6: it did not enter the Battlefield — '+sideVerbLabel(w,'lose','loses')+' 3 MP.','dmg'); }
         return false;
       });
       // Shooting Star (E2): draw one card at the end of the turn
@@ -25470,7 +25510,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         if(!pk||pk.length<2){ refresh(); return; }
         pk.forEach(function(c){ fromHand(p,c,'discard'); });
         choosePlayer(w,'Thrash Star (E2) — which opponent loses 5 MP?',livingOpponentsOf(w),function(s){ return G[s].mp+' MP'; },function(t){
-          if(t){ G[t].mp-=5; say('Thrash Star (E2): '+sideVerbLabel(t,'lose','loses')+' 5 MP.','dmg'); }
+          if(t){ ruLoseMP(G[t],5); say('Thrash Star (E2): '+sideVerbLabel(t,'lose','loses')+' 5 MP.','dmg'); }
           refresh();
         });
       });
@@ -25485,7 +25525,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       millN(w,2);
       boardPick(w,'Neo Strike Star (E2): choose your opponent\u2019s Rank Zone card to send to the Deadzone',function(s2,z,c2){ return z==='rank'&&s2!==w&&removable(s2,z,c2); },function(t){
         var r=t&&realRank(G[t]);
-        if(r&&fieldTo(t,r,'deadzone')){ G[t].mp-=5; say('Neo Strike Star (E2): '+sidePossessiveLabel(t)+' '+r.name+' is sent to the Deadzone; '+sideVerbLabel(t,'lose','loses')+' 5 MP.','dmg'); }
+        if(r&&fieldTo(t,r,'deadzone')){ ruLoseMP(G[t],5); say('Neo Strike Star (E2): '+sidePossessiveLabel(t)+' '+r.name+' is sent to the Deadzone; '+sideVerbLabel(t,'lose','loses')+' 5 MP.','dmg'); }
         refresh();
       });
     });
@@ -25681,7 +25721,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       }});
       opts.push({label:'Morale Damage equal to your W-stat total ('+window.ruWTotal(w)+')',fn:function(){
         choosePlayer(w,'Ochre 7 — which opponent takes the Morale Damage?',livingOpponentsOf(w),function(s){ return G[s].mp+' MP'; },function(t){
-          var dmg=window.ruWTotal(w); if(t&&dmg){ G[t].mp-=dmg; ruSetLastMoraleTo(t,dmg); say('Ochre 7: '+sideVerbLabel(t,'take','takes')+' '+dmg+' Morale Damage (W-stat total).','dmg'); }
+          var dmg=window.ruWTotal(w); if(t&&dmg){ ruLoseMP(G[t],dmg,'numeral'); ruSetLastMoraleTo(t,dmg); say('Ochre 7: '+sideVerbLabel(t,'take','takes')+' '+dmg+' Morale Damage (W-stat total).','dmg'); }
           refresh();
         });
       }});
@@ -25780,7 +25820,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       var rp=drawn.reduce(function(s,c){ return s+(c.type==='numeral'?(c.rank||0):0); },0);
       var finish=function(keep){
         drawn.forEach(function(c){ if(c!==keep)fromHand(p,c,'discard'); });
-        if(rp){ G[foe].mp-=rp; say('Rebound: '+sideVerbLabel(foe,'lose','loses')+' '+rp+' MP (RP total of the cards drawn).','dmg'); }
+        if(rp){ ruLoseMP(G[foe],rp); say('Rebound: '+sideVerbLabel(foe,'lose','loses')+' '+rp+' MP (RP total of the cards drawn).','dmg'); }
         refresh();
       };
       if(!drawn.length){ refresh(); return true; }
@@ -25855,7 +25895,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       var top=Math.max.apply(null,withM.map(function(c){ return Number(c.M)||0; })),best=withM.filter(function(c){ return (Number(c.M)||0)===top; });
       var go=function(c){
         choosePlayer(w,'Rebound (E2) — which opponent loses MP?',livingOpponentsOf(w),function(s){ return G[s].mp+' MP'; },function(t){
-          if(t&&top>0){ G[t].mp-=top; say('Rebound (E2): '+sideVerbLabel(t,'lose','loses')+' '+top+' MP (highest M value in '+sidePossLower(w)+' Deadzone).','dmg'); }
+          if(t&&top>0){ ruLoseMP(G[t],top); say('Rebound (E2): '+sideVerbLabel(t,'lose','loses')+' '+top+' MP (highest M value in '+sidePossLower(w)+' Deadzone).','dmg'); }
           (G._ochreEnd=G._ochreEnd||[]).push({kind:'rebound',w:w,id:c.id,turn:tn()});
           say('Rebound (E2): '+c.name+' is added to '+sidePossLower(w)+' hand at the end of the turn.','info');
           refresh();
@@ -26554,7 +26594,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       return {label:tp,fn:function(){
         say(label+': '+sideSubjectLabel(me)+' '+(isLocalHumanSeat(me)?'declare':'declares')+' '+tp+' — '+sideSubjectLabel(foe)+' drew '+got.name+' ('+real+').','info');
         if(real===tp){ mp.mp+=3; fp.mp+=3; say(label+': the same type — both gain 3 MP.','heal'); }
-        else{ fromHand(fp,got,'discard'); fp.mp-=3; mp.mp+=3; say(label+': the wrong type — '+sideSubjectLabel(foe)+' '+(isLocalHumanSeat(foe)?'discard':'discards')+' it and '+(isLocalHumanSeat(foe)?'lose':'loses')+' 3 MP; '+sideSubjectLabel(me)+' '+(isLocalHumanSeat(me)?'gain':'gains')+' 3 MP.','dmg'); }
+        else{ fromHand(fp,got,'discard'); ruLoseMP(fp,3); mp.mp+=3; say(label+': the wrong type — '+sideSubjectLabel(foe)+' '+(isLocalHumanSeat(foe)?'discard':'discards')+' it and '+(isLocalHumanSeat(foe)?'lose':'loses')+' 3 MP; '+sideSubjectLabel(me)+' '+(isLocalHumanSeat(me)?'gain':'gains')+' 3 MP.','dmg'); }
         refresh();
       }};
     }));
@@ -28970,7 +29010,7 @@ window.ruSpecPace=function(base){
       var bsHi=[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).reduce(function(m,c){return Math.max(m,c.currentNP||c.numeral||0);},0);
       var bsTgt=aiBestCounterTarget(aWho,rzNP+bsHi);
       if(bsTgt&&use('Burning Star',function(){
-        p.mp-=bsHi;buffNP(rz,bsHi);
+        ruLoseMP(p,bsHi);buffNP(rz,bsHi);
         log(sideVerbLabel(dWho,'use')+' Burning Star: '+sideVerbLabel(aWho,'lose')+' '+bsHi+' MP; Rank Zone +'+bsHi+' NP, then counterattacks.','dmg');
         resolveAtk(dWho,'rank',aWho,bsTgt.zone,0);
       }))return;
@@ -28987,7 +29027,7 @@ window.ruSpecPace=function(base){
       }))return;
     }
     // Pure-punish effects don't need a winnable follow-up attack.
-    if(use('Strike',function(){p.mp-=2;casDraw(aWho);logAs(aWho,sideVerbLabel(dWho,'use')+' Strike: {You} {lose|loses} 2 MP and {take|takes} 1 Casualty Draw.','dmg');}))return;
+    if(use('Strike',function(){ruLoseMP(p,2);casDraw(aWho);logAs(aWho,sideVerbLabel(dWho,'use')+' Strike: {You} {lose|loses} 2 MP and {take|takes} 1 Casualty Draw.','dmg');}))return;
     if((ai.cas||0)>0&&use('Discard',function(){
       var cas=ai.cas;
       if(p.hand.length){
@@ -29120,7 +29160,7 @@ window.ruSpecPace=function(base){
     log(entry.card.name+': activating '+entry.eff.label+'. Cost: '+entry.eff.cost,'info');
     try{window.ruAreaFX&&window.ruAreaFX(rw,G[rw]&&G[rw].class);}catch(_e){}
     var oppSide=(G&&G.turn&&G.turn!==rw)?G.turn:oppOf(rw);
-    try{entry.eff.fn(rw,G[rw],G[oppSide]);}catch(e){log(entry.card.name+': effect failed ('+e.message+').','dmg');}
+    try{if(window.RUFullmetal)RUFullmetal.areaEffect(rw,entry.card,()=>entry.eff.fn(rw,G[rw],G[oppSide]));else entry.eff.fn(rw,G[rw],G[oppSide]);}catch(e){log(entry.card.name+': effect failed ('+e.message+').','dmg');}
     ruAreaWait(function(){ruResumeAfterOffTurnWindow(ph);});
   }
   function openAreaOpponentTurnWindow(ph){
@@ -29212,13 +29252,14 @@ window.ruSpecPace=function(base){
   function renderAreaSupportRoot(){
     var sel=window.RU_PLAYER_AREA_SUPPORT?asById(window.RU_PLAYER_AREA_SUPPORT):null;
     var body='<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:#ffb0b8;margin:.15rem 0 .45rem;">Δ Deck</div>';
-    body+='<p style="font-size:.78rem;color:var(--text-dim);">Build your Δ Deck. <strong>Amalgamations</strong> are your 1–3 Evolution cards. <strong>Area Support</strong> is a separate slot: pick one to REPLACE your deck’s normal Area Card for the match.</p>';
+    body+='<p style="font-size:.78rem;color:var(--text-dim);">Choose up to 3 Evolutions. Area Support occupies a separate slot.</p>';
     body+='<div style="border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:.5rem;margin:.5rem 0;background:rgba(255,255,255,.025);">';
-    body+='<div style="font-size:.72rem;color:#ffb0b8;">Amalgamations: '+amalgCountInDelta()+'/3</div>';
+    body+='<div style="font-size:.72rem;color:#ffb0b8;">Evolutions: '+amalgCountInDelta()+'/3</div>';
     body+='<div style="font-size:.72rem;color:#8fd0ff;margin-top:.25rem;">Area Support: '+(sel?('<strong>'+sel.name+'</strong>'):'<span style="color:var(--text-dim);">None (using your normal deck Area)</span>')+'</div>';
     body+='</div>';
     var btns=[
       {label:'Amalgamations →',cls:'mb-skill',fn:function(){ if(typeof window.deltaBuilderFamily==='function')window.deltaBuilderFamily(); }},
+      {label:'Fullmetal →',cls:'mb-skill',fn:function(){window.RUFullmetal.openBuilder();}},
       {label:'Area Support →',cls:'mb-skill',fn:function(){ renderAreaSupportPool(); }},
       {label:'Close',fn:function(){ if(typeof closeModal==='function')closeModal(); }}
     ];
@@ -29723,6 +29764,7 @@ window.ruSpecPace=function(base){
     if(a.t==='concede') return '';   // a player may concede at any moment
     if(sharedOpen(pickerEl())||sharedOpen(modalEl())){ owner=inputOwner(); return owner===me?'Resolve the current prompt first.':('Waiting for '+sideNameLabel(owner)+' to choose.'); }
     if(window._RUcbusy||(window._RUcq&&window._RUcq.length)) return 'Resolving Casualty Draws — one moment.';
+    if(a.t==='amalgSkill'&&(g[me].delta||[]).some(c=>c.id===a.id&&c.evoType==='fullmetal'))return '';
     owner=((a.t==='zone'||a.t==='delta')&&ruModeOwner())||g.turn;   // a board pick belongs to the mode's owner
     if(owner!==me) return "It's "+sidePossLower(owner)+" turn — wait for "+sideNameLabel(owner)+'.';
     return '';
@@ -29771,6 +29813,7 @@ window.ruSpecPace=function(base){
   var OWN_KIND={playAction:function(c){return c.type==='action'&&c.sub==='Advantageous';},activateArea:function(c){return c.type==='area';},
     flank:function(c){return c.type==='numeral'||c.type==='digit';},rearFlank:function(c){return c.type==='numeral';},relieveHand:function(c){return c.type==='numeral';}};
   function inWindow(g,seat,a){
+    if(g&&a.t==='amalgSkill'&&g[seat]&&(g[seat].delta||[]).some(c=>c.id===a.id&&c.evoType==='fullmetal'))return true;
     var w=a&&OWN_WINDOWS[a.t]; if(!w) return true;
     if(!g||g.turn!==seat||!w[g.phase]) return false;
     if(!OWN_KIND[a.t]) return true;
@@ -30011,6 +30054,7 @@ window.ruSpecPace=function(base){
   window.ruReplayActions=function(log){ (log||[]).forEach(function(a){ window.ruApplyAction(a); }); };
 })();
 </script>
+<script src="fullmetal.js"></script>
 <script src="ai/tiers.js"></script>
 <script src="ai/state.js"></script>
 <script src="ai/moves.js"></script>

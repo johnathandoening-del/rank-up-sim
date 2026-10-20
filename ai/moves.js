@@ -113,7 +113,7 @@ var MOVES_CODE = `
     // Amalgamation Rank Up: the Δ Zone click only opens the acting player's own menu (a local view); the Rank Up
     // itself is its own input, one per Evolution that the Battlefield can make right now
     if ((p.evolutions||[]).length && G.allowEvolutions !== false && window.findAmalgamationOptionsAI1) {
-      try { window.findAmalgamationOptionsAI1(seat).forEach(function(o){ var ids = (o.combo||[]).map(function(x){ return x.card && x.card.id; }).filter(Boolean); if (ids.length) out.push({ t:'amalgRank', evoCardId:o.evo.id, evoId:o.evo.baseId || o.evo.id, elementIds:ids, s:seat }); }); } catch(e) {}
+      try { (window.findEvolutionOptions||window.findAmalgamationOptionsAI1)(seat).forEach(function(o){ var ids = (o.combo||[]).map(function(x){ return x.card && x.card.id; }).filter(Boolean); if (ids.length) out.push({ t:'amalgRank', evoCardId:o.evo.id, evoId:o.evo.baseId || o.evo.id, elementIds:ids, s:seat }); }); } catch(e) {}
     }
     if (ph === 'battle') { out.push({ t:'atkMode', s:seat }); out.push({ t:'direct', s:seat }); }
     out.push({ t:'sdMode', s:seat }); out.push({ t:'rvMode', s:seat });

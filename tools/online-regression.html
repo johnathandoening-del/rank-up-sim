@@ -55,6 +55,8 @@ async function input(a){
     invoke(w,()=>w.startSkill(a.s,a.source,w.ruFindCard(a.id).card));
   }else if(a.t==='amalgRank'){
     invoke(w,()=>w.ruAsInput(a,()=>w.performAmalgamationByIdsAI1(a.s,a.evoId,a.elementIds,a.evoCardId)));
+  }else if(a.t==='amalgSkill'){
+    invoke(w,()=>w.startAmalgamationSkill(a.s,runCode(w,'G')[a.s].delta.find(c=>c.id===a.id)));
   }else if(a.t==='atkMode')w.document.getElementById('btn-atk').click();
   else if(a.t==='sdMode')w.document.getElementById('btn-sd').click();
   else if(a.t==='zone')w.document.getElementById(w.zId(a.o,a.z)).click();
@@ -69,7 +71,8 @@ async function input(a){
 document.getElementById('run').onclick=async function(){
   this.disabled=true;report.textContent='Starting local online relay...';
   try{
-    const all=await (await fetch('/tools/headless/data/online-regression.json')).json();
+    const suite=new URLSearchParams(location.search).get('suite')==='fullmetal'?'fullmetal-online':'online-regression';
+    const all=await (await fetch('/tools/headless/data/'+suite+'.json')).json();
     const requested=new URLSearchParams(location.search).get('case');
     const cases=requested?all.filter(c=>c.label===requested):all;
     check(cases.length>0,'no matching regression fixture');
