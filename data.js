@@ -22,13 +22,67 @@ const CM={
   kismet:       {name:'Kismet',       align:'Neutral',   areaName:'Perpetual Plains', areaM:7,  icon:'\uE012'},
   temporal:     {name:'Temporal',     align:'Neutral',   areaName:'Retrograde Rift',  areaM:7,  icon:'\uE013'},
 };
+// Evolution families are not Combat-Classes and do not add playable decks by themselves.
+const EVOLUTION_TYPES={
+  amalgamation:{name:'Amalgamation',icon:'\uE017',materialOptions:'amalgOptionsLocalRA3'},
+  fullmetal:{name:'Fullmetal',icon:'\uE018',materialOptions:'findFullmetalOptions'},
+};
+// Card definitions only; skill timing and material-zone legality belong to the engine.
+const FULLMETAL_LIBRARY=(()=>{
+  const skillCost2='Once per turn, you may drop a Numeral from your hand or Battlefield whose RP is equal to this card\'s current RP.';
+  const skillText2='If you do, reduce the Morale Damage dealt to you this turn by that Numeral\'s NP.';
+  const rows=[
+    {numeral:1,rank:0,A:0,M:1,S:1,W:1,materialW:1,protectedFrom:['battle'],
+      skillCost:'Drop an Element. Mill 1 card.',
+      skillText:'Draw 1 card. If it\'s a Safeguard-type Action Card, you may take 1 less Casualty this turn.'},
+    {numeral:2,rank:0,A:0,M:2,S:1,W:1,materialW:1,protectedFrom:['battle'],
+      skillCost:'Drop an Element. Mill a card.',
+      skillText:'Take no Morale Damage from target opponent\'s Left/Right Flankzone or Delta Zone Addon.'},
+    {numeral:3,rank:0,A:0,M:2,S:1,W:2,materialW:2,protectedFrom:['battle','action'],
+      skillCost:'Drop an Element.',
+      skillText:'Negate all Additional Casualty Damage resulting from an Action Card or Numeral Skill.'},
+    {numeral:4,rank:1,A:1,M:2,S:2,W:2,materialW:2,protectedFrom:['battle','action'],
+      skillCost:'Drop an Element and mill 2 cards.',
+      skillText:'Negate the Morale Damage due to a Numeral Skill this turn.'},
+    {numeral:5,rank:1,A:1,M:3,S:2,W:2,materialW:2,protectedFrom:['battle','action'],
+      skillCost:'Once per turn, cede an Element. Return 1 Safeguard-type Action Card from your Discard to your Deck.',
+      skillText:'Negate one attack or counterattack by a player this turn.'},
+    {numeral:6,rank:1,A:1,M:3,S:3,W:3,materialW:3,protectedFrom:['battle','action','numeral'],
+      skillCost:'Once per turn, send an Element to your Bank and mill 3 cards.',
+      skillText:'Draw a card. You may either take no Additional Morale Damage from an attack this turn, or take no Additional Casualty Damage from an attack this turn.'},
+    {numeral:7,rank:2,A:2,M:4,S:3,W:3,materialW:3,protectedFrom:['battle','action','numeral'],
+      skillCost:'Once per turn, cede an Element.',
+      skillText:'Add one card from your Deadzone to hand. The opponent that attacked you this turn loses 1 MP for either every Additional Casualty Negated, or every Safeguard-type Action Card in each player\'s hand.'},
+    {numeral:8,rank:2,A:2,M:4,S:4,W:4,materialW:4,protectedFrom:['battle','action','numeral','area'],
+      skillCost:'Drop an Element. Mill a card and cede a Safeguard-type Action Card from hand.',
+      skillText:'Negate all Morale Damage this turn. When this card leaves the field, activate the Secondary Effects of all Safeguard-type Action Cards which were ceded due to this skill.'},
+    {numeral:9,rank:2,A:2,M:4,S:99,SText:'+?',W:4,materialW:4,protectedFrom:['battle','action','numeral','area'],
+      skillCost:'Once per turn, when you or a Numeral on your Battlefield is targeted for an attack, you may cede an Element and drop a Safeguard-type Action Card from your hand.',
+      skillText:'Negate all additional Casualties that would be dealt to you this turn and at the end of the turn, gain MP equal to the MP you lost.'},
+  ];
+  return rows.map(row=>Object.assign({
+    id:'fullmetal-'+row.numeral,type:'evolution',evoType:'fullmetal',class:'fullmetal',
+    name:'Fullmetal '+row.numeral,displayName:'Fullmetal '+row.numeral,alignment:'Unknown',
+    skillType:'Skilled',requirements:'One Numeral '+row.numeral+' + 2 Numerals whose W-stats total to '+row.materialW+'.',
+    protection:'This cannot be removed on the turn it\'s played. After this turn, it cannot be removed via '+
+      row.protectedFrom.map(source=>({battle:'battle',action:'Action Card effect',numeral:'Numeral Skill',area:'Area Card effect'})[source]).join(', ')+
+      ' for as many of its owner\'s turns as its W-stat.',
+    protectionTurnBasis:'owner',
+    materialSources:['battlefield'],missingMaterialW:0,
+    skill1OncePerTurn:[5,6,7,9].includes(row.numeral),
+    skill1AnyPlayerTurn:true,skill2AnyPlayerTurn:true,
+    skill2OncePerTurn:true,skill2Sources:['hand','battlefield'],skill2MatchStat:'RP',
+    skillCost2,skillText2,skill2M:0,
+  },row));
+})();
 const AIPAIR={light:'inferno',inferno:'light',blizzard:'shadow',shadow:'blizzard',maximum:'negative',negative:'maximum',deckstructive:'blizzard',
   restorative:'phantom',phantom:'restorative',astute:'zero',zero:'astute',haste:'7th','7th':'haste',fission:'extension',extension:'fission',celestial:'ochre',ochre:'celestial',kismet:'maximum',temporal:'kismet'};
 const CLASS_COLORS={
   light:'#FFFFFF',inferno:'#FF0000',blizzard:'#B3EEFF',shadow:'#000000',maximum:'#C09D2D',deckstructive:'#04825B',negative:'#3F1D53',
   restorative:'#FF6699',haste:'#FFE600',astute:'#940094','7th':'#B0C4DE',zero:'#8B6666',phantom:'#2B3E34',fission:'#42082B',extension:'#E67E22',
   ochre:'#69431E',temporal:'#5CE6C4',kismet:'#A67F5B',celestial:'#0A0041',
-  amalgamation:'#6F0417' // not a class: Area Support cards (e.g. Amalgamation Nation) tint the Deadzone in the Amalgamation colour
+  amalgamation:'#6F0417', // Evolution/Area Support colors, not selectable Combat-Classes.
+  fullmetal:'#E1E4E6'
 };
 const CLASS_STATS={
   '7th':{off:6,def:6,acc:3,syn:7,dis:6,ver:4,res:6},

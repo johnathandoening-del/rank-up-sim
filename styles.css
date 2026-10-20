@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
-/* Custom class-icon font (Private Use Area): U+E001 = Light sun, U+E000 = Phantom hooded figure.
-   Subset to only those two glyphs, so prepending it to any font stack is inert for all normal text. */
-@font-face{font-family:'RU Classic Icons';src:url('RU_Classic_Icons.ttf?v=3') format('truetype');font-display:swap;}
+/* Private Use Area icons: Combat-Classes plus Amalgamation (E017) and Fullmetal (E018).
+   Normal text falls through to the next font in the stack. */
+@font-face{font-family:'RU Classic Icons';src:url('RU_Classic_Icons.ttf?v=4') format('truetype');font-display:swap;}
 .cemblem,.ccls,.nc .crs{font-family:'RU Classic Icons','Cinzel',serif;}
 :root{
   --gold:#c9a84c;--gold-dark:#7a5f1a;--bg-deep:#0a0a0f;--bg-panel:#0e0e16;
@@ -381,7 +381,12 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 ::-webkit-scrollbar{width:3px;height:3px;}::-webkit-scrollbar-thumb{background:var(--gold-dark);border-radius:2px;}
 .delta-btn{font-family:'Cinzel',serif;font-size:.66rem;letter-spacing:.08em;padding:.48rem .75rem;border:1px solid rgba(111,4,23,.85);color:#ff8a8a;border-radius:4px;background:rgba(111,4,23,.18);cursor:pointer;user-select:none;transition:all .25s;}
 .delta-btn:hover{background:rgba(111,4,23,.3);box-shadow:0 0 14px rgba(111,4,23,.35);}
-.nc-amalgamation{background:linear-gradient(135deg,#2a0208,#100105);border:1px solid #6F0417;color:#ffb0b8;box-shadow:inset 0 0 10px rgba(111,4,23,.28);}
+.nc-amalgamation{position:relative;background:linear-gradient(135deg,#2a0208,#100105);border:1px solid #6F0417;color:#ffb0b8;box-shadow:inset 0 0 10px rgba(111,4,23,.28);}
+.nc-amalgamation::before{content:'';position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.75;background-image:linear-gradient(180deg,rgba(16,1,5,.38),rgba(16,1,5,.12) 45%,rgba(16,1,5,.62)),url('assets/amalgamation-crystal.png');background-size:cover;background-position:center;}
+.nc-amalgamation .ctop,.nc-amalgamation .cname{position:relative;z-index:1;text-shadow:0 1px 2px #100105,0 0 4px #100105;}
+.nc-fullmetal{background-color:#E1E4E6;background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.15) 0,rgba(255,255,255,.15) 1px,rgba(45,55,65,.06) 1px,transparent 3px),linear-gradient(118deg,#858e96 0%,#E1E4E6 17%,#fff 29%,#a3adb5 42%,#E1E4E6 55%,#fff 66%,#9ca6ae 80%,#E1E4E6 100%);background-size:auto,220% 100%;background-position:center,45% 50%;border:1px solid #f8fafc;color:#20272d;box-shadow:inset 0 1px 2px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #8f9aa3;transition:background-position .35s ease,box-shadow .35s ease;}
+.nc-fullmetal:hover{background-position:center,60% 50%;box-shadow:inset 0 1px 3px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #bcc6ce;}
+.nc-fullmetal .ctag{color:#34414b;}
 .delta-summon{animation:deltaSummon 1.05s ease-out;}
 @keyframes deltaSummon{0%{transform:scale(.86);box-shadow:0 0 0 rgba(111,4,23,0)}40%{transform:scale(1.09);box-shadow:0 0 28px rgba(255,120,150,.95)}100%{transform:scale(1);box-shadow:0 0 6px rgba(111,4,23,.25)}}
 .delta-list-card{border:1px solid rgba(111,4,23,.55);border-radius:6px;padding:.55rem;background:rgba(111,4,23,.08);margin-bottom:.45rem;}
@@ -390,8 +395,9 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .delta-pill{display:inline-block;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.08em;border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:.08rem .4rem;margin:.05rem;color:#ffb0b8;}
 
 
-.delta-ready{border-color:#6F0417!important;box-shadow:0 0 12px rgba(111,4,23,.65);animation:deltaReadyBlink 1.65s ease-in-out infinite;}
-@keyframes deltaReadyBlink{0%,100%{box-shadow:0 0 3px rgba(111,4,23,.25);color:#7aa0dc;}50%{box-shadow:0 0 22px rgba(111,4,23,.95);color:#ffb0b8;}}
+.delta-ready{border-color:var(--delta-ready-color,#6F0417)!important;box-shadow:0 0 12px rgba(var(--delta-ready-rgb,111,4,23),.65);animation:deltaReadyBlink 1.65s ease-in-out infinite;}
+@keyframes deltaReadyBlink{0%,100%{box-shadow:0 0 3px rgba(var(--delta-ready-rgb,111,4,23),.25);color:color-mix(in srgb,var(--delta-ready-color,#6F0417) 45%,white);}50%{box-shadow:0 0 22px rgba(var(--delta-ready-next-rgb,111,4,23),.95);color:color-mix(in srgb,var(--delta-ready-next-color,#6F0417) 45%,white);}}
+@media(prefers-reduced-motion:reduce){.nc-fullmetal{transition:none;}.delta-ready{animation:none;}}
 
 .pfield{position:relative;overflow:hidden;isolation:isolate;}
 /* Per-row surface panels removed — target has zones directly on the warm vignette (no rounded rectangles),

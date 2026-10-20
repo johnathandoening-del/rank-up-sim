@@ -5944,12 +5944,34 @@ function renderAllL2(){
     const sk=el('btn-skill');if(sk&&mp&&G.turn===me&&mp.delta&&mp.delta[0]&&['main','standby','battle'].includes(G.phase))show('btn-skill');
   }
 }
+function ruEvolutionReadyTypes(who){
+  return Object.keys(EVOLUTION_TYPES).filter(type=>{
+    const options=window[EVOLUTION_TYPES[type].materialOptions];
+    return typeof options==='function'&&options(who).length>0;
+  });
+}
+function ruPaintEvolutionReady(zone,types){
+  if(!zone)return;
+  const ready=types.filter(type=>EVOLUTION_TYPES[type]);
+  zone.classList.toggle('delta-ready',ready.length>0);
+  zone.dataset.evolutionReady=ready.join(' ');
+  const props=['--delta-ready-color','--delta-ready-rgb','--delta-ready-next-color','--delta-ready-next-rgb'];
+  props.forEach(key=>zone.style.removeProperty(key));
+  if(!ready.length)return;
+  [ready[0],ready[ready.length-1]].forEach((type,i)=>{
+    const color=CLASS_COLORS[type],rgb=hexToRgb(color),prefix=i?'--delta-ready-next-':'--delta-ready-';
+    zone.style.setProperty(prefix+'color',color);
+    zone.style.setProperty(prefix+'rgb',`${rgb.r},${rgb.g},${rgb.b}`);
+  });
+}
 function renderAllL3(){
   renderAllL2();
-  // The "Amalgamation ready" glow is a hint for the human at this screen, on their own Δ Zone.
+  // Readiness is a private hint for the local human, driven by each family's material-legality check.
   const me=ruLocalSeatId(),mp=me&&G&&G[me];
-  ['player','ai'].forEach(function(w){const z=el(sideZoneId(w,'delta'));if(z)z.classList.remove('delta-ready');});
-  const z=me?el(sideZoneId(me,'delta')):null;if(z){const ready=mp&&G.turn===me&&G.allowEvolutions!==false&&!(mp.delta&&mp.delta.length)&&window.amalgOptionsLocalRA3(me).length>0;z.classList.toggle('delta-ready',!!ready);}
+  ((G&&G.sideOrder)||['player','ai']).forEach(w=>ruPaintEvolutionReady(el(sideZoneId(w,'delta')),[]));
+  if(mp&&G.turn===me&&G.allowEvolutions!==false&&!(mp.delta&&mp.delta.length)){
+    ruPaintEvolutionReady(el(sideZoneId(me,'delta')),ruEvolutionReadyTypes(me));
+  }
 }
 function renderAllL4(){renderAllL3();window.updateDeltaElementBarsRA4();}
 function renderAllL5(){
@@ -6359,7 +6381,10 @@ function renderSwitchdrawReveal(){
 }
 window.renderSwitchdrawReveal=renderSwitchdrawReveal;
 function cardCls(card){
-  if(card&&card.type==='evolution')return 'nc-amalgamation';
+  if(card&&card.type==='evolution'){
+    const family=card.evoType||card.class||card.cls;
+    return EVOLUTION_TYPES[family]?'nc-'+family:'nc-evolution';
+  }
   if(!card)return'';
   if(card.type==='digit')return'nc-digit';
   if(card.type==='area')return'nc-area';
@@ -6369,11 +6394,13 @@ function cardCls(card){
   }
   return`nc-${card.class||'classless'}${(card.class==='maximum'&&(card.numeral||0)>=10)?'-max':''}`;
 }
-// Class badge shown on a card's face (top-left). Real classes use their CM icon; classless/amalgamation
-// (no CM entry) get a neutral fallback so every class-bearing card is identifiable at a glance.
+// Evolution families have their own icons; they are not selectable Combat-Classes.
 function classIconOf(card){
   if(!card)return '';
-  if(card.type==='evolution'||card.evoType==='amalgamation'||card.class==='amalgamation')return '⨿';
+  const cls=card.class||card.cls;
+  const evolution=EVOLUTION_TYPES[card.evoType||cls];
+  if(evolution)return evolution.icon;
+  if(card.type==='evolution')return '\u0394';
   if(card.type==='action'){                       // action-card centre emblem
     if(card.isStar)return card.starType==='neo'?'✶':'★';  // neo → 6-point star; else 5-point (colour set in emblemColor)
     if(card.sub==='Advantageous')return 'Ⓐ'; // Ⓐ
@@ -6381,7 +6408,6 @@ function classIconOf(card){
     if(card.sub==='Retaliatory')return 'Ⓡ';  // Ⓡ
     return '';
   }
-  const cls=card.class||card.cls;
   if(cls==='7th')return (card.skillType==='Talented')?'':''; // Talented 7 → seventh2 glyph; all other 7th → seventh1
   if(cls==='classless')return '◯';
   if(cls&&typeof CM!=='undefined'&&CM[cls]&&CM[cls].icon)return CM[cls].icon;
@@ -6402,7 +6428,8 @@ function emblemColor(card){
     if(card.sub==='Retaliatory')return 'rgb(224,128,112)';  // red
     return 'rgb(160,208,96)';                                // Advantageous — green
   }
-  var cls=(card&&(card.class||card.cls));
+  var cls=(card&&(card.evoType||card.class||card.cls));
+  if(cls==='fullmetal')return 'rgb(65,74,82)'; // etched emblem stays legible on the silver surface
   if(cls==='shadow')return 'rgb(70,70,70)';       // fixed dark-grey Shadow watermark (not the computed lift)
   if(cls==='classless')return 'rgb(143,143,143)'; // soft grey watermark on the grey classless cards (not gold)
   var hex=CLASS_COLORS[cls]||'#c9a84c';
@@ -9989,6 +10016,7 @@ ADEFS['Seven Heaven']={
     }
     const out=[];
     p.evolutions.forEach((evo,ei)=>{
+      if((evo.evoType||evo.class||'amalgamation')!=='amalgamation')return;
       // Only Numerals that can be part of this Evolution's material (its value — or NP 0 for amalg-unknown-0) are
       // combined: every combination of every slot grew with the cube of a big hand (Amalgamation Nation lets hand
       // Numerals in) and made late games crawl. Same options, same order.
@@ -11729,7 +11757,10 @@ function useRetL2(idx,card){
 // V11.6.5 VISUAL LAYOUT FIX — Δ ELEMENTS BANK + REAR FLANK POSITION
 // ═══════════════════════════════════════════
 (function(){
-  function amalgShortName(card){return `Amalgamation ${card.numeral} ${card.skillType||'Skilled'}`.trim();}
+  function amalgShortName(card){
+    const family=EVOLUTION_TYPES[card.evoType||card.class||card.cls];
+    return `${family?family.name:'Evolution'} ${card.numeral} ${card.skillType||'Skilled'}`.trim();
+  }
   window.amalgShortName=amalgShortName;
   function updateDeltaElementBars(){
     const sides=G.sideOrder||['player','ai'];

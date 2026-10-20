@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Evolution Icon Verification</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+body{padding:20px}h1{font-size:22px;margin-bottom:10px}button{padding:8px 14px}#result{margin:12px 0;color:#8fd0bf}
+#glyphs{display:flex;gap:32px;margin:16px 0}.glyph{font-family:'RU Classic Icons';font-size:56px;line-height:1.2}
+#cards{display:grid;grid-template-columns:repeat(auto-fit,146px);gap:20px}figure{margin:0}figure .face{width:146px;height:210px}figcaption{font-size:13px;margin-top:6px;overflow-wrap:anywhere}
+#finish-preview{display:flex;gap:24px;flex-wrap:wrap;margin:20px 0 28px}#finish-preview .face{width:166px;height:234px}#readiness{display:flex;gap:20px;flex-wrap:wrap}#readiness .zone{width:100px;height:140px}.finish-label{position:relative;z-index:1;margin-top:auto;text-align:center;font-size:14px}
+iframe{display:none}
+</style>
+<h1>Evolution Icon Verification</h1>
+<button id="run">Render All Amalgamations</button>
+<p id="result">Controlled rendering test using actual game card objects, not a played match.</p>
+<div id="glyphs"><div><div class="glyph">&#xE017;</div>Amalgamation</div><div><div class="glyph">&#xE018;</div>Fullmetal font preview only</div></div>
+<div id="finish-preview"><figure><div class="face" id="metal-finish"></div><figcaption>Fullmetal finish sample, not a playable card</figcaption></figure><div><p>Controlled readiness styling samples</p><div id="readiness"><figure><div class="zone delta" id="ready-amalgamation">&#x394;</div><figcaption>Amalgamation</figcaption></figure><figure><div class="zone delta" id="ready-fullmetal">&#x394;</div><figcaption>Fullmetal</figcaption></figure><figure><div class="zone delta" id="ready-both">&#x394;</div><figcaption>Both types available</figcaption></figure></div></div></div>
+<div id="cards"></div>
+<iframe id="game" src="../index.html"></iframe>
+<script>
+document.getElementById('run').onclick=async function(){
+  this.disabled=true;
+  const result=document.getElementById('result');
+  try{
+    const fixture=await(await fetch('./headless/data/evolution-icons.json')).json();
+    const w=document.getElementById('game').contentWindow;
+    if(!w.buildCard)throw Error('Game has not loaded yet.');
+    w.eval(fixture.setup);
+    w.eval("__H.start({seed:1,mySeat:0,seat0Class:'light',seat1Class:'light',firstSeat:0,allowEvolutions:false,deltaDecks:{player:[],ai:[]}})");
+    await document.fonts.load('56px "RU Classic Icons"','\uE017\uE018');
+    const grid=document.getElementById('cards');grid.replaceChildren();
+    const sample={type:'evolution',evoType:'fullmetal',class:'fullmetal'};
+    const finish=document.createElement('div');finish.className='nc '+w.cardCls(sample);
+    finish.style.cssText='position:relative;container-type:inline-size;overflow:hidden;';
+    finish.innerHTML=w.emblemHTML(sample)+'<div class="finish-label">Fullmetal</div>';
+    document.getElementById('metal-finish').replaceChildren(finish);
+    w.ruPaintEvolutionReady(document.getElementById('ready-amalgamation'),['amalgamation']);
+    w.ruPaintEvolutionReady(document.getElementById('ready-fullmetal'),['fullmetal']);
+    w.ruPaintEvolutionReady(document.getElementById('ready-both'),['amalgamation','fullmetal']);
+    if(getComputedStyle(finish).backgroundColor!=='rgb(225, 228, 230)'||getComputedStyle(finish).backgroundImage==='none')throw Error('Fullmetal finish is missing.');
+    const silverZone=document.getElementById('ready-fullmetal');
+    getComputedStyle(silverZone).borderTopColor;
+    await Promise.all(silverZone.getAnimations().filter(a=>a.constructor.name==='CSSTransition').map(a=>a.finished));
+    if(getComputedStyle(silverZone).borderTopColor!=='rgb(225, 228, 230)')throw Error('Fullmetal readiness is not silver.');
+    for(const card of fixture.cards){
+      const figure=document.createElement('figure'),face=document.createElement('div'),caption=document.createElement('figcaption');
+      face.className='face';face.innerHTML=w.buildCard(card).outerHTML;
+      if(face.querySelector('.cemblem').textContent!=='\uE017')throw Error('Wrong icon: '+card.baseId);
+      caption.textContent=card.alignment+' '+card.name;figure.append(face,caption);grid.appendChild(figure);
+    }
+    await document.fonts.load('56px "RU Classic Icons"','\uE017\uE018');
+    if(!document.fonts.check('56px "RU Classic Icons"','\uE017\uE018'))throw Error('Icon font did not load.');
+    const canvas=document.createElement('canvas');canvas.width=80;canvas.height=80;
+    const ctx=canvas.getContext('2d');ctx.font='56px "RU Classic Icons"';
+    const pixels=glyph=>{ctx.clearRect(0,0,80,80);ctx.fillText(glyph,5,60);return Array.from(ctx.getImageData(0,0,80,80).data);};
+    const a=pixels('\uE017'),b=pixels('\uE018');
+    if(!a.some((v,i)=>i%4===3&&v)||!b.some((v,i)=>i%4===3&&v)||a.every((v,i)=>v===b[i]))throw Error('Blank or identical Evolution glyphs.');
+    result.textContent='PASS: all 41 Amalgamation icons; distinct Fullmetal glyph; #E1E4E6 metallic finish and silver readiness styling. Fullmetal material rules are not yet configured.';
+  }catch(e){result.textContent='FAIL: '+e.message;}
+  finally{this.disabled=false;}
+};
+</script>
+</html>
