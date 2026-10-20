@@ -66,7 +66,7 @@ const FULLMETAL_LIBRARY=(()=>{
     skillType:'Skilled',requirements:'One Numeral '+row.numeral+' + 2 Numerals whose W-stats total to '+['','Ⅰ','Ⅱ','Ⅲ','Ⅳ'][row.materialW]+'.',
     protection:'This cannot be removed on the turn it\'s played. After this turn, it cannot be removed via '+
       row.protectedFrom.map(source=>({battle:'battle',action:'Action Card effect',numeral:'Numeral Skill',area:'Area Card effect'})[source]).join(', ')+
-      ' for as many of its owner\'s turns as its W-stat. Declaring an attack with this card, including as an Addon, permanently forfeits its remaining protection before the opponent responds. Attacks by other Numerals do not affect this protection.',
+      ' for as many of its owner\'s turns as its W-stat.',
     protectionTurnBasis:'owner',
     materialSources:['battlefield'],missingMaterialW:0,
     skill1OncePerTurn:[5,6,7,9].includes(row.numeral),

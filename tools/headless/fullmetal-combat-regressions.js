@@ -126,7 +126,8 @@ assert.ok(html.includes('Fullmetal 4 Skilled')&&html.includes('Fullmetal 7 Skill
 assert.ok(!html.includes('Amalgamation 4 Skilled')&&!html.includes('Amalgamation 7 Skilled'));
 assert.ok(html.includes('data-family="fullmetal"')&&html.includes('--evolution-color:#E1E4E6'));
 assert.ok(html.includes('data-family="amalgamation"')&&html.includes('--evolution-color:#6F0417'));
-assert.ok(html.includes('Skill 2:')&&html.includes('permanently forfeits'));
+assert.ok(html.includes('Skill 2:'));
+assert.ok(!html.includes('permanently forfeits'),'forfeiture explanation belongs in the warning, not printed card text');
 e.run(`closeModal();G._netMode=false;G.turn='ai';var metal=Object.assign({},FULLMETAL_LIBRARY[3],{id:uid(),currentNP:4,currentRP:1});
   G.ai.delta=[metal];RUFullmetal.enter('ai',metal,[]);
   var paused=RUFullmetal.confirmCombat('ai',metal,[],function(){throw Error('Bot must continue synchronously');});`);
