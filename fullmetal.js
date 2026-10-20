@@ -72,11 +72,26 @@
     }
   });
   function protectedCard(c,w,cause){
-    if(!isMetal(c)||c._fullmetalEntered==null)return false;
+    if(!isMetal(c)||c._fullmetalEntered==null||c._fullmetalProtectionForfeited)return false;
     if(c._fullmetalEntered===turn())return true;
     if(!c.protectedFrom.includes(cause))return false;
     // The first later owner turn is number one; expiry occurs after the Wth owner End Phase.
     return (c._fullmetalOwnerTurns||0)<=ruW(c)&&!c._fullmetalProtectionExpired;
+  }
+  function confirmCombat(w,att,addons,proceed,cancel){
+    const cards=[att].concat(addons||[]).filter((c,i,a)=>c&&a.indexOf(c)===i&&protectedCard(c,w,'battle'));
+    if(!cards.length)return false;
+    const forfeit=()=>cards.forEach(c=>{
+      c._fullmetalProtectionForfeited=true;
+      F.say(c.name+': protection permanently forfeited by declaring an attack'+(c!==att?' as an Addon':'')+'.','info');
+    });
+    if(!isHumanSeat(w)){forfeit();return false;}
+    F.choose(w,'Fullmetal - Forfeit Protection?',
+      cards.map(c=>c.name+(c!==att?' (Addon)':'')).join(', ')+': declaring this attack permanently ends its remaining Fullmetal protection before the opponent can respond. It will not return on later turns, even if the attack is negated.',[
+        {label:'Declare attack - forfeit protection',fn:()=>{forfeit();ruWithActor(w,proceed);}},
+        {label:'Cancel attack',fn:()=>{if(cancel)ruWithActor(w,cancel);}},
+      ]);
+    return true;
   }
   function morale(w,n,cause,b){
     if(!G[w]||!(n>0))return n;
@@ -331,5 +346,5 @@
     document.getElementById('modal').classList.add('open');
   }
   window.findFullmetalOptions=materials;
-  window.RUFullmetal={materials,enter,protected:protectedCard,source,morale,casualty,negated,effect,areaEffect,beginSource,legal,use,openSkills,openBuilder,attackSnap,state,leave,endTurn,offerCasualty,offerDamage};
+  window.RUFullmetal={materials,enter,protected:protectedCard,confirmCombat,source,morale,casualty,negated,effect,areaEffect,beginSource,legal,use,openSkills,openBuilder,attackSnap,state,leave,endTurn,offerCasualty,offerDamage};
 })();

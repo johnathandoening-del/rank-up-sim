@@ -4360,9 +4360,12 @@ window.ruIsLegalAttackTarget=ruIsLegalAttackTarget;window.ruIsLegalAddon=ruIsLeg
 // defender. A HUMAN defender gets the defense windows a person always gets (Safeguard before the attack,
 // reactive "when attacked" skills before damage, Retaliatory cards afterwards), each as that defender's own
 // prompt. A BOT defender reacts for itself inside resolveAtk. `afterResolve` runs once the attack is spent.
-function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve){
+function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel){
+  const declaring=window.zCard(G[aw],aZone),rec=G._atkAddonCards;
+  const addons=addonNP>0&&rec&&declaring&&rec.aWho===aw&&rec.attId===declaring.id?rec.cards:[];
+  if(window.RUFullmetal&&RUFullmetal.confirmCombat(aw,declaring,addons,()=>ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel),afterCancel))return;
   // An attacker's own "when you attack" skill (Celestial 5) is answered first; the declaration goes on after it.
-  if(window.ruBeforeAttack&&window.ruBeforeAttack(aw,aZone,dw,dZone,function(){ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve);}))return;
+  if(window.ruBeforeAttack&&window.ruBeforeAttack(aw,aZone,dw,dZone,function(){ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel);}))return;
   const AP=G[aw],att=window.zCard(AP,aZone);
   // What happens after the attack (attacks left, mode, hints) is the ATTACKER's flow — run it as the attacker
   // even when the defender's answer (a Safeguard, a reactive skill) is the input that completed the attack.
@@ -4566,6 +4569,7 @@ function zoneClickL1(owner,zone){
   if(owner!==me&&G[owner]){
     const isTargetable=livingOpponentsOf(me).indexOf(owner)!==-1;
     if(isTargetable&&(G.mode==='addon'||G.mode==='atk')&&G.selAttacker&&ruIsLegalAttackTarget(me,owner,zone)){
+      if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,G.selAttacker.card,(G._addons||[]).map(a=>a.card),()=>zoneClickL1(owner,zone)))return;
       if(!card){ruNotice(me,'No card there.');return;}let addonNP=0;const mp=G[me];G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
       const aZone=G.selAttacker.zone;
       G.selAttacker=null;G.selAddon=null;G._deltaActionCap=null;clearHL();
@@ -5156,6 +5160,9 @@ function resolveAtkL28(aWho,aZone,dWho,dZone,addonNP){
     }
 
 function resolveAtk(aWho,aZone,dWho,dZone,addonNP){
+      const declaring=window.zCard(G[aWho],aZone),rec=G._atkAddonCards;
+      const addons=addonNP>0&&rec&&declaring&&rec.aWho===aWho&&rec.attId===declaring.id?rec.cards:[];
+      if(window.RUFullmetal&&RUFullmetal.confirmCombat(aWho,declaring,addons,()=>resolveAtk(aWho,aZone,dWho,dZone,addonNP)))return;
       // A BOT defender reacts for itself here (Safeguard before, Divide / Retaliatory after). A HUMAN defender
       // never gets an automatic reaction — they answer in their own defense prompts (ruDeclareAttack /
       // offerDefense / offerReactiveDefense / offerRetaliation) before and after this resolution.
@@ -5469,6 +5476,9 @@ function _aiBase(ph){
       if(!atkQueue.length||G.gameOver){if(!G.gameOver)afterModals(()=>phaseAfter('end',300));return;}
       const{zone,card,tgt}=atkQueue.shift();
       if(ai.attacksUsed[card.id]||atkLeft(card)<=0){runNextAIAtk();return;}
+      const declaredAddons=zone==='rank'&&ai.leftFlank&&!ai.attacksUsed[ai.leftFlank.id]&&canAddonTo(card,ai.leftFlank)?[ai.leftFlank]:[];
+      G._atkAddonCards={aWho:'ai',attId:card.id,cards:declaredAddons};
+      if(window.RUFullmetal)RUFullmetal.confirmCombat('ai',card,declaredAddons,function(){});
       // Reset the defense window state for this specific attack.
       G._defState={};G._lastAtkInfo={aWho:'ai',aZone:zone,attacker:card};
       offerDefense({aWho:'ai',aZone:zone,attacker:card},()=>{
@@ -6812,6 +6822,7 @@ function doCounterAttack(npBonus,opts){
   const doResolve=(tz)=>{
     const defCard=tz==='rank'?ai.rankZone:(tz==='left-flank'?ai.leftFlank:(tz==='right-flank'?ai.rightFlank:(tz==='rear-flank'?ai.rearFlank:(ai.delta&&ai.delta[0]))));
     if(!defCard){log('Counterattack: no target available.','info');return;}
+    if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,p.rankZone,[],()=>doResolve(tz)))return;
     const myNP=p.rankZone.currentNP||p.rankZone.numeral, theirNP=defCard.currentNP||defCard.numeral;
     G._defState={};
     const resolve=()=>{
@@ -6933,7 +6944,7 @@ function viewZoneL2(who,zone){
     let body=`<p>${cards.length} Evolution card(s) in ${sidePossLower(who)} Evos stack.</p>`;
     if(!isLocalHumanSeat(who)) body+=`<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">${sidePossessiveLabel(who)} Evos are face-down.</p>`;
     else if(!cards.length) body+='<p style="font-size:.78rem;color:var(--text-dim);font-style:italic;">No Evolution cards selected or loaded.</p>';
-    else body+=cards.map(c=>`<div class="delta-list-card"><strong>${amalgDisplayName(c)}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">${c.alignment} | Rank ${c.rank} | NP ${c.numeral} | A:${ruADisp(c.A)} M:${c.M>=0?'+':''}${c.M} S:${c.S===99?'+?':c.S}</span><div style="font-size:.72rem;margin-top:.25rem;"><strong>Requirement:</strong> ${c.requirements||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Cost:</strong> ${c.skillCost||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Skill:</strong> ${c.skillText||'—'}</div></div>`).join('');
+    else body+=cards.map(c=>`<div class="delta-list-card" data-family="${c.evoType||'amalgamation'}" style="--evolution-color:${CLASS_COLORS[c.evoType||'amalgamation']||'#888888'}"><strong>${amalgDisplayName(c)}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">${c.alignment} | Rank ${c.rank} | NP ${c.numeral} | A:${ruADisp(c.A)} M:${c.M>=0?'+':''}${c.M} S:${c.S===99?'+?':c.S}${c.W!=null?' | W:'+ruADisp(c.W):''}</span>${c.protection?`<div style="font-size:.72rem;margin-top:.25rem;"><strong>Protection:</strong> ${c.protection}</div>`:''}<div style="font-size:.72rem;margin-top:.25rem;"><strong>Requirement:</strong> ${c.requirements||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>Cost:</strong> ${c.skillCost||'—'}</div><div style="font-size:.72rem;margin-top:.18rem;"><strong>${c.skillText2?'Skill 1':'Skill'}:</strong> ${c.skillText||'—'}</div>${c.skillText2?`<div style="font-size:.72rem;margin-top:.18rem;"><strong>Skill 2:</strong> ${c.skillCost2||''} ${c.skillText2}</div>`:''}</div>`).join('');
     openModal(`${sidePossessiveLabel(who)} Evos`,body,[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;
   }
   return viewZoneL1(who,zone);
@@ -8685,6 +8696,8 @@ function ruDefenseSeatOf(atkInfo){
   return ruIsOnline()?oppOf(atkInfo&&atkInfo.aWho):'player';
 }
 function offerDefense(atkInfo,onDone){
+  const aw=atkInfo&&atkInfo.aWho,att=atkInfo&&atkInfo.attacker;
+  if(aw&&att&&window.RUFullmetal&&RUFullmetal.confirmCombat(aw,att,[],()=>offerDefense(atkInfo,onDone)))return;
   const dw=ruDefenseSeatOf(atkInfo);
   if(!isHumanSeat(dw)||dw===(atkInfo&&atkInfo.aWho)){onDone();return;}
   if(hhLocked(dw)){try{log('Halcyon Highlands: '+sidePossLower(dw)+' Safeguards are locked.','info');}catch(e){}onDone();return;}
@@ -10134,13 +10147,13 @@ ADEFS['Seven Heaven']={
     if(p.delta&&p.delta.length)return `<p>${sidePossessiveLabel(who)} Δ Zone already holds <strong>${p.delta[0].name}</strong>.</p><p ${dim}>Only one Evolution can be in the Δ Zone at a time.</p>`;
     if(!p.evolutions||!p.evolutions.length)return `<p>${sidePossessiveLabel(who)} Δ Deck has no Evolutions${(G._netMode&&!(G._netDeltaDecks&&(G._netDeltaDecks[who]||[]).length))?' for this match (none was chosen before joining)':' left'}.</p>`;
     return `<p>None of ${sidePossLower(who)} Evolutions can be made right now.</p><p ${dim}>Each Evolution has its own three-Numeral material requirements:</p>`+
-      p.evolutions.map(e=>`<div class="delta-list-card"><strong>${e.name}</strong><br><span ${dim}>${e.requirements||''}</span></div>`).join('');
+      p.evolutions.map(e=>`<div class="delta-list-card" data-family="${e.evoType||'amalgamation'}" style="--evolution-color:${CLASS_COLORS[e.evoType||'amalgamation']||'#888888'}"><strong>${e.name}</strong><br><span ${dim}>${e.requirements||''}</span></div>`).join('');
   }
   function openAmalgamationMenu(who){
     const opts=window.findEvolutionOptions(who);
     if(!opts.length){openModal('Evolution Rank Up',amalgUnavailableHTML(who),[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;}
     let body=`<div style="max-height:330px;overflow-y:auto;">`;
-    opts.forEach((o,i)=>{body+=`<div class="delta-list-card" data-family="${o.evo.evoType}"><strong>${o.evo.name}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">Requirement: ${o.evo.requirements}</span><br><span style="font-size:.72rem;">Elements: ${o.combo.map(x=>x.card.name+' ['+x.zone+']').join(', ')}</span></div>`;});
+    opts.forEach((o,i)=>{body+=`<div class="delta-list-card" data-family="${o.evo.evoType}" style="--evolution-color:${CLASS_COLORS[o.evo.evoType]||'#888888'}"><strong>${o.evo.name}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">Requirement: ${o.evo.requirements}</span><br><span style="font-size:.72rem;">Elements: ${o.combo.map(x=>x.card.name+' ['+x.zone+']').join(', ')}</span></div>`;});
     body+=`</div>`;
     const btns=opts.map((o,i)=>({label:`${o.evo.evoType==='fullmetal'?'Forge':'Synthesize'} ${o.evo.name}`,cls:'mb-skill',fn:()=>{
       closeModal();
@@ -10183,6 +10196,7 @@ ADEFS['Seven Heaven']={
       openAmalgamationMenu(who,true);return;
     }
     if(who!==me&&(G.mode==='addon'||G.mode==='atk')&&G.selAttacker&&card&&ruIsLegalAttackTarget(me,who,'delta')){
+      if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,G.selAttacker.card,(G._addons||[]).map(a=>a.card),()=>deltaZoneClick(who)))return;
       const mp=G[me];let addonNP=0;
       G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};
       if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
@@ -11246,7 +11260,7 @@ function syncAreaVisuals(){
     deads.forEach(d=>{if(!d)return;d.classList.remove('area-dead-active','area-dead-enter','area-dead-exit');d.style.removeProperty('--area-light-rgb');});
   }
 }
-function amalgDisplayName(card){return `Amalgamation ${card.numeral} ${card.skillType||''}`.trim();}
+function amalgDisplayName(card){const family=EVOLUTION_TYPES[card.evoType||card.class||card.cls];return `${family?family.name:'Evolution'} ${card.numeral} ${card.skillType||''}`.trim();}
 window.amalgDisplayName=amalgDisplayName;
 
 
@@ -25453,7 +25467,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       if(!c||c._empty||!isNum(c)||c.canAttack===false||c.frozen||!fo){ nextAttacker(); return; }
       var targets=SLOTS.map(function(s){ return s[0]; }).concat(['delta']).filter(function(tz){ var t=window.zCard(fo,tz); return t&&!t._empty&&(tz==='rank'||!t.isDigit); });
       if(!targets.length){ refresh(); return; }
-      var go=function(tz){ G._defState={}; resolveAtk(me,z,foe,tz,0); G._defState={}; afterModals(nextAttacker); };
+      var go=function(tz){ ruDeclareAttack(me,z,foe,tz,0,function(){afterModals(nextAttacker);},nextAttacker); };
       if(!isHumanSeat(me)){ go(targets[0]); return; }
       ruOwnPrompt(me);
       openModal('Neo Strike Star — attack with '+c.name+'?','<p style="font-size:.82rem;">Choose the card it attacks, or let it pass.</p>',

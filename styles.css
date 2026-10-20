@@ -398,6 +398,7 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .fullmetal-pool .delta-list-card,.delta-list-card[data-family="fullmetal"]{border-color:#929da6;background:rgba(175,185,194,.1);}
 .nc-fullmetal .cname{font-size:clamp(.375rem,.9vw,.5rem);letter-spacing:0;overflow-wrap:normal;}
 .delta-list-card{border:1px solid rgba(111,4,23,.55);border-radius:6px;padding:.55rem;background:rgba(111,4,23,.08);margin-bottom:.45rem;}
+.delta-list-card[data-family][style]{border-color:color-mix(in srgb,var(--evolution-color) 55%,transparent);background:color-mix(in srgb,var(--evolution-color) 8%,transparent);}
 /* Δ Deck builder scroll region — viewport-capped so the whole builder fits any screen (mobile override below). */
 .delta-scroll{max-height:410px;overflow-y:auto;padding-right:.2rem;}
 .delta-pill{display:inline-block;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.08em;border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:.08rem .4rem;margin:.05rem;color:#ffb0b8;}

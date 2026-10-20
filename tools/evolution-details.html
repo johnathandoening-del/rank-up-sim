@@ -12,7 +12,7 @@ iframe{display:none}#result{margin:12px 0;color:#b9e1c7}@media(max-width:700px){
 </style>
 <h1>Evolution Details</h1>
 <p>Controlled visual fixture using actual game cards and detail rendering, not match evidence.</p>
-<button id="run">Render Details</button><div id="result">Ready.</div>
+<button id="run">Render Details</button><button id="deck">Inspect In-Match Delta Deck</button><div id="result">Ready.</div>
 <main id="samples"></main><iframe id="game" src="../index.html"></iframe>
 <script>
 document.getElementById('run').onclick=async function(){
@@ -33,6 +33,12 @@ document.getElementById('run').onclick=async function(){
   }
   await document.fonts.ready;
   document.getElementById('result').textContent='PASS: actual card faces and detail panels rendered; Skill 1 precedes Skill 2; W requirements use Roman numerals.';
+};
+document.getElementById('deck').onclick=function(){
+  const frame=document.getElementById('game'),w=frame.contentWindow;
+  w.closeModal();w.viewZone('player','evolutions');
+  document.getElementById('samples').hidden=true;
+  frame.style.cssText='display:block;width:100%;height:760px;border:0';
 };
 </script>
 </html>
