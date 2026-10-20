@@ -63,7 +63,7 @@ const FULLMETAL_LIBRARY=(()=>{
   return rows.map(row=>Object.assign({
     id:'fullmetal-'+row.numeral,type:'evolution',evoType:'fullmetal',class:'fullmetal',
     name:'Fullmetal '+row.numeral,displayName:'Fullmetal '+row.numeral,alignment:'Unknown',
-    skillType:'Skilled',requirements:'One Numeral '+row.numeral+' + 2 Numerals whose W-stats total to '+row.materialW+'.',
+    skillType:'Skilled',requirements:'One Numeral '+row.numeral+' + 2 Numerals whose W-stats total to '+['','Ⅰ','Ⅱ','Ⅲ','Ⅳ'][row.materialW]+'.',
     protection:'This cannot be removed on the turn it\'s played. After this turn, it cannot be removed via '+
       row.protectedFrom.map(source=>({battle:'battle',action:'Action Card effect',numeral:'Numeral Skill',area:'Area Card effect'})[source]).join(', ')+
       ' for as many of its owner\'s turns as its W-stat.',

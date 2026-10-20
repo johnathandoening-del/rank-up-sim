@@ -24,6 +24,7 @@ for(let i=0;i<ids.length;i+=3){
     assert.ok(result.html.includes('&#xE002;'),result.card.baseId+' must use the seven-point Rank glyph');
     assert.ok(!result.html.includes('Δ★'),result.card.baseId+' retains the five-point Rank star');
     assert.ok(result.html.includes('opacity:.60;'),result.card.baseId+' must use the stronger emblem');
+    assert.ok(result.html.includes('font-size:98.9cqw;'),result.card.baseId+' emblem enlarged by 15%');
     cards.push(result.card);
   }
   assert.deepEqual(e.errors,[]);
@@ -66,5 +67,5 @@ assert.deepEqual(probe.errors,[]);
 fs.mkdirSync(path.join(__dirname,'data'),{recursive:true});
 fs.writeFileSync(path.join(__dirname,'data','evolution-icons.json'),JSON.stringify({setup:MATCH_CODE,cards},null,2));
 console.log('PASS all 41 real Amalgamation cards use the new emblem; names and stats preserved.');
-console.log('PASS distinct Fullmetal icon/name, Amalgamation Area Support icon, generic Evolution fallback; no playable Fullmetal cards or classes added.');
+console.log('PASS distinct Fullmetal icon/name, 15% larger Evolution emblems, Amalgamation Area Support icon and generic Evolution fallback.');
 console.log('PASS Fullmetal silver theme; legal-provider readiness, mixed families, local-seat privacy, turn/occupancy/disabled guards and family-specific materials.');

@@ -383,14 +383,17 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .delta-btn:hover{background:rgba(111,4,23,.3);box-shadow:0 0 14px rgba(111,4,23,.35);}
 .nc-amalgamation{position:relative;background:linear-gradient(135deg,#2a0208,#100105);border:1px solid #6F0417;color:#ffb0b8;box-shadow:inset 0 0 10px rgba(111,4,23,.28);}
 .nc-amalgamation::before{content:'';position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.75;background-image:linear-gradient(180deg,rgba(16,1,5,.38),rgba(16,1,5,.12) 45%,rgba(16,1,5,.62)),url('assets/amalgamation-crystal.png');background-size:cover;background-position:center;}
-.nc-amalgamation .ctop,.nc-amalgamation .cname{position:relative;z-index:1;text-shadow:0 1px 2px #100105,0 0 4px #100105;}
+.nc-amalgamation .ctop,.nc-amalgamation .cname,.cdet.nc-amalgamation>div{position:relative;z-index:1;text-shadow:0 1px 2px #100105,0 0 4px #100105;}
+.cdet.nc-amalgamation{color:#ffd9df;}
+.cdet.nc-amalgamation .cds,.cdet.nc-amalgamation .cdt strong{color:#ffe8ec;}
 .nc-amalgamation .cname{font-size:clamp(.375rem,.9vw,.5rem);line-height:1.1;letter-spacing:0;overflow-wrap:normal;word-break:normal;}
-.nc-fullmetal{background-color:#E1E4E6;background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.15) 0,rgba(255,255,255,.15) 1px,rgba(45,55,65,.06) 1px,transparent 3px),linear-gradient(118deg,#858e96 0%,#E1E4E6 17%,#fff 29%,#a3adb5 42%,#E1E4E6 55%,#fff 66%,#9ca6ae 80%,#E1E4E6 100%);background-size:auto,220% 100%;background-position:center,45% 50%;border:1px solid #f8fafc;color:#20272d;box-shadow:inset 0 1px 2px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #8f9aa3;transition:background-position .35s ease,box-shadow .35s ease;}
+.nc-fullmetal{background-color:#c5cbd0;background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.12) 0,rgba(255,255,255,.12) 1px,rgba(45,55,65,.06) 1px,transparent 3px),linear-gradient(118deg,#7e8992 0%,#c5cbd0 17%,#e4e8eb 29%,#959fa8 42%,#c5cbd0 55%,#e4e8eb 66%,#919ca5 80%,#c5cbd0 100%);background-size:auto,220% 100%;background-position:center,45% 50%;border:1px solid #d7dfe4;color:#20272d;box-shadow:inset 0 1px 2px #eef1f3,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #8f9aa3;transition:background-position .35s ease,box-shadow .35s ease;}
 .nc-fullmetal:hover{background-position:center,60% 50%;box-shadow:inset 0 1px 3px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #bcc6ce;}
 .nc-fullmetal .ctag{color:#34414b;}
+.cdet.nc-fullmetal .cds,.cdet.nc-fullmetal .cdt strong{color:#26343e;}
 .delta-summon{animation:deltaSummon 1.05s ease-out;}
 @keyframes deltaSummon{0%{transform:scale(.86);box-shadow:0 0 0 rgba(var(--delta-summon-rgb,255,120,150),0)}40%{transform:scale(1.09);box-shadow:0 0 28px rgba(var(--delta-summon-rgb,255,120,150),.95)}100%{transform:scale(1);box-shadow:0 0 6px rgba(var(--delta-summon-rgb,255,120,150),.25)}}
-.fullmetal-pool .delta-list-card{border-color:#a3adb5;background:rgba(225,228,230,.04);}
+.fullmetal-pool .delta-list-card,.delta-list-card[data-family="fullmetal"]{border-color:#929da6;background:rgba(175,185,194,.1);}
 .nc-fullmetal .cname{font-size:clamp(.375rem,.9vw,.5rem);letter-spacing:0;overflow-wrap:normal;}
 .delta-list-card{border:1px solid rgba(111,4,23,.55);border-radius:6px;padding:.55rem;background:rgba(111,4,23,.08);margin-bottom:.45rem;}
 /* Δ Deck builder scroll region — viewport-capped so the whole builder fits any screen (mobile override below). */
@@ -441,13 +444,13 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
    Elements label is pinned below via absolute positioning instead of sharing centered flex space. */
 .deltastack{position:relative;}
 .deltastack .zone.delta{width:87px;height:117px;cursor:pointer;border-bottom-left-radius:0;border-bottom-right-radius:0;}
-.zone.delements{position:absolute;top:100%;left:50%;transform:translateX(-50%);width:87px;height:25px;min-height:25px;display:flex;align-items:center;justify-content:center;text-align:center;font-family:'Cinzel',serif;font-size:.49rem;letter-spacing:.04em;border:1px solid rgba(111,4,23,.65);border-top:0;border-radius:0 0 4px 4px;background:rgba(111,4,23,.28);color:#ffb0b8;box-shadow:0 2px 8px rgba(111,4,23,.2);}
+.zone.delements{position:absolute;top:100%;left:50%;transform:translateX(-50%);width:87px;height:25px;min-height:25px;display:flex;align-items:center;justify-content:center;text-align:center;font-family:'Cinzel',serif;font-size:.49rem;letter-spacing:.04em;border:1px solid rgba(var(--evolution-rgb,111,4,23),.65);border-top:0;border-radius:0 0 4px 4px;background:rgba(var(--evolution-rgb,111,4,23),.28);color:var(--evolution-text,#ffb0b8);box-shadow:0 2px 8px rgba(var(--evolution-rgb,111,4,23),.2);}
 .zone.delements.empty{opacity:.35;color:var(--text-dim);background:rgba(30,30,38,.45);border-color:rgba(201,168,76,.18);}
 /* AI row mirror: Δ Zone's Elements label attaches above instead of below, so it hangs on the
    outward side (away from the divider) instead of overlapping toward the player row beneath it.
    Corners swap to match which edge is now the attached seam vs. the free edge. */
 .pfield.ai-side .deltastack .zone.delta{border-bottom-left-radius:7px;border-bottom-right-radius:7px;border-top-left-radius:0;border-top-right-radius:0;}
-.pfield.ai-side .zone.delements{top:auto;bottom:100%;border-top:1px solid rgba(111,4,23,.65);border-bottom:0;border-radius:4px 4px 0 0;}
+.pfield.ai-side .zone.delements{top:auto;bottom:100%;border-top:1px solid rgba(var(--evolution-rgb,111,4,23),.65);border-bottom:0;border-radius:4px 4px 0 0;}
 /* AI row mirror: Δ Deck selector attaches above instead of below the Deck zone. */
 .pfield.ai-side .zstack .zone.dz{border-bottom-left-radius:7px;border-bottom-right-radius:7px;border-top-left-radius:0;border-top-right-radius:0;}
 .pfield.ai-side .zstack .zone.evo{top:auto;bottom:100%;border-radius:5px 5px 0 0;}

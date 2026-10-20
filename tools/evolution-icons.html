@@ -37,7 +37,7 @@ document.getElementById('run').onclick=async function(){
     w.ruPaintEvolutionReady(document.getElementById('ready-amalgamation'),['amalgamation']);
     w.ruPaintEvolutionReady(document.getElementById('ready-fullmetal'),['fullmetal']);
     w.ruPaintEvolutionReady(document.getElementById('ready-both'),['amalgamation','fullmetal']);
-    if(getComputedStyle(finish).backgroundColor!=='rgb(225, 228, 230)'||getComputedStyle(finish).backgroundImage==='none')throw Error('Fullmetal finish is missing.');
+    if(getComputedStyle(finish).backgroundColor!=='rgb(197, 203, 208)'||getComputedStyle(finish).backgroundImage==='none')throw Error('Fullmetal finish is missing.');
     const silverZone=document.getElementById('ready-fullmetal');
     getComputedStyle(silverZone).borderTopColor;
     await Promise.all(silverZone.getAnimations().filter(a=>a.constructor.name==='CSSTransition').map(a=>a.finished));
@@ -55,7 +55,7 @@ document.getElementById('run').onclick=async function(){
     const pixels=glyph=>{ctx.clearRect(0,0,80,80);ctx.fillText(glyph,5,60);return Array.from(ctx.getImageData(0,0,80,80).data);};
     const a=pixels('\uE017'),b=pixels('\uE018');
     if(!a.some((v,i)=>i%4===3&&v)||!b.some((v,i)=>i%4===3&&v)||a.every((v,i)=>v===b[i]))throw Error('Blank or identical Evolution glyphs.');
-    result.textContent='PASS: all 41 Amalgamation icons; distinct Fullmetal glyph; #E1E4E6 metallic finish and silver readiness styling. Fullmetal material rules are not yet configured.';
+    result.textContent='PASS: all 41 Amalgamation icons; distinct Fullmetal glyph; silver-grey metallic finish and silver readiness styling.';
   }catch(e){result.textContent='FAIL: '+e.message;}
   finally{this.disabled=false;}
 };

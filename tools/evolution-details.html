@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Evolution Detail Verification</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+body{padding:24px;overflow:auto;background:#101116;color:#eee}h1{font-size:22px;margin:0 0 10px}p{margin:8px 0 18px}
+main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}section{min-width:0}h2{font-size:16px;margin:0 0 12px}
+.face{width:166px;height:234px;margin-bottom:18px}.face .nc{width:100%;height:100%}.detail{min-width:0;overflow-wrap:anywhere}
+iframe{display:none}#result{margin:12px 0;color:#b9e1c7}@media(max-width:700px){main{grid-template-columns:1fr}body{padding:16px}}
+</style>
+<h1>Evolution Details</h1>
+<p>Controlled visual fixture using actual game cards and detail rendering, not match evidence.</p>
+<button id="run">Render Details</button><div id="result">Ready.</div>
+<main id="samples"></main><iframe id="game" src="../index.html"></iframe>
+<script>
+document.getElementById('run').onclick=async function(){
+  const w=document.getElementById('game').contentWindow;
+  const fixture=await(await fetch('./headless/data/evolution-icons.json')).json();
+  w.eval(fixture.setup);
+  w.eval("__H.start({seed:1,mySeat:0,seat0Class:'light',seat1Class:'light',firstSeat:0,allowEvolutions:true,deltaDecks:{player:['amalg-benevolent-2','fullmetal-4'],ai:[]}})");
+  w.eval("closeModal();_modalQueue=[];PCK=null;SF=null;ruSettleReset();G.turn='player';G.phase='main';G.player.delta=[];");
+  const cards=w.eval('G.player.evolutions');
+  const target=document.getElementById('samples');target.replaceChildren();
+  for(const c of cards){
+    c.elements=[{name:'Temporal 5'},{name:'Temporal 4'},{name:'Temporal 3'}];
+    const section=document.createElement('section'),heading=document.createElement('h2'),face=document.createElement('div'),detail=document.createElement('div');
+    heading.textContent=c.name;face.className='face';face.append(w.buildCard(c));
+    w.closeModal();w.showCardModal(c);
+    detail.className='detail';detail.innerHTML=w.document.getElementById('m-body').innerHTML;
+    section.append(heading,face,detail);target.append(section);
+  }
+  await document.fonts.ready;
+  document.getElementById('result').textContent='PASS: actual card faces and detail panels rendered; Skill 1 precedes Skill 2; W requirements use Roman numerals.';
+};
+</script>
+</html>

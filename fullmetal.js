@@ -217,11 +217,33 @@
       effect:(next,x)=>applySkill(w,c,which,x,next),done:done||function(){},
     });
   }
-  function openSkills(w,c,done){
+  function relevant(w,c,which,event){
+    if(!event)return true;
+    const s=state(w),n=c.numeral;
+    if(event.offered&&event.offered.includes(which))return false;
+    if(which===2)return (event.kind==='damage'||event.kind==='attack'&&event.losses[w]>0)&&!s.noMorale&&s.shield===0;
+    if(event.kind==='damage')return !s.noMorale&&(n===8||n===4&&event.cause==='numeral'&&!s.noSkillMorale);
+    if(event.kind==='casualty'){
+      if(n===1)return !s.lessCas;
+      if(!event.additional)return false;
+      return n===3&&['action','numeral'].includes(event.cause)&&!s.noEffectAdditionalCas||n===6&&event.cause==='battle'&&!s.noAttackAdditionalCas;
+    }
+    if(event.kind==='afterAttack')return n===7&&event.dw===w;
+    if(event.kind!=='attack')return false;
+    if(n===5)return true;
+    if(n===9)return event.dw===w;
+    if(n===2)return event.dw===w&&event.losses[w]>0&&event.addonNP>0&&s.noAddonFrom!==event.aw;
+    if(n===6)return event.dw===w&&event.additionalDamage&&!s.noAdditionalMorale&&!s.noAttackAdditionalCas;
+    return n===8&&event.losses[w]>0&&!s.noMorale;
+  }
+  function available(w,c,event){return [1,2].filter(k=>legal(w,c,k)&&relevant(w,c,k,event));}
+  function openSkills(w,c,done,event){
     if(metal(w)!==c){if(done)done();return;}
     const opts=[];
-    if(legal(w,c,1))opts.push({label:'Skill 1: '+c.name,fn:()=>use(w,c,1,()=>openSkills(w,c,done))});
-    if(legal(w,c,2))opts.push({label:'Skill 2: '+c.name,fn:()=>use(w,c,2,()=>openSkills(w,c,done))});
+    available(w,c,event).forEach(k=>opts.push({label:'Skill '+k+': '+c.name,fn:()=>{
+      if(event)(event.offered||(event.offered=[])).push(k);
+      use(w,c,k,()=>openSkills(w,c,done,event));
+    }}));
     if(!opts.length){if(done)done();else F.say(c.name+': no payable skill is available.','info');return;}
     opts.push({label:'Pass',fn:()=>{if(done)done();}});
     F.choose(w,c.name+' skills',c.skillCost+' '+c.skillText+'<br><br>Skill 2 (M: +0): '+c.skillCost2+' '+c.skillText2,opts);
@@ -230,15 +252,41 @@
     G._fullmetalAttackSnap={aWho:s.aWho,dWho:s.dWho,addons:s.addons.map(c=>({id:c.id,zone:F.zoneOf(G[s.aWho],c),np:F.np(c)}))};
     const st=state(s.dWho);if(!st.attackers.includes(s.aWho))st.attackers.push(s.aWho);
   }
-  ruHook('targeted',(aw,az,dw,dz,resume)=>{
-    const seats=all().filter(w=>metal(w));
-    if(!seats.length)return false;
+  ruHook('targeted',(aw,az,dw,dz,resume,addonNP)=>{
     G._fullmetalPendingAttack={aw,az,dw,dz};
     const s=state(dw);if(!s.attackers.includes(aw))s.attackers.push(aw);
+    const rec=G._atkAddonCards;
+    const flankAddon=rec&&rec.aWho===aw?rec.cards.filter(c=>F.zoneOf(G[aw],c)!=='rank').reduce((n,c)=>n+F.np(c),0):addonNP||0;
+    const att=window.zCard(G[aw],az),def=window.zCard(G[dw],dz);
+    const a=F.np(att)+(addonNP||0),d=F.np(def);
+    const losses={[aw]:d>a?d-a:d===a?a:0,[dw]:a>d?a-d:d===a?a:0};
+    const printed=Math.max(0,(att&&att.numeral||0)-(def&&def.numeral||0));
+    const additionalDamage=a>=d&&(F.rp(att)>F.rp(def)||losses[dw]>printed);
+    const event={kind:'attack',aw,dw,addonNP:flankAddon,losses,additionalDamage};
+    const seats=all().filter(w=>metal(w)&&available(w,metal(w),event).length);
+    if(!seats.length){G._fullmetalPendingAttack=null;return false;}
     let i=0;
-    const next=()=>{if(i===seats.length){G._fullmetalPendingAttack=null;resume();return;}const w=seats[i++];openSkills(w,metal(w),next);};
+    const next=()=>{if(i===seats.length){G._fullmetalPendingAttack=null;resume();return;}const w=seats[i++];openSkills(w,metal(w),next,{...event});};
     next();return true;
   });
+  ruHook('attackResolved',b=>{
+    const w=b.dWho,c=metal(w),event={kind:'afterAttack',dw:w};
+    if(c&&available(w,c,event).length)window.ruWhenSettled(window.ruTableClear,()=>openSkills(w,c,null,event),{defer:true});
+  });
+  function offerCasualty(w,entry,resume){
+    if(!entry||entry._fullmetalOffered)return false;
+    entry._fullmetalOffered=true;
+    const c=metal(w),event={kind:'casualty',cause:entry.source||source(),additional:!!entry.additional};
+    if(!c||!available(w,c,event).length)return false;
+    openSkills(w,c,resume,event);return true;
+  }
+  function offerDamage(w,n,cause,commit){
+    const c=metal(w),event={kind:'damage',cause};
+    if(!(n>0)||!c||!available(w,c,event).length)return false;
+    // Hold the damage itself, not a refund after it has already changed the position.
+    openSkills(w,c,()=>{commit(morale(w,n,cause));renderAll();checkWin();},event);
+    return true;
+  }
   ruHook('phaseBegan',ph=>{
     for(const w of all()){
       const c=metal(w);if(!c)continue;
@@ -246,15 +294,6 @@
         c._fullmetalLastOwnerTurn=turn();c._fullmetalOwnerTurns=(c._fullmetalOwnerTurns||0)+1;
       }
     }
-    // Off-turn seats receive owned choices, not a local-only menu or an AI fallback.
-    const waiting=all().filter(w=>w!==G.turn&&metal(w));
-    if(!waiting.length||ph==='end')return;
-    const key=turn()+':'+ph+':'+(G._phaseSeq||0);
-    if(G._fullmetalWindow===key)return;G._fullmetalWindow=key;
-    window.ruWhenSettled(window.ruTableClear,()=>{
-      if(G.gameOver||G.phase!==ph)return;
-      let i=0;const next=()=>{if(i<waiting.length){const w=waiting[i++];openSkills(w,metal(w),next);}};next();
-    },{defer:true});
   });
   function endTurn(){
     all().forEach(w=>{
@@ -284,7 +323,7 @@
     const deck=window.RU_PLAYER_DELTA_DECK||[],buttons=[];
     const body=FULLMETAL_LIBRARY.map(c=>{
       const count=deck.filter(id=>id===c.id).length;
-      return '<section class="delta-list-card"><strong>'+c.name+' (Unknown)</strong><div>A:'+c.A+' | M:+'+c.M+' | S:'+(c.SText||'+'+c.S)+' | W:'+c.W+' | Rank:'+c.rank+'</div><p>'+c.requirements+'</p><p>'+c.protection+'</p><p>Cost: '+c.skillCost+'</p><p>Skill 1: '+c.skillText+'</p><p>Skill 2 (M: +0): '+c.skillCost2+' '+c.skillText2+'</p><button class="mb" onclick="addDeltaPick(\''+c.id+'\',\'fullmetal\')" '+(deck.length>=3?'disabled':'')+'>Add '+c.name+'</button>'+(count?'<button class="mb" onclick="removeDeltaPick(\''+c.id+'\',\'fullmetal\')">Remove '+c.name+' ('+count+')</button>':'')+'</section>';
+      return '<section class="delta-list-card" data-family="fullmetal"><strong>'+c.name+' (Unknown)</strong><div>A:'+c.A+' | M:+'+c.M+' | S:'+(c.SText||'+'+c.S)+' | W:'+ruADisp(c.W)+' | Rank:'+c.rank+'</div><p>'+c.requirements+'</p><p>'+c.protection+'</p><p>Cost: '+c.skillCost+'</p><p>Skill 1: '+c.skillText+'</p><p>Skill 2 (M: +0): '+c.skillCost2+' '+c.skillText2+'</p><button class="mb" onclick="addDeltaPick(\''+c.id+'\',\'fullmetal\')" '+(deck.length>=3?'disabled':'')+'>Add '+c.name+'</button>'+(count?'<button class="mb" onclick="removeDeltaPick(\''+c.id+'\',\'fullmetal\')">Remove '+c.name+' ('+count+')</button>':'')+'</section>';
     }).join('');
     buttons.push({label:'Back',fn:()=>window.deltaBuilderHome()},{label:'Close',fn:()=>closeModal()});
     if(typeof _modalQueue!=='undefined')_modalQueue=[];
@@ -292,5 +331,5 @@
     document.getElementById('modal').classList.add('open');
   }
   window.findFullmetalOptions=materials;
-  window.RUFullmetal={materials,enter,protected:protectedCard,source,morale,casualty,negated,effect,areaEffect,beginSource,legal,use,openSkills,openBuilder,attackSnap,state,leave,endTurn};
+  window.RUFullmetal={materials,enter,protected:protectedCard,source,morale,casualty,negated,effect,areaEffect,beginSource,legal,use,openSkills,openBuilder,attackSnap,state,leave,endTurn,offerCasualty,offerDamage};
 })();

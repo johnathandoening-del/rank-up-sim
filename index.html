@@ -1071,12 +1071,17 @@ window.finalizeDeckOut=function(w){
   return EG('ai',r);
 };
 // Every entry into the Drop is recorded immediately, even if an effect retrieves it before rendering.
-function ruLoseMP(p,amount,cause){
+function ruLoseMP(p,amount,cause,after){
   if(!p)return 0;
   let loss=Number(amount)||0;
   const seat=(G.sideOrder||['player','ai']).find(w=>G[w]===p);
-  if(loss>0&&seat&&window.RUFullmetal)loss=RUFullmetal.morale(seat,loss,cause||RUFullmetal.source());
-  p.mp-=loss;
+  const apply=n=>{p.mp-=n;if(after)after(n);};
+  if(loss>0&&seat&&window.RUFullmetal){
+    cause=cause||RUFullmetal.source();
+    if(RUFullmetal.offerDamage(seat,loss,cause,apply))return 0;
+    loss=RUFullmetal.morale(seat,loss,cause);
+  }
+  apply(loss);
   return loss;
 }
 function ruDrop(p,...cards){
@@ -1317,6 +1322,8 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
       log2('Casualty Draw negated before entering the Deadzone.','heal');
       return step();
     }
+    if(typeof entry==='string'){entry={who:entry};window._RUcq[0]=entry;}
+    if(window.RUFullmetal&&window.RUFullmetal.offerCasualty(actual,entry,step))return;
     window._RUcq.shift();
     if(actual!==who){ log2('Reverse: this Casualty Draw is redirected to '+(window.sideObjectLabel?sideObjectLabel(actual):(sideObjectLabel(actual)))+'.','info'); }
     who = actual; // the recipient takes over for drawing, E2 resolution, and placement
@@ -4392,7 +4399,7 @@ function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve){
     const defenderSkill=function(){if(!window.ruOfferRestorative5(dw,target,target,defend))defend();};
     if(!window.ruOfferRestorative5(aw,att,target,defenderSkill))defenderSkill();
   };
-  if(window.ruTargetedHook&&window.ruTargetedHook(aw,aZone,dw,dZone,restorativeSkills))return;
+  if(window.ruTargetedHook&&window.ruTargetedHook(aw,aZone,dw,dZone,restorativeSkills,addonNP))return;
   restorativeSkills();
 }
 window.ruDeclareAttack=ruDeclareAttack;
@@ -6481,7 +6488,8 @@ function emblemHTML(card){
     return '<div class="cemblem" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:'+op+';z-index:0;pointer-events:none;overflow:hidden;">'+neoStarSVG(sz,true)+'</div>';
   }
   var _customIcon=/[-]/.test(ic);   // RU Classic Icons custom-font class glyph (any glyph in its Private Use Area)?
-  var fs=((_customIcon?86:69)*emblemScale(card)).toFixed(1)+'cqw';   // custom class icons +25%; non-custom (★/Ⓐ/◯/⨿…) original
+  var evolutionScale=card&&['amalgamation','fullmetal'].includes(card.evoType||card.class)?1.15:1;
+  var fs=((_customIcon?86:69)*emblemScale(card)*evolutionScale).toFixed(1)+'cqw';
   return '<div class="cemblem" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:'+fs+';line-height:1;color:'+emblemColor(card)+';opacity:'+op+';z-index:0;pointer-events:none;overflow:hidden;">'+ic+'</div>';
 }
 window.emblemHTML=emblemHTML;
@@ -6855,10 +6863,10 @@ function showCardModal(card,handIdx,extraBtns){
         const S=card.S===99?'+?':(card.S==null?'㎁':(card.S>=0?`+${card.S}`:card.S));
         body+=`<div class="cds">${(EVOLUTION_TYPES[card.evoType]||EVOLUTION_TYPES.amalgamation).name} Evolution | ${card.alignment||''} | NP: ${card.currentNP} | Rank: ${card.currentRP} | A: ${ruADisp(card.A)} | M: ${card.M>=0?'+':''}${card.M} | S: ${S}${card.W!=null?' | W: '+ruADisp(ruW(card)):''}</div>`;
         if(card.protection)body+=`<div class="cdt"><strong>Protection:</strong> ${card.protection}</div>`;
-        if(card.skillText2)body+=`<div class="cdt"><strong>Skill 2 (M: +0):</strong> ${card.skillCost2} ${card.skillText2}</div>`;
         if(card.requirements)body+=`<div class="cdt"><strong>Requirement:</strong> ${card.requirements}</div>`;
         if(card.skillCost)body+=`<div class="cdt"><strong>Cost:</strong> ${card.skillCost}</div>`;
-        body+=`<div class="cdt"><strong>Skill:</strong> ${card.skillText||'No skill.'}</div>`;
+        body+=`<div class="cdt"><strong>${card.skillText2?'Skill 1':'Skill'}:</strong> ${card.skillText||'No skill.'}</div>`;
+        if(card.skillText2)body+=`<div class="cdt"><strong>Skill 2${card.evoType==='fullmetal'?' (M: +0)':''}:</strong> ${card.skillCost2} ${card.skillText2}</div>`;
         body+=`<div class="cdt"><strong>Elements:</strong> ${(card.elements||[]).map(c=>c.name).join(', ')||'None'}</div>`;
       }
       body+=`</div>`;
@@ -10103,8 +10111,10 @@ ADEFS['Seven Heaven']={
     p.delta=[evo];
     if(evo.evoType==='fullmetal')window.RUFullmetal.enter(who,evo,elements);
     const family=EVOLUTION_TYPES[evo.evoType||'amalgamation'].name;
-    if(evo.M){p.mp+=evo.M;logAs(who,`{You} {perform|performs} a ${family} Rank Up into ${evo.name}. ${evo.M>0?'+':''}${evo.M} MP.`,'imp');}
-    else logAs(who,`{You} {perform|performs} a ${family} Rank Up into ${evo.name}.`,'imp');
+    const verb=evo.evoType==='fullmetal'?'{forge|forges}':'{synthesize|synthesizes}';
+    const process=evo.evoType==='fullmetal'?'metallicizing one Numeral through two Elements':'amalgamating three Elements of the same value';
+    if(evo.M)p.mp+=evo.M;
+    logAs(who,`{You} ${verb} ${evo.name} by ${process}.${evo.M?' '+(evo.M>0?'+':'')+evo.M+' MP.':''}`,'imp');
     log(`Elements: ${elements.map(c=>c.name).join(', ')}.`,'info');
     playDeltaAnimation(who);checkWin();renderAll();
   }
@@ -10123,9 +10133,9 @@ ADEFS['Seven Heaven']={
     const opts=window.findEvolutionOptions(who);
     if(!opts.length){openModal('Evolution Rank Up',amalgUnavailableHTML(who),[{label:'Close',fn:()=>closeModal()}]);ruTagViewModal();return;}
     let body=`<div style="max-height:330px;overflow-y:auto;">`;
-    opts.forEach((o,i)=>{body+=`<div class="delta-list-card"><strong>${o.evo.name}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">Requirement: ${o.evo.requirements}</span><br><span style="font-size:.72rem;">Elements: ${o.combo.map(x=>x.card.name+' ['+x.zone+']').join(', ')}</span></div>`;});
+    opts.forEach((o,i)=>{body+=`<div class="delta-list-card" data-family="${o.evo.evoType}"><strong>${o.evo.name}</strong><br><span style="font-size:.72rem;color:var(--text-dim);">Requirement: ${o.evo.requirements}</span><br><span style="font-size:.72rem;">Elements: ${o.combo.map(x=>x.card.name+' ['+x.zone+']').join(', ')}</span></div>`;});
     body+=`</div>`;
-    const btns=opts.map((o,i)=>({label:`Synthesize ${o.evo.name}`,cls:'mb-skill',fn:()=>{
+    const btns=opts.map((o,i)=>({label:`${o.evo.evoType==='fullmetal'?'Forge':'Synthesize'} ${o.evo.name}`,cls:'mb-skill',fn:()=>{
       closeModal();
       // The Amalgamation Rank Up is this player's input; the menu itself is their private view.
       const action={t:'amalgRank',evoCardId:o.evo.id,evoId:o.evo.baseId||o.evo.id,elementIds:o.combo.map(x=>x.card&&x.card.id).filter(Boolean)};
@@ -11798,6 +11808,8 @@ function useRetL2(idx,card){
       if(!elBar||!p)return;
       const evo=p.delta&&p.delta[0];
       const n=evo&&evo.elements?evo.elements.length:0;
+      elBar.style.setProperty('--evolution-rgb',evo&&evo.evoType==='fullmetal'?'175,185,194':'111,4,23');
+      elBar.style.setProperty('--evolution-text',evo&&evo.evoType==='fullmetal'?'#e1e4e6':'#ffb0b8');
       elBar.textContent=`ELEMENTS: ${n}`;
       elBar.classList.toggle('empty',!evo);
       elBar.title=evo?`Elements under ${amalgShortName(evo)}: ${n}`:'No active Δ Zone Numeral.';
@@ -23948,7 +23960,12 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.ruRetaliatoryHook=function(idx,card){ return first(HOOKS.retaliatory,[idx,card]); };
   window.ruE2Hook=function(w,card){ return first(HOOKS.e2,[w,card]); };
   // the defender's answers when an attack names it or its Numeral (before the Safeguard window): first takes over, goes on via resume
-  window.ruTargetedHook=function(aw,aZone,dw,dZone,resume){ return first(HOOKS.targeted,[aw,aZone,dw,dZone,resume]); };
+  window.ruTargetedHook=function(aw,aZone,dw,dZone,resume,addonNP){
+    let i=0;
+    const next=()=>{if(!dispatch())resume();};
+    function dispatch(){while(i<HOOKS.targeted.length)if(HOOKS.targeted[i++](aw,aZone,dw,dZone,next,addonNP))return true;return false;}
+    return dispatch();
+  };
   // a card drawn into a hand
   window.ruDrawnHook=function(w,card){ HOOKS.drawn.forEach(function(f){ try{ f(w,card); }catch(e){ console.error(e); } }); };
   // the phase that begins instead of ph (a second Battle Phase …), or null
@@ -25029,7 +25046,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // the top n cards of a Deck are ceded (sent to the Deadzone)
   function cedeTop(w,n){ var p=side(w),out=[]; for(var i=0;i<n&&p.deck.length;i++){ var c=p.deck.shift(); dzAdd(p,c); out.push(c); } return out; }
   // seat t loses n MP to an effect (morale: it is Morale Damage — the last Morale Damage taken)
-  function damage(t,n,label,morale){ if(!(n>0)||!G[t])return; if(window.RUFullmetal)n=window.RUFullmetal.morale(t,n,window.RUFullmetal.source()==='rule'?(morale?'numeral':'effect'):window.RUFullmetal.source()); G[t].mp-=n; if(morale)ruSetLastMoraleTo(t,n); say(label+': '+sideVerbLabel(t,'lose','loses')+' '+n+' MP.','dmg'); }
+  function damage(t,n,label,morale){ if(!(n>0)||!G[t])return; const source=window.RUFullmetal?window.RUFullmetal.source():'rule';ruLoseMP(G[t],n,source==='rule'?(morale?'numeral':'effect'):source,loss=>{if(morale)ruSetLastMoraleTo(t,loss);say(label+': '+sideVerbLabel(t,'lose','loses')+' '+loss+' MP.','dmg');}); }
   window.ruFx={side:side,say:say,refresh:refresh,tn:tn,np:np,rp:rp,isNum:isNum,living:living,SLOTS:SLOTS,ZONES:ZONES,realRank:realRank,
     fieldCards:fieldCards,zoneOf:zoneOf,onField:onField,locate:locate,fresh:fresh,fieldTo:fieldTo,standDown:standDown,millN:millN,
     skillMP:skillMP,fromHand:fromHand,fromDeadzone:fromDeadzone,deadzoneToDrop:deadzoneToDrop,grantAttack:grantAttack,ask:ask,choose:choose,
@@ -28690,6 +28707,9 @@ window.ruSpecPace=function(base){
           undestroy(p,destroyedCard,zoneKey);
           window.ruActLock(w,null,{turn:G._turnNo||0},amalg.name,true);
           if(amalg.pool==='benevolent')queueRecoverEndPhase(w,'discard',amalg.name);
+          if(amalg.pool==='malevolent'){
+            (G._amalg6EndMills||(G._amalg6EndMills=[])).push({turn:G._turnNo||0,targets:allOpponents(w),by:amalg.name});
+          }
           log(amalg.name+': negated the destruction of '+destroyedCard.name+'. '+sideSubjectLabel(w)+' cannot use Action Cards this turn.','heal');
           done();
         }
@@ -28698,7 +28718,7 @@ window.ruSpecPace=function(base){
     if(isHumanSeat(w)&&typeof openModal==='function'){
       ruOwnPrompt(w);
       openModal(amalg.name+' — Negate Destruction?',
-        '<p style="font-size:.82rem;">Your '+destroyedCard.name+' would be destroyed. Use '+amalg.name+' to negate it? Sends an Amalgamation Element to the Drop; you cannot use Action Cards this turn.</p>',
+        '<p style="font-size:.82rem;">'+amalg.skillCost+'</p><p>'+amalg.skillText+'</p><p>'+destroyedCard.name+' would be destroyed.</p>',
         [{label:'Use '+amalg.name,cls:'mb-skill',fn:function(){closeModal();use();}},
          {label:'Decline',fn:function(){closeModal();}}]);
     }else{
@@ -28706,6 +28726,12 @@ window.ruSpecPace=function(base){
     }
   }
   window.offerAmalg6RAtk26=offerAmalg6;
+  ruHook('phaseBegan',function(ph){
+    if(ph!=='end')return;
+    const due=(G._amalg6EndMills||[]).filter(e=>e.turn===(G._turnNo||0));
+    G._amalg6EndMills=(G._amalg6EndMills||[]).filter(e=>e.turn!==(G._turnNo||0));
+    due.forEach(e=>e.targets.forEach(w=>{if(G[w]){window.ruFx.millN(w,1);log(e.by+': '+sideSubjectLabel(w)+' mills 1 at End Phase.','dmg');}}));
+  });
 })();
 </script>
 
