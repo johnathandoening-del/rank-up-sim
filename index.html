@@ -3240,19 +3240,18 @@ function beginPhaseL14(ph){
       }
     }
     if(!_skipInner){
-      // (was L8 before) Phantom 6 return queue
-      if(ph==='end'&&G&&G._phantom6ReturnQueue){
-        var q=G._phantom6ReturnQueue, owner=G[q.who];
-        if(owner){var b=(owner.hand||[]).find(function(c){return c.id===q.borrowedId;});
-          if(b){window.moveXRA6(owner,b,'deadzone');log('Phantom 6: no successful attack this turn, so '+b.name+' returns to Deadzone.','dmg');}}
-        G._phantom6ReturnQueue=null;
+      if(ph==='end'&&G){
+        (G._phantom6Returns||[]).forEach(function(q){
+          var owner=G[q.who],b=owner&&(owner.hand||[]).find(function(c){return c.id===q.borrowedId;});
+          if(b){window.moveXRA6(owner,b,'deadzone');log('Phantom 6: no successful attack this turn, so '+b.name+' returns to Deadzone.','dmg');}
+        });
+        G._phantom6Returns=[];
       }
       // ---- inner chain ----
       beginPhaseL7(ph);
       // (was L9 after) clear per-turn card flags
       if(ph==='end'&&G){
         (G.sideOrder||['player','ai']).forEach(w=>{const p=G[w];if(!p)return;window.fieldCardsXRBP9(p).forEach(c=>{delete c._zeroNoCas;delete c._phantom6Borrowed;});});
-        G._phantom6ReturnQueue=null;
       }
     }
     // (was L11 after) restore Seventh-changed ranks -- runs even on the L10 gameOver path
@@ -4361,11 +4360,13 @@ window.ruIsLegalAttackTarget=ruIsLegalAttackTarget;window.ruIsLegalAddon=ruIsLeg
 // reactive "when attacked" skills before damage, Retaliatory cards afterwards), each as that defender's own
 // prompt. A BOT defender reacts for itself inside resolveAtk. `afterResolve` runs once the attack is spent.
 function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel){
+  if(G._atkAddonCards&&!addonNP&&!G._atkAddonCards.declared)G._atkAddonCards=null;
   const declaring=window.zCard(G[aw],aZone),rec=G._atkAddonCards;
   const addons=addonNP>0&&rec&&declaring&&rec.aWho===aw&&rec.attId===declaring.id?rec.cards:[];
   if(window.RUFullmetal&&RUFullmetal.confirmCombat(aw,declaring,addons,()=>ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel),afterCancel))return;
-  // An attacker's own "when you attack" skill (Celestial 5) is answered first; the declaration goes on after it.
-  if(window.ruBeforeAttack&&window.ruBeforeAttack(aw,aZone,dw,dZone,function(){ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel);}))return;
+  // Resume after the declaration triggers, not at their beginning: declining a skill must not reoffer it.
+  const proceed=function(){
+  if(rec&&declaring&&rec.aWho===aw&&rec.attId===declaring.id)addonNP=rec.cards.reduce((n,c)=>n+npOf(c),0);
   const AP=G[aw],att=window.zCard(AP,aZone);
   // What happens after the attack (attacks left, mode, hints) is the ATTACKER's flow — run it as the attacker
   // even when the defender's answer (a Safeguard, a reactive skill) is the input that completed the attack.
@@ -4400,10 +4401,21 @@ function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel){
   const restorativeSkills=function(){
     const target=window.zCard(G[dw],dZone);
     const defenderSkill=function(){if(!window.ruOfferRestorative5(dw,target,target,defend))defend();};
-    if(!window.ruOfferRestorative5(aw,att,target,defenderSkill))defenderSkill();
+    const participants=ruAttackParticipants(aw,att);let i=0;
+    const next=function(){while(i<participants.length)if(window.ruOfferRestorative5(aw,participants[i++],target,next))return;defenderSkill();};
+    next();
   };
   if(window.ruTargetedHook&&window.ruTargetedHook(aw,aZone,dw,dZone,restorativeSkills,addonNP))return;
   restorativeSkills();
+  };
+  if(window.ruBeforeAttack&&window.ruBeforeAttack(aw,aZone,dw,dZone,proceed))return;
+  proceed();
+}
+
+function ruAttackParticipants(w,att){
+  const rec=G._atkAddonCards||G._battleAttackContext;
+  const cards=att?[att].concat(rec&&rec.aWho===w&&rec.attId===att.id?rec.cards:[]):[];
+  return cards.filter((c,i)=>c&&cards.findIndex(x=>x&&x.id===c.id)===i);
 }
 window.ruDeclareAttack=ruDeclareAttack;
 function hlTgt(){
@@ -4570,7 +4582,7 @@ function zoneClickL1(owner,zone){
     const isTargetable=livingOpponentsOf(me).indexOf(owner)!==-1;
     if(isTargetable&&(G.mode==='addon'||G.mode==='atk')&&G.selAttacker&&ruIsLegalAttackTarget(me,owner,zone)){
       if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,G.selAttacker.card,(G._addons||[]).map(a=>a.card),()=>zoneClickL1(owner,zone)))return;
-      if(!card){ruNotice(me,'No card there.');return;}let addonNP=0;const mp=G[me];G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
+      if(!card){ruNotice(me,'No card there.');return;}let addonNP=0;const mp=G[me];G._atkAddonCards={declared:true,aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
       const aZone=G.selAttacker.zone;
       G.selAttacker=null;G.selAddon=null;G._deltaActionCap=null;clearHL();
       // The defender answers the attack first (reactive skills, Safeguards), then it resolves; then the
@@ -4706,18 +4718,7 @@ function resolveAtkL5(aWho,aZone,dWho,dZone,addonNP){
   }
 
 function resolveAtkL6(aWho,aZone,dWho,dZone,addonNP){
-    const AP=G[aWho],DP=G[dWho],att=zCard(AP,aZone),def=zCard(DP,dZone);
-    const queued=(G._phantom6ReturnQueue&&att&&G._phantom6ReturnQueue.who===aWho&&G._phantom6ReturnQueue.attackerId===att.id)?G._phantom6ReturnQueue:null;
-    const wouldSucceed=!!(att&&def&&((window.npXRA6(att)+(addonNP||0))>window.npXRA6(def)));
-    const beforeHand=queued?[...AP.hand]:null;
-    resolveAtkL5(aWho,aZone,dWho,dZone,addonNP);
-    if(queued){
-      G._phantom6ReturnQueue=null;
-      const borrowed=AP.hand.find(c=>c.id===queued.borrowedId);
-      if(!wouldSucceed&&borrowed){window.moveXRA6(AP,borrowed,'deadzone');log(`Phantom 6: attack was unsuccessful, so ${borrowed.name} returns to Deadzone.`, 'dmg');}
-      else if(wouldSucceed)log('Phantom 6: attack succeeded, borrowed Phantom stays in hand.','heal');
-      renderAll();
-    }
+    return resolveAtkL5(aWho,aZone,dWho,dZone,addonNP);
   }
 
 function resolveAtkL7(aWho,aZone,dWho,dZone,addonNP){
@@ -4731,8 +4732,10 @@ function resolveAtkL8(aWho,aZone,dWho,dZone,addonNP){
       const beforeMP=DP?DP.mp:0,beforeCas=DP?DP.cas:0;
       const r=resolveAtkL7(aWho,aZone,dWho,dZone,addonNP);
       const success=DP&&(DP.mp<beforeMP||DP.cas>beforeCas);
-      if(att&&att._haste8GainAfterAttack){att.currentNP=window.NPRA8(att)+2;log('Haste 8: '+att.name+' gains +2 window.NPRA8 after attacking.', 'heal');}
-      if(att&&att._haste6RewardReady&&success){att._haste6RewardReady=false;window.addHasteRewardRA8(aWho,att);}
+      ruAttackParticipants(aWho,att).forEach(function(c){
+        if(c._haste8GainAfterAttack){c.currentNP=window.NPRA8(c)+2;log('Haste 8: '+c.name+' gains +2 NP after attacking.', 'heal');}
+        if(c._haste6RewardReady&&success){c._haste6RewardReady=false;window.addHasteRewardRA8(aWho,c);}
+      });
       try{checkWin();renderAll();}catch(e){}
       return r;
     }
@@ -4802,11 +4805,11 @@ function resolveAtkL10(aWho,aZone,dWho,dZone,addonNP){
 function resolveAtkL11(aWho,aZone,dWho,dZone,addonNP){
       const attacker=window.zoneCardRA11(aWho,aZone);
       const defender=window.zoneCardRA11(dWho,dZone);
-      const s8=attacker&&attacker.name==='Shadow 8'&&attacker._s8Active;
+      const participants=ruAttackParticipants(aWho,attacker);
       const defenderNP=window.npL4(defender);
-      const bankNP=s8&&attacker._s8Bank?window.npL4(attacker._s8Bank):0;
       const r=resolveAtkL10.apply(this,arguments);
-      if(s8&&G&&G[aWho]){
+      participants.forEach(function(attacker){if(attacker.name==='Shadow 8'&&attacker._s8Active&&G&&G[aWho]){
+        const bankNP=attacker._s8Bank?window.npL4(attacker._s8Bank):0;
         attacker._s8Hits=(attacker._s8Hits||0)+1;
         G[aWho].mp+=bankNP;
         window.safeLogL4('Shadow 8: gained '+bankNP+' MP from its stored Bank card after attack '+attacker._s8Hits+'.','heal');
@@ -4815,13 +4818,13 @@ function resolveAtkL11(aWho,aZone,dWho,dZone,addonNP){
           window.safeLogL4('Shadow 8: after 3 attacks, it gains '+defenderNP+' NP from the attacked Numeral.','heal');
         }
         try{renderAll();checkWin();}catch(e){}
-      }
+      }});
       return r;
     }
 
 function resolveAtkL12(aWho,aZone,dWho,dZone,addonNP){
       const attacker=window.pickFieldRA12(window.sideRA12b(aWho),aZone);
-      window.markShadow9AttackRA12(aWho,dWho,attacker);
+      ruAttackParticipants(aWho,attacker).forEach(function(c){window.markShadow9AttackRA12(aWho,dWho,c);});
       return resolveAtkL11.apply(this,arguments);
     }
 
@@ -4945,12 +4948,12 @@ function resolveAtkL18(aWho,aZone,dWho,dZone,addonNP){
         if(att&&att.class==='inferno')window.setAttackLockRAtk18(aWho,2,'Frozen Tundra: Inferno attacker cannot declare attacks on their next turn.');
         window.safeLogAI9('Frozen Tundra: attack by '+(att?att.name:'opponent Numeral')+' is negated.','heal');window.checkSafeRAtk18();return;
       }
-      if(att&&att._ru157Blizzard5NP&&def){
-        def.currentNP=window.npRAtk18(def)-att._ru157Blizzard5NP;
-        window.safeLogAI9('Blizzard 5: target '+def.name+' loses '+att._ru157Blizzard5NP+' NP until end of turn.','dmg');
-        delete att._ru157Blizzard5NP;
+      ruAttackParticipants(aWho,att).forEach(function(c){if(c._ru157Blizzard5NP&&def){
+        def.currentNP=window.npRAtk18(def)-c._ru157Blizzard5NP;
+        window.safeLogAI9('Blizzard 5: target '+def.name+' loses '+c._ru157Blizzard5NP+' NP until end of turn.','dmg');
+        delete c._ru157Blizzard5NP;
         G._blizzard5NP=0;G._blizzard5By=null;
-      }
+      }});
       return resolveAtkL17.apply(this,arguments);
     }
 
@@ -4985,17 +4988,17 @@ function resolveAtkL19(aWho,aZone,dWho,dZone,addonNP){
 
 function resolveAtkL20(aWho,aZone,dWho,dZone,addonNP){
       var ap=window.sideSG8(aWho),dp=window.sideSG8(dWho),att=window.zoneCardRAtk20(ap,aZone),def=window.zoneCardRAtk20(dp,dZone);
-      var beforeANP=window.npRAtk20(att), beforeDNP=window.npRAtk20(def), wasPhantom8=att&&att.class==='phantom'&&att.numeral===8&&att._ru159Phantom8Bank;
+      var beforeANP=window.npRAtk20(att)+(addonNP||0), beforeDNP=window.npRAtk20(def),participants=ruAttackParticipants(aWho,att);
       var result=resolveAtkL19.apply(this,arguments);
       try{
-        if(wasPhantom8&&beforeANP>beforeDNP){
+        participants.forEach(function(att){if(att.class==='phantom'&&att.numeral===8&&att._ru159Phantom8Bank&&beforeANP>beforeDNP){
           att._ru159Phantom8Hits=(att._ru159Phantom8Hits||0)+1;
           if(att._ru159Phantom8Hits%2===0){
             att.currentNP=window.npRAtk20(att)+1;
             att.currentRP=window.rpRAtk20(att)+(att._ru159Phantom8Rank||0);
             window.safeLogSG8('Phantom 8: after 2 successful attacks, gains +1 NP and +'+(att._ru159Phantom8Rank||0)+' RP until end of turn.','heal');
           }else window.safeLogSG8('Phantom 8: successful attack '+att._ru159Phantom8Hits+' logged.','info');
-        }
+        }});
         if(ruBotControlledSeat(dWho)&&def&&def.class==='phantom'&&def.numeral===0&&!def.usedSkill&&window.sideSG8(dWho)&&window.sideSG8(dWho).deck.length){
           def.usedSkill=true;window.topDeckRD7(dWho,1,'discard');
           window.moveOpponentHandToDeadzoneRD7(dWho,window.sideSG8(dWho).cas||0,'Phantom 0',function(picks){window.safeLogSG8(ruPOV(oppOf(dWho),'Phantom 0: {You} {send|sends} '+(picks?picks.length:0)+' hand card(s) to Deadzone.'),'dmg');window.renderSafeSG8();window.checkSafeSG8();});
@@ -5089,8 +5092,10 @@ function resolveAtkL23(aWho,aZone,dWho,dZone,addonNP){
 function resolveAtkL24(aWho,aZone,dWho,dZone,addonNP){
       var before = window.sidePA11(dWho) ? window.sidePA11(dWho).mp : null;
       var att = window.sidePA11(aWho) ? window.zoneCardRAtk24(window.sidePA11(aWho),aZone) : null;
+      var participants=ruAttackParticipants(aWho,att);
       var r = resolveAtkL23.apply(this,arguments);
       try{
+        participants.forEach(function(att){
         if(att && att._mx8Bank && before != null && window.sidePA11(dWho) && before > window.sidePA11(dWho).mp){
           att._mx8Hits = (att._mx8Hits || 0) + 1;
           if(att._mx8Hits % 2 === 0){
@@ -5099,6 +5104,7 @@ function resolveAtkL24(aWho,aZone,dWho,dZone,addonNP){
             window.safeLogPA11('Maximum 8: second successful attack reached; ' + window.pNameRAtk24(aWho).toLowerCase() + ' gain ' + gain + ' MP from the random Bank card.','heal');
           }
         }
+        });
       }catch(e){}
       return r;
     }
@@ -5477,7 +5483,7 @@ function _aiBase(ph){
       const{zone,card,tgt}=atkQueue.shift();
       if(ai.attacksUsed[card.id]||atkLeft(card)<=0){runNextAIAtk();return;}
       const declaredAddons=zone==='rank'&&ai.leftFlank&&!ai.attacksUsed[ai.leftFlank.id]&&canAddonTo(card,ai.leftFlank)?[ai.leftFlank]:[];
-      G._atkAddonCards={aWho:'ai',attId:card.id,cards:declaredAddons};
+      G._atkAddonCards={declared:true,aWho:'ai',attId:card.id,cards:declaredAddons};
       if(window.RUFullmetal)RUFullmetal.confirmCombat('ai',card,declaredAddons,function(){});
       // Reset the defense window state for this specific attack.
       G._defState={};G._lastAtkInfo={aWho:'ai',aZone:zone,attacker:card};
@@ -7820,7 +7826,7 @@ const SDEFS={
   {type:'effect',fn(who,p,opp,fz,card,ctx,G){const bc=ctx.randomBankCard;if(!bc){SF=null;return;}window.addAttacksRA(card,bc.numeral);card._mx8Bank=bc;card._mx8Hits=0;log(`Maximum 8: Attack up to ${bc.numeral} times. Gain MP = ${bc.numeral} after 2 successful hits.`,'info');}}
 ]},
 // ── RANK MAX cards ──
-'Maximum 10':{source:'field',phases:['battle'],steps:[
+'Maximum 10':{source:'field',phases:['battle'],attackTrigger:true,check:function(w,card){return !!(card&&(card._sevenHeavenFreeCost||card._copySkillFreeCost))||G[w].hand.length>=5&&G[w].hand.map(c=>Number(c.currentNP??c.numeral??0)).sort((a,b)=>b-a).slice(0,5).reduce((a,b)=>a+b,0)>=25;},steps:[
   {type:'effect',fn(who,p,opp,fz,card,ctx,G){
     if(card._sevenHeavenFreeCost||card._copySkillFreeCost){
       delete card._sevenHeavenFreeCost;delete card._copySkillFreeCost;
@@ -10198,7 +10204,7 @@ ADEFS['Seven Heaven']={
     if(who!==me&&(G.mode==='addon'||G.mode==='atk')&&G.selAttacker&&card&&ruIsLegalAttackTarget(me,who,'delta')){
       if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,G.selAttacker.card,(G._addons||[]).map(a=>a.card),()=>deltaZoneClick(who)))return;
       const mp=G[me];let addonNP=0;
-      G._atkAddonCards={aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};
+      G._atkAddonCards={declared:true,aWho:me,attId:G.selAttacker.card&&G.selAttacker.card.id,cards:(G._addons||[]).map(a=>a.card)};
       if(G._addons&&G._addons.length){G._addons.forEach(a=>{addonNP+=window.npOf(a.card);ruSpendAttack(me,a.card,true);});G._addons=[];}
       const aZone=G.selAttacker.zone;G.selAttacker=null;clearHL();
       ruDeclareAttack(me,aZone,who,'delta',addonNP,function(){
@@ -11722,10 +11728,10 @@ function useRetL2(idx,card){
   }}]};
 
   // Correct Phantom 6: borrowed Phantom returns to Deadzone automatically if the attack is unsuccessful.
-  SDEFS['Phantom 6']={source:'field',phases:['battle'],steps:[{type:'effect',fn(w,p,o,fz,card){
+  SDEFS['Phantom 6']={source:'field',phases:['battle'],attackTrigger:true,check:function(w){return G[w].deadzone.some(c=>c.class==='phantom'&&c.type==='numeral'&&(c.rank||0)<=2);},steps:[{type:'effect',fn(w,p,o,fz,card){
     const pool=p.deadzone.filter(c=>c.class==='phantom'&&c.type==='numeral'&&(c.rank||0)<=2);
     if(!pool.length){log('Phantom 6: no Rank² or lower Phantom Numeral in Deadzone to recover.','info');SF=null;renderAll();return;}
-    const finish=(pick)=>{moveX(p,pick,'hand');card._phantom6Borrowed=pick;G._phantom6ReturnQueue={who:w,attackerId:card.id,borrowedId:pick.id};log(`Phantom 6: ${pick.name} added from Deadzone to hand. If this attack fails, it returns to Deadzone.`, 'heal');SF=null;renderAll();};
+    const finish=(pick)=>{moveX(p,pick,'hand');(G._phantom6Returns=G._phantom6Returns||[]).push({who:w,attackerId:card.id,borrowedId:pick.id});log(`Phantom 6: ${pick.name} added from Deadzone to hand. If this attack fails, it returns to Deadzone.`, 'heal');SF=null;renderAll();};
     chooseX(w,'Phantom 6 — choose a Rank² or lower Phantom Numeral from Deadzone.',pool,1,picks=>{if(picks&&picks[0])finish(picks[0]);else{SF=null;renderAll();}});
   }}]};
 
@@ -20532,7 +20538,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       ]);}
       else finish(other(w));
     }}]};
-    SDEFS['Phantom 4']={source:'field',phases:['battle'],check:function(w,card,fieldZone){return battlefieldSource(fieldZone)&&!card._ru159Phantom4PaidThisTurn;},steps:[{type:'effect',fn:function(w,p,o,fz,card){
+    SDEFS['Phantom 4']={source:'field',phases:['battle'],attackTrigger:true,check:function(w,card,fieldZone){return battlefieldSource(fieldZone)&&!card._ru159Phantom4PaidThisTurn&&G[w].deck.length>0;},steps:[{type:'effect',fn:function(w,p,o,fz,card){
       card._ru159Phantom4PaidThisTurn=true;
       var milled=topDeck(w,1,'discard')[0]||null;
       if(milled&&milled.class==='phantom'){card._directThisTurn=true;safeLog('Phantom 4: milled '+milled.name+'; it may attack directly this turn.','info');}
@@ -23732,7 +23738,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 (function(){
   'use strict';
-  var HOOKS = window.RU_HOOKS = { attackResolved:[], beforeAttack:[], forcedTarget:[], targetBlocked:[], phaseBegan:[], beforeEnd:[],
+  var HOOKS = window.RU_HOOKS = { attackResolved:[], participantResolved:[], beforeAttack:[], forcedTarget:[], targetBlocked:[], phaseBegan:[], beforeEnd:[],
     rankedUp:[], promoteBlocked:[], safeguard:[], retaliatory:[], e2:[], removed:[], survives:[], defend:[], entered:[],
     actResolved:[], actResponses:[], actionNegated:[], phaseEnded:[], targeted:[], drawn:[], phaseRedirect:[], skillNegation:[] };
   window.ruHook = function(name, fn){ HOOKS[name].push(fn); };
@@ -23835,7 +23841,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // battle damage only (ruShieldDamage and the defeat Casualty Draws, both inside resolveAtkBase)
   function battleShielded(seat){
     var b=G&&G._battleResult; if(!b)return null;
-    var x=(G._noAtkDmg||[]).find(function(e){ return active(e.u)&&(e.id?(e.id===b.attId||e.id===b.defId):(e.seat==='*'||e.seat===seat)); });
+    var x=(G._noAtkDmg||[]).find(function(e){ return active(e.u)&&(e.id?(e.id===b.attId||e.id===b.defId||(G._battleParticipants||[]).indexOf(e.id)!==-1):(e.seat==='*'||e.seat===seat)); });
     return x?x.name:null;
   }
   window.ruBattleShielded=battleShielded;
@@ -23959,7 +23965,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var att=window.zCard(A,aZone),def=window.zCard(D,dZone);
     var rec=G._atkAddonCards; G._atkAddonCards=null; G._battleResult=null;
     var addons=(rec&&att&&rec.aWho===aWho&&rec.attId===att.id)?rec.cards.slice():[];
+    G._battleParticipants=[att].concat(addons).filter(Boolean).map(function(c){return c.id;});
     var snap={aWho:aWho,aZone:aZone,dWho:dWho,dZone:dZone,att:att,def:def,addons:addons};
+    G._battleAttackContext={aWho:aWho,attId:att&&att.id,cards:addons};
     if(window.RUFullmetal)window.RUFullmetal.attackSnap(snap);
     return snap;
   };
@@ -23971,11 +23979,54 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(s.result&&s.result.defId===s.def.id&&s.result.winner!=='defender')(G._defeated=(G._defeated||[]).filter(function(d){ return d.turn===tn(); })).push({id:s.def.id,owner:s.dWho,zone:s.dZone,turn:tn()});
     timeAttack(s);
     HOOKS.attackResolved.forEach(function(f){ try{ f(s); }catch(e){ console.error(e); } });
+    [s.att].concat(s.addons||[]).forEach(function(c){
+      var participant=Object.assign({},s,{att:c,leadAtt:s.att,leadZone:s.aZone,aZone:zoneOf(side(s.aWho),c)||s.aZone});
+      HOOKS.participantResolved.forEach(function(f){try{f(participant);}catch(e){console.error(e);}});
+    });
+    G._battleAttackContext=null;G._battleParticipants=[];
   };
   window.ruDefeatedThisTurn=function(seat){ return (G._defeated||[]).filter(function(d){ return d.turn===tn()&&(!seat||d.owner===seat); }); };
   // the first handler that takes over (returns true) holds the flow; it continues through `resume`
   function first(list,args){ for(var i=0;i<list.length;i++){ if(list[i].apply(null,args))return true; } return false; }
-  window.ruBeforeAttack=function(aw,aZone,dw,dZone,resume){ return first(HOOKS.beforeAttack,[aw,aZone,dw,dZone,resume]); };
+  window.ruBeforeAttack=function(aw,aZone,dw,dZone,resume){
+    var cards=ruAttackParticipants(aw,zc(side(aw),aZone)),i=0,j=0;
+    function next(){if(!dispatch())resume();}
+    function dispatch(){
+      while(i<cards.length){
+        var zone=zoneOf(side(aw),cards[i]);
+        if(zone)while(j<HOOKS.beforeAttack.length)if(HOOKS.beforeAttack[j++](aw,zone,dw,dZone,next))return true;
+        i++;j=0;
+      }
+      return false;
+    }
+    return dispatch();
+  };
+  ruHook('participantResolved',function(s){
+    var c=s.att,q=(G._phantom6Returns||[]).filter(function(e){return e.who===s.aWho&&e.attackerId===c.id;});
+    G._phantom6Returns=(G._phantom6Returns||[]).filter(function(e){return q.indexOf(e)===-1;});
+    if(s.result&&s.result.winner==='attacker')return;
+    var p=side(s.aWho);
+    q.forEach(function(e){var i=p.hand.findIndex(function(h){return h.id===e.borrowedId;});
+      if(i!==-1){var borrowed=p.hand.splice(i,1)[0];dzAdd(p,borrowed);say('Phantom 6: the attack was unsuccessful; '+borrowed.name+' returns to the Deadzone.','info');}
+    });
+  });
+  // Data-defined declaration skills share the ordinary skill runner and its owned cost pickers.
+  ruHook('beforeAttack',function(w,zone,dw,dZone,resume){
+    var c=zc(side(w),zone),target=zc(side(dw),dZone),rec=G._atkAddonCards;
+    if(!c||c.name!=='Zero 9'||!rec||rec.attId===c.id||!target||Number(c.A||0)!==0||Number(target.A||0)!==0)return false;
+    if(window.ruSkillLocked(w,c)||!side(w).hand.some(function(h){return isNum(h)&&(h.currentRP??h.rank??0)===2;}))return false;
+    window.payZero9Skill2(w,target,resume,function(){return zc(side(dw),dZone);});
+    return true;
+  });
+  ruHook('beforeAttack',function(w,zone,dw,dZone,resume){
+    var c=zc(side(w),zone),def=c&&SDEFS[c.name];
+    if(!c||!def||!def.attackTrigger||c.usedSkill||window.ruSkillLocked&&window.ruSkillLocked(w,c))return false;
+    if(def.check&&!def.check(w,c,zone))return false;
+    if(window.ruCostUnpayable&&window.ruCostUnpayable(w,c,def.steps))return false;
+    startSkill(w,zone,c);
+    window.ruWhenSettled(window.ruTableClear,resume,{defer:true});
+    return true;
+  });
   window.ruBeforeEnd=function(resume){ return first(HOOKS.beforeEnd,[resume]); };
   window.ruSafeguardHook=function(idx,card,atkInfo,onDone){ return first(HOOKS.safeguard,[idx,card,atkInfo,onDone]); };
   window.ruRetaliatoryHook=function(idx,card){ return first(HOOKS.retaliatory,[idx,card]); };
@@ -25221,16 +25272,18 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     // casualty damage from cards destroyed in battle (Casualty Draws are counted in G._casCardsThisTurn)
     G._celBattleCas=G._celBattleCas||{};
     [[s.att,s.aWho],[s.def,s.dWho]].forEach(function(x){ if(leftField(x[0],x[1])&&side(x[1]).deadzone.indexOf(x[0])!==-1){ var k=x[1]+'@'+T; G._celBattleCas[k]=(G._celBattleCas[k]||0)+1; } });
-    // Celestial 8: Stand Down the Numeral it targeted, after each attack this turn
-    if(s.att._cel8StandDown===T&&!leftField(s.att,s.aWho))standDown(s.def,'Celestial 8');
+    [s.att].concat(s.addons||[]).forEach(function(c){
+    // Each attacking participant gets its own skill; defender battle bookkeeping stays once per battle.
+    if(c._cel8StandDown===T&&!leftField(c,s.aWho))standDown(s.def,'Celestial 8');
     // Celestial 5: the pending Stand Down of the card targeted for attack
-    var c5=G._cel5Pending;
-    if(c5&&c5.attId===s.att.id){
-      G._cel5Pending=null;
+    var c5=c._cel5Pending;
+    if(c5){
+      delete c._cel5Pending;
       var mor=(G._moraleLostThisTurn&&G._moraleLostThisTurn[c5.dw])||0, cas=casualtiesThisTurn(c5.dw);
       if(mor>=2&&cas>=1){ var tgt=onField({id:c5.targetId}); if(tgt)standDown(tgt.card,'Celestial 5'); }
       else say('Celestial 5: '+sideSubjectLabel(c5.dw)+' has not taken 2 Morale Damage and a Casualty this turn, so nothing is Stood Down.','info');
     }
+    });
     // battle-triggered skills: "defeated in battle" = attacked and did not win (lost or tied), whether or not it left the
     // Battlefield (a Rank Zone card stays)
     var br=G._battleResult;
@@ -25292,7 +25345,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       cost:function(paid){ paid(true,millN(aw,3)); },
       effect:function(done,milled){
         var last=(milled||[])[(milled||[]).length-1];
-        if(isCelNum(last)&&tgt){ G._cel5Pending={attId:att.id,targetId:tgt.id,dw:dw}; say('Celestial 5: '+last.name+' was milled last — '+tgt.name+' is Stood Down after this attack if the condition holds.','info'); }
+        if(isCelNum(last)&&tgt){ att._cel5Pending={targetId:tgt.id,dw:dw}; say('Celestial 5: '+last.name+' was milled last — '+tgt.name+' is Stood Down after this attack if the condition holds.','info'); }
         else say('Celestial 5: the last card milled was not a Celestial-class Numeral.','info');
         done();
       },
@@ -25777,7 +25830,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!card||card.name!=='Ochre 9'||!from||(from.rank||0)<3)return;
     window.ruProtect(card,{turn:tn()}); say('Ochre 9: Ranked Up from a Rank³ — it cannot be removed this turn.','heal');
   });
-  ruHook('attackResolved',function(s){
+  ruHook('participantResolved',function(s){
     if(s.att&&s.att.name==='Ochre 8'&&s.aWho!==s.dWho&&G.turn===s.aWho)s.att._ochre8Atk=tn();
   });
 
@@ -26381,7 +26434,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         refresh();
       }}
     ]};
-  ruHook('attackResolved',function(s){
+  ruHook('participantResolved',function(s){
     var c=s.att; if(!c||c.name!=='Kismet 8')return;
     var m=(c._kAtk&&c._kAtk.turn===tn())?c._kAtk:(c._kAtk={turn:tn(),n:0}); m.n++;
     if(!c._k8||c._k8.turn!==tn()||G.gameOver)return;
@@ -27074,7 +27127,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       {type:'effect',fn:function(w,p,o,zone,card,ctx){ TSK['Temporal 8'].skill(w,card,refresh,ctx.ceded); }}
     ]};
   // (counted once the attack is over: its attacks left are known then)
-  ruHook('attackResolved',function(s){
+  ruHook('participantResolved',function(s){
     var c=s.att; if(!c||c.name!=='Temporal 8'||!c._t8||c._t8.turn!==tn()||c._t8.redone)return;
     var w=s.aWho;
     window.ruWhenSettled(window.ruTableClear,function(){
@@ -27195,12 +27248,13 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     say('Temporal 9: '+sideVerbLabel(aw,'cede')+' '+(last?last.name:'nothing (empty Deck)')+' — the damage its +'+c._t9.bonus+' NP adds comes '+(delayed?'at the start of '+sidePossLower(aw)+' next Battle Phase':'as if in '+sidePossLower(aw)+' last Battle Phase (now)')+'.','imp');
     resume(); return true;
   });
-  ruHook('attackResolved',function(s){
+  ruHook('participantResolved',function(s){
     var c=s.att; if(!c||!c._t9atk)return;
     var a=c._t9atk; delete c._t9atk;
     if(onField(c))c.currentNP=np(c)+a.bonus;
-    var r=G._battleResult; if(!r||r.aNP==null||r.attId!==c.id)return;
-    var b={aNP:r.aNP,dNP:r.dNP,aRP:r.aRP||0,dRP:r.dRP||0,aZone:s.aZone,dZone:s.dZone};
+    var r=G._battleResult; if(!r||r.aNP==null||r.attId!==(s.leadAtt||c).id)return;
+    var b={aNP:r.aNP+(r._temporalBonusApplied||0),dNP:r.dNP,aRP:r.aRP||0,dRP:r.dRP||0,aZone:s.leadZone||s.aZone,dZone:s.dZone};
+    r._temporalBonusApplied=(r._temporalBonusApplied||0)+a.bonus;
     var o0=window.ruBattleOutcome(b),o1=window.ruBattleOutcome(Object.assign({},b,{aNP:b.aNP+a.bonus}));
     var add={seat:s.dWho,mp:Math.max(0,o1.mpD-o0.mpD),draws:Math.max(0,o1.drawD-o0.drawD),kill:o1.killD&&!o0.killD,defId:r.defId};
     if(!add.mp&&!add.draws&&!add.kill)return;

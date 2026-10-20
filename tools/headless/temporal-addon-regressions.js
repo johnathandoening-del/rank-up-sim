@@ -56,7 +56,7 @@ function addonTests(){
   }
 }
 
-function historicalTests(){
+function historicalTests(asAddon=false){
   for(const w of ['player','ai'])for(const encore of [false,true]){
     const other=w==='player'?'ai':'player',star=encore?'Encore Star':'Battle Star';
     const p=pair(w,{[w]:'temporal',[other]:'light'});
@@ -81,11 +81,11 @@ function historicalTests(){
     p.apply({t:'end',s:other});clearPrompts(p);
     if(p.pending().mode==='switchdraw')p.apply({t:'sdDone',s:w,first:false});
     while(p.pending().kind==='turn'&&p.pending().phase!=='battle')p.apply({t:'adv',s:w});
-    attack(p,w,'right-flank',other,'rank');p.button('Use Temporal 4');p.pick([0]);
+    attack(p,w,asAddon?'rank':'right-flank',other,'rank',asAddon?'right-flank':undefined);p.button('Use Temporal 4');p.pick([0]);
     p.engines.forEach(e=>e.settle(10000));clearPrompts(p);
     assert.equal(p.run('!!G._tlReplay'),false,'amendment returns to the present without new attack choices');
     assert.equal(p.run('G._turnNo'),6);assert.equal(p.run(`G.${w}.mp`),37,'no M/E2 from extra Battle Star Casualties');
-    assert.equal(p.run(`G.${other}.mp`),encore?16:21,'all changed historical and current damage actually applied');
+    assert.equal(p.run(`G.${other}.mp`),(encore?16:21)-(asAddon?5:0),'all changed historical and current damage actually applied');
     assert.equal(p.run(`G.${other}.cas`),encore?12:6,'actual additional Casualty draws, not counters only');
     assert.equal(p.run(`G.${other}.deadzone.some(c=>c.id===changedCard)`),true);
     assert.equal(p.run(`G.${other}.hand.some(c=>c.id===changedCard)`),false,'obsolete future hand card is absent');
@@ -102,9 +102,10 @@ function historicalTests(){
     p.run(`G.${other}.deck.unshift(mkAct('Protect'));casDraw('${other}');`);
     assert.equal(p.pending().owner,other);assert.ok(p.pending().labels.includes('Activate E2 Effect'),'ordinary present-day Casualty E2 still works');
     p.button('Skip Effect');clearPrompts(p);
-    p.finish(w+' Temporal 4 '+star+' historical amendment');console.log('PASS '+w+' Temporal 4 '+star+' historical amendment');
+    p.finish(w+' Temporal 4 '+star+' historical amendment'+(asAddon?' as Addon':''));console.log('PASS '+w+' Temporal 4 '+star+' historical amendment'+(asAddon?' as Addon':''));
   }
 }
+module.exports={historicalTests};
 if(require.main===module){
   if(!process.argv.includes('--history-only'))addonTests();
   if(!process.argv.includes('--addons-only'))historicalTests();
