@@ -21,6 +21,9 @@ for(let i=0;i<ids.length;i+=3){
     assert.ok(result.html.includes('\uE017'),result.card.baseId);
     assert.ok(!result.html.includes('\u2A3F'),result.card.baseId+' retains old symbol');
     assert.ok(result.label.startsWith('Amalgamation '));
+    assert.ok(result.html.includes('&#xE002;'),result.card.baseId+' must use the seven-point Rank glyph');
+    assert.ok(!result.html.includes('Δ★'),result.card.baseId+' retains the five-point Rank star');
+    assert.ok(result.html.includes('opacity:.60;'),result.card.baseId+' must use the stronger emblem');
     cards.push(result.card);
   }
   assert.deepEqual(e.errors,[]);

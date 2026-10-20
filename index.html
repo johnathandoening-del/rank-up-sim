@@ -6461,7 +6461,7 @@ function neoStarSVG(sizeCss,glow){
 window.neoStarSVG=neoStarSVG;
 function emblemHTML(card){
   var ic=classIconOf(card); if(!ic)return '';
-  var op=(card&&card.type==='action')?'.30':'.38';   // action cards carry effect text — keep the watermark fainter
+  var op=(card&&card.type==='action')?'.30':(card&&(card.evoType||card.class||card.cls)==='amalgamation'?'.60':'.38');
   if(card&&card.type==='action'&&card.isStar&&card.starType==='neo'){   // neo: 7-point SVG star with a green aura
     var sz=(60*emblemScale(card)).toFixed(1)+'cqw';   // non-custom (neo star SVG): original size
     return '<div class="cemblem" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:'+op+';z-index:0;pointer-events:none;overflow:hidden;">'+neoStarSVG(sz,true)+'</div>';
@@ -6495,7 +6495,7 @@ function buildCard(card){
   }
   if(card.type==='evolution'){
     const evoNp=card.currentNP!==undefined?card.currentNP:(card.numeral||0);
-    d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">Δ★${window.ruRDisp(card)}</span><div class="cnp">${evoNp}</div><div class="csb">A:${ruADisp(card.A)}<br>M:${window.ruMDisp(card)}<br>S:${window.ruSDisp(card)}</div></div><div class="cname">${window.amalgShortName(card)}</div>`;
+    d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">Δ&#xE002;${window.ruRDisp(card)}</span><div class="cnp">${evoNp}</div><div class="csb">A:${ruADisp(card.A)}<br>M:${window.ruMDisp(card)}<br>S:${window.ruSDisp(card)}</div></div><div class="cname">${window.amalgShortName(card)}</div>`;
     return d;
   }
   const rp=window.ruRDisp(card);

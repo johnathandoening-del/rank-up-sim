@@ -384,6 +384,7 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .nc-amalgamation{position:relative;background:linear-gradient(135deg,#2a0208,#100105);border:1px solid #6F0417;color:#ffb0b8;box-shadow:inset 0 0 10px rgba(111,4,23,.28);}
 .nc-amalgamation::before{content:'';position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.75;background-image:linear-gradient(180deg,rgba(16,1,5,.38),rgba(16,1,5,.12) 45%,rgba(16,1,5,.62)),url('assets/amalgamation-crystal.png');background-size:cover;background-position:center;}
 .nc-amalgamation .ctop,.nc-amalgamation .cname{position:relative;z-index:1;text-shadow:0 1px 2px #100105,0 0 4px #100105;}
+.nc-amalgamation .cname{font-size:8cqw;line-height:1.1;letter-spacing:0;overflow-wrap:normal;word-break:normal;}
 .nc-fullmetal{background-color:#E1E4E6;background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.15) 0,rgba(255,255,255,.15) 1px,rgba(45,55,65,.06) 1px,transparent 3px),linear-gradient(118deg,#858e96 0%,#E1E4E6 17%,#fff 29%,#a3adb5 42%,#E1E4E6 55%,#fff 66%,#9ca6ae 80%,#E1E4E6 100%);background-size:auto,220% 100%;background-position:center,45% 50%;border:1px solid #f8fafc;color:#20272d;box-shadow:inset 0 1px 2px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #8f9aa3;transition:background-position .35s ease,box-shadow .35s ease;}
 .nc-fullmetal:hover{background-position:center,60% 50%;box-shadow:inset 0 1px 3px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #bcc6ce;}
 .nc-fullmetal .ctag{color:#34414b;}
