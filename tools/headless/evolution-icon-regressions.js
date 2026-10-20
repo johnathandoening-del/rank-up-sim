@@ -21,6 +21,7 @@ for(let i=0;i<ids.length;i+=3){
     assert.ok(result.html.includes('\uE017'),result.card.baseId);
     assert.ok(!result.html.includes('\u2A3F'),result.card.baseId+' retains old symbol');
     assert.ok(result.label.startsWith('Amalgamation '));
+    assert.ok(result.html.includes('Amalgamation '+result.card.numeral+'<br>'+result.card.skillType),'Evolution title and skill type must be separate lines');
     assert.ok(result.html.includes('&#xE002;'),result.card.baseId+' must use the seven-point Rank glyph');
     assert.ok(!result.html.includes('Δ★'),result.card.baseId+' retains the five-point Rank star');
     assert.ok(result.html.includes('opacity:.60;'),result.card.baseId+' must use the stronger emblem');
@@ -37,6 +38,10 @@ assert.equal(probe.run('Object.keys(CM).length'),19);
 assert.equal(probe.run(`CLASS_COLORS.fullmetal`),'#E1E4E6');
 assert.equal(probe.run(`cardCls({type:'evolution',evoType:'fullmetal',class:'amalgamation'})`),'nc-fullmetal');
 assert.equal(probe.run(`emblemColor({type:'evolution',evoType:'fullmetal',class:'amalgamation'})`),'rgb(65,74,82)');
+for(let n=1;n<=9;n++){
+  const html=probe.run(`buildCard(Object.assign({},FULLMETAL_LIBRARY[${n-1}],{id:'test-${n}'})).innerHTML`);
+  assert.ok(html.includes('Fullmetal '+n+'<br>Skilled'),'Fullmetal '+n+' uses two title lines');
+}
 probe.run(MATCH_CODE);
 probe.run(`__H.start({seed:1,mySeat:0,seat0Class:'light',seat1Class:'light',firstSeat:0,allowEvolutions:true,deltaDecks:{player:['amalg-benevolent-2'],ai:[]}})`);
 probe.settle(1000);

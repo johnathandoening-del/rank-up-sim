@@ -6517,7 +6517,9 @@ function buildCard(card){
   }
   if(card.type==='evolution'){
     const evoNp=card.currentNP!==undefined?card.currentNP:(card.numeral||0);
-    d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">Δ&#xE002;${window.ruRDisp(card)}</span><div class="cnp">${evoNp}</div><div class="csb">A:${ruADisp(card.A)}<br>M:${window.ruMDisp(card)}<br>S:${window.ruSDisp(card)}${card.W!=null?'<br>W:'+ruADisp(ruW(card)):''}</div></div><div class="cname">${window.amalgShortName(card)}</div>`;
+    const family=EVOLUTION_TYPES[card.evoType||card.class||card.cls];
+    const name=`${family?family.name:'Evolution'} ${card.numeral}`;
+    d.innerHTML=`${emblemHTML(card)}<div class="ctop"><span class="crs">Δ&#xE002;${window.ruRDisp(card)}</span><div class="cnp">${evoNp}</div><div class="csb">A:${ruADisp(card.A)}<br>M:${window.ruMDisp(card)}<br>S:${window.ruSDisp(card)}${card.W!=null?'<br>W:'+ruADisp(ruW(card)):''}</div></div><div class="cname">${name}<br>${card.skillType||'Skilled'}</div>`;
     return d;
   }
   const rp=window.ruRDisp(card);
