@@ -13,6 +13,7 @@ function setup(w,cls,n){
       G[s].deck=Array.from({length:40},()=>mkNum(ND.light.find(c=>c.n===4),'light'));}
     me.rankZone=mkNum({n:5,r:2,A:2,M:0,S:null,ca:true,st:'Basic'},'classless');
     var support=mkNum(ND['${cls}'].find(c=>c.n===${n}),'${cls}');support.canAttack=true;support.attacksLeft=1;me.leftFlank=support;
+    if(rankOf(support)===3)me.rankZone.currentRP=0;
     foe.rankZone=mkNum({n:2,r:1,A:0,M:0,S:null,ca:true,st:'Basic'},'classless');
     G._atkAddonCards=null;ruFieldWatch();
   `);

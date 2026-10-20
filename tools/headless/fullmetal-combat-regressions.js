@@ -15,6 +15,7 @@ function setup(w,n){
     var me=G['${w}'],foe=G['${other}'];me.hand=[];me.discard=[];me.deadzone=[];me.cas=0;
     me.rankZone=mkNum({n:3,r:2,A:2,M:0,S:null,ca:true,st:'Basic'},'classless');
     me.delta[0].currentNP=12;
+    if(rankOf(me.delta[0])===3)me.rankZone.currentRP=0;
     foe.rankZone=mkNum({n:1,r:0,A:2,M:0,S:null,ca:true,st:'Basic'},'classless');
     foe.leftFlank=null;foe.rightFlank=null;foe.hand=[mkAct('Protect')];
     foe.deck=Array.from({length:30},()=>mkNum({n:1,r:0,A:1,M:0,S:null,ca:true,st:'Basic'},'classless'));

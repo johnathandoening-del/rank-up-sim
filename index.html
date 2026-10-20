@@ -10757,7 +10757,7 @@ ADEFS['Seven Heaven']={
   function zId(owner,z){const pre=(window.sideMeta?window.sideMeta(owner).zonePrefix:null)||(owner==='player'?'pl':'ai');return pre+'-'+(z==='rank'?'rz':z==='left-flank'?'lf':z==='right-flank'?'rf':z==='rear-flank'?'rear':'delta');}
   function rankOf(c){return c?(c.currentRP!=null?c.currentRP:(c.rank||0)):0;}
   function npOf(c){return c?(c.currentNP!=null?c.currentNP:(c.numeral||0)):0;}
-  function canAddonTo(att,src){if(!att||!src||att.id===src.id)return false;const aRP=rankOf(att),sRP=rankOf(src);return aRP<3||(aRP-sRP)>=2;}
+  function canAddonTo(att,src){if(!att||!src||att.id===src.id)return false;const aRP=rankOf(att),sRP=rankOf(src);return (aRP<3&&sRP<3)||Math.abs(aRP-sRP)>=2;}
   window.zCard=zCard;window.zSet=zSet;window.zId=zId;window.rankOf=rankOf;window.npOf=npOf;window.canAddonTo=canAddonTo;
   function alignmentOf(c){if(!c)return 'Neutral';if(c.class==='classless')return 'Neutral';return (CM[c.class]&&CM[c.class].align)||c.alignment||'Neutral';}
   function amalgOptionsLocal(who){return window.findAmalgamationOptionsAI1?window.findAmalgamationOptionsAI1(who):[];}   // one legality check: the Amalgamation menu's
