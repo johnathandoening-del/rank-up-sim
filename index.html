@@ -374,6 +374,7 @@ function ruInstallOnlineSeats(g,cfg){
   // Both players' Δ Decks / Area Supports, so every client builds both seats' evolutions identically.
   g._netDeltaDecks=(cfg.deltaDecks)||{player:[],ai:[]};
   g._netAreaSupports=(cfg.areaSupports)||{player:null,ai:null};
+  g._netActionSupports=cfg.actionSupports||{player:null,ai:null};
 }
 window.ruInstallOnlineSeats=ruInstallOnlineSeats;
 // Can this client build the match the room describes? Every client builds BOTH decks from the room's two class
@@ -498,7 +499,7 @@ function ruSoloBotConfig(mode){
     return {
       seed:(window.RU_SOLO_SEED!=null)?(window.RU_SOLO_SEED>>>0):((Math.random()*0xFFFFFFFF)>>>0), mySeat:0, spectator:false, mode:mode,
       order:order, classes:classes, names:names, seat0Class:pCls, seat1Class:aCls, firstSeat:order[0]==='player'?0:1,
-      name0:'You', name1:'AI', allowEvolutions:evo, deltaDecks:decks, areaSupports:areas, solo:{bots:bots}
+      name0:'You', name1:'AI', allowEvolutions:evo, deltaDecks:decks, areaSupports:areas, actionSupports:{player:window.RU_PLAYER_ACTION_SUPPORT||null}, solo:{bots:bots}
     };
   }
   return {
@@ -509,6 +510,7 @@ function ruSoloBotConfig(mode){
     allowEvolutions:evo,
     deltaDecks:{player:dA,ai:dB},
     areaSupports:{player:aivai?botArea('player',dA):(window.RU_PLAYER_AREA_SUPPORT||null),ai:botArea('ai',dB)},
+    actionSupports:{player:aivai?null:(window.RU_PLAYER_ACTION_SUPPORT||null)},
     solo:{bots:bots}
   };
 }
@@ -557,8 +559,11 @@ function makeStart(pfx){
 // never goes to the Bank, the Discard or the Deadzone, can't be Stood Down, and the Bank's top card replaces it
 // whenever there is one (ruRankKeeper keeps all of this true after any effect).
 function ruEmptyRank(pfx){const c=makeStart(pfx);c._empty=true;return c;}
-function mkSide(pfx,cls){
+function mkSide(pfx,cls,seat){
   const deck=buildDeck(cls);
+  const cfg=window.RU_NET_CONFIG;
+  const supports=cfg?(cfg.actionSupports||{})[seat]:(seat==='player'?window.RU_PLAYER_ACTION_SUPPORT:null);
+  if((cfg?cfg.allowEvolutions!==false:evolutionsAllowed())&&window.ruApplyDeltaActionSupport)window.ruApplyDeltaActionSupport(deck,supports);
   // Extract class 0 card from deck → it starts in the Rank Zone
   const z0idx=deck.findIndex(c=>c.type==='numeral'&&c.numeral===0&&c.class===cls);
   const startCard=z0idx!==-1?deck.splice(z0idx,1)[0]:makeStart(pfx+'-fb');
@@ -911,7 +916,7 @@ function makeGameState(seats,firstTurn,clsFor,buildOrder){
   // 'player' deck first, would shuffle the same class at a different stream position and desync). Falls
   // back to sideOrder for solo. Which side gets which built deck is by LABEL, independent of build order.
   const _bo=(buildOrder&&buildOrder.length)?buildOrder:sideOrder;
-  _bo.forEach(function(w){G0[w]=mkSide(pfxFor(w),clsFor(w));});
+  _bo.forEach(function(w){G0[w]=mkSide(pfxFor(w),clsFor(w),w);});
   return G0;
 }
 function initGame(){
@@ -9918,14 +9923,14 @@ ADEFS['Seven Heaven']={
     body+=deltaDeckSummaryHTML();
     // Area Support selection status (a separate slot from the 1–3 Amalgamations).
     try{ var _asSel=window.RU_PLAYER_AREA_SUPPORT?((window.RU_areaSupportById&&window.RU_areaSupportById(window.RU_PLAYER_AREA_SUPPORT)||{}).name||window.RU_PLAYER_AREA_SUPPORT):null;
-      body+=`<div style="font-size:.72rem;color:#8fd0ff;margin:.35rem 0 0;">Area Support: ${_asSel?('<strong>'+_asSel+'</strong>'):'<span style="color:var(--text-dim);">None (using your deck’s Area Card)</span>'}</div>`;
+      body+=`<div style="font-size:.72rem;color:#8fd0ff;margin:.35rem 0 0;">Δ Deck Support: ${_asSel?('<strong>'+_asSel+'</strong>'):'<span style="color:var(--text-dim);">Default Area Card</span>'}${window.ruDeltaActionSupportSummary?' | '+window.ruDeltaActionSupportSummary():''}</div>`;
     }catch(e){}
     body+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.45rem;margin-top:.55rem;">`;
     body+=deltaSectionButton('Amalgamations','deltaBuilderFamily()',false);
     body+=deltaSectionButton('Fullmetal','RUFullmetal.openBuilder()',false);
     body+=deltaSectionButton('Coming Soon','',true);
     body+=deltaSectionButton('Coming Soon','',true);
-    body+=deltaSectionButton('Area Support',(typeof window.openAreaSupportPool==='function')?'openAreaSupportPool()':'',(typeof window.openAreaSupportPool!=='function'));
+    body+=deltaSectionButton('Δ Deck Support',(typeof window.openAreaSupportPool==='function')?'openAreaSupportPool()':'',(typeof window.openAreaSupportPool!=='function'));
     body+=`</div>`;
     deltaOpenModal('Δ Deck',body,[{label:'Close',fn:()=>closeModal()},{label:'Clear Δ Deck',cls:'mb-danger',fn:()=>{PLAYER_DELTA_DECK=[];window.RU_PLAYER_DELTA_DECK=PLAYER_DELTA_DECK;renderDeltaDeckRoot();}}]);
   }
@@ -29378,6 +29383,30 @@ window.ruSpecPace=function(base){
 
   // ── Selection storage: a SINGLE id or null, SEPARATE from the 3-Amalgamation Δ cap. ──
   if(typeof window.RU_PLAYER_AREA_SUPPORT==='undefined')window.RU_PLAYER_AREA_SUPPORT=null;
+  const ACTION_SUPPORT_NAMES=['Transmute','Metallicize'];
+  function actionSupportCounts(value){
+    const out={};ACTION_SUPPORT_NAMES.forEach(function(name){const n=Number(value&&value[name]);out[name]=Number.isFinite(n)?Math.max(0,Math.min(3,Math.trunc(n))):0;});return out;
+  }
+  window.ruDeltaActionSupportCounts=actionSupportCounts;
+  window.RU_PLAYER_ACTION_SUPPORT=actionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT);
+  window.ruDeltaActionSupportSummary=function(){
+    const counts=actionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT);
+    return ACTION_SUPPORT_NAMES.map(function(name){return name+' ×'+counts[name];}).join(' | ');
+  };
+  window.ruApplyDeltaActionSupport=function(deck,selection){
+    const counts=actionSupportCounts(selection),pool=[];
+    deck.forEach(function(c,i){if(c&&c.type==='action'&&!c.isStar)pool.push(i);});
+    ACTION_SUPPORT_NAMES.forEach(function(name){for(let n=0;n<counts[name]&&pool.length;n++){
+      const index=pool.splice(window.ruRandInt(pool.length),1)[0],card=mkAct(name);
+      card._deltaSupport=true;deck[index]=card;
+    }});
+    return deck;
+  };
+  window.RU_setActionSupportCount=function(name,count){
+    if(ACTION_SUPPORT_NAMES.indexOf(name)===-1)return;
+    const next=actionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT);next[name]=count;
+    window.RU_PLAYER_ACTION_SUPPORT=actionSupportCounts(next);renderAreaSupportPool();
+  };
 
   // Build the in-play area card. Keeps the owner's class (so class/CM lookups + colour still work),
   // but carries the Amalgamation Nation name/effect and the _areaSupport marker.
@@ -29413,22 +29442,31 @@ window.ruSpecPace=function(base){
   function renderAreaSupportRoot(){
     var sel=window.RU_PLAYER_AREA_SUPPORT?asById(window.RU_PLAYER_AREA_SUPPORT):null;
     var body='<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:#ffb0b8;margin:.15rem 0 .45rem;">Δ Deck</div>';
-    body+='<p style="font-size:.78rem;color:var(--text-dim);">Choose up to 3 Evolutions. Area Support occupies a separate slot.</p>';
+    body+='<p style="font-size:.78rem;color:var(--text-dim);">Choose up to 3 Evolutions. Δ Deck Support occupies separate slots.</p>';
     body+='<div style="border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:.5rem;margin:.5rem 0;background:rgba(255,255,255,.025);">';
     body+='<div style="font-size:.72rem;color:#ffb0b8;">Evolutions: '+amalgCountInDelta()+'/3</div>';
-    body+='<div style="font-size:.72rem;color:#8fd0ff;margin-top:.25rem;">Area Support: '+(sel?('<strong>'+sel.name+'</strong>'):'<span style="color:var(--text-dim);">None (using your normal deck Area)</span>')+'</div>';
+    body+='<div style="font-size:.72rem;color:#8fd0ff;margin-top:.25rem;">Δ Deck Support: '+(sel?('<strong>'+sel.name+'</strong>'):'<span style="color:var(--text-dim);">Default Area Card</span>')+' | '+window.ruDeltaActionSupportSummary()+'</div>';
     body+='</div>';
     var btns=[
       {label:'Amalgamations →',cls:'mb-skill',fn:function(){ if(typeof window.deltaBuilderFamily==='function')window.deltaBuilderFamily(); }},
       {label:'Fullmetal →',cls:'mb-skill',fn:function(){window.RUFullmetal.openBuilder();}},
-      {label:'Area Support →',cls:'mb-skill',fn:function(){ renderAreaSupportPool(); }},
+      {label:'Δ Deck Support →',cls:'mb-skill',fn:function(){ renderAreaSupportPool(); }},
       {label:'Close',fn:function(){ if(typeof closeModal==='function')closeModal(); }}
     ];
     asModal('Δ Deck',body,btns);
   }
   function renderAreaSupportPool(){
-    var body='<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:#ffb0b8;margin:.15rem 0 .45rem;">Δ Deck → Area Support</div>';
-    body+='<p style="font-size:.78rem;color:var(--text-dim);">Select ONE Area Support card to replace your deck’s normal Area Card. Select again to deselect. This does not use an Amalgamation slot.</p>';
+    var body='<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:#ffb0b8;margin:.15rem 0 .45rem;">Δ Deck → Δ Deck Support</div>';
+    var counts=actionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT);
+    body+='<h3 style="font-size:.85rem;margin:.6rem 0;">Action Cards</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.6rem;margin-bottom:.9rem;">';
+    ACTION_SUPPORT_NAMES.forEach(function(name){
+      const card=AC[name],id='delta-support-'+name.toLowerCase();
+      body+='<div style="border:1px solid rgba(140,210,255,.3);border-radius:6px;padding:.6rem;">'+
+        '<strong>'+name+'</strong><div style="font-size:.7rem;color:var(--text-dim);margin:.25rem 0;">'+card.sub+' | M:+'+card.M+'</div>'+
+        '<label for="'+id+'" style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.75rem;">Added copies <input id="'+id+'" type="number" min="0" max="3" step="1" value="'+counts[name]+'" style="width:3.5rem;height:1.8rem;padding:.2rem .35rem;background:var(--bg-card,#101018);color:var(--text,#e0d8bc);border:1px solid rgba(140,210,255,.3);border-radius:4px;font:inherit;" onchange="RU_setActionSupportCount(\''+name+'\',this.value)"></label></div>';
+    });
+    body+='</div><p style="font-size:.75rem;color:var(--text-dim);">Each added copy replaces one random non-Star Action Card in your main deck. Up to 3 copies of each.</p>';
+    body+='<h3 style="font-size:.85rem;margin:.6rem 0;">Area Card</h3><p style="font-size:.78rem;color:var(--text-dim);">Choose one to replace your deck’s normal Area Card. These support choices do not use Evolution slots.</p>';
     body+='<div class="delta-scroll" style="display:flex;flex-direction:column;gap:.4rem;">';
     AREA_SUPPORT_LIBRARY.forEach(function(c){
       var chosen=window.RU_PLAYER_AREA_SUPPORT===c.id;
@@ -29439,7 +29477,7 @@ window.ruSpecPace=function(base){
       '</div>';
     });
     body+='</div>';
-    asModal('Δ Deck — Area Support',body,[
+    asModal('Δ Deck — Δ Deck Support',body,[
       {label:'← Back',cls:'mb-skill',fn:function(){ if(typeof window.deltaBuilderHome==='function')window.deltaBuilderHome(); else if(typeof window.openDeltaDeckBuilder==='function')window.openDeltaDeckBuilder(); }},
       {label:'Close',fn:function(){ if(typeof closeModal==='function')closeModal(); }}
     ]);
@@ -29492,7 +29530,7 @@ window.ruSpecPace=function(base){
       if(id&&asById(id)){
         // if we stripped one and there is now NO area in the deck, still swap will add it
         var ok=swapDeckArea(w,id);
-        if(ok)safeLog(ruPOV(w,'Area Support: {Your} deck’s Area Card is replaced by '+asById(id).name+'.'),'info');
+        if(ok)safeLog(ruPOV(w,'Δ Deck Support: {Your} deck’s Area Card is replaced by '+asById(id).name+'.'),'info');
 
       }
     });

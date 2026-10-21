@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Delta Deck Support Online Tests</title>
+<style>body{margin:0;background:#17191b;color:#eee;font:15px system-ui}header,pre{padding:12px}pre{white-space:pre-wrap}button{padding:8px 16px}section{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}iframe{width:100%;height:650px;border:1px solid #777;box-sizing:border-box}</style>
+<header>Delta Deck Support: menu and real WebSocket loadout tests. <button id="run">Run Tests</button></header>
+<pre id="report">Ready.</pre>
+<section><iframe id="p1" src="/index.html"></iframe><iframe id="p2" src="/index.html"></iframe><iframe id="watch" src="/index.html"></iframe></section>
+<script>
+const report=document.getElementById('report'),pause=ms=>new Promise(r=>setTimeout(r,ms));
+const windows=()=>['p1','p2','watch'].map(id=>document.getElementById(id).contentWindow);
+const check=(ok,msg)=>{if(!ok)throw Error(msg);};
+const say=s=>{report.textContent+='\n'+s;};
+async function until(fn,msg){for(let i=0;i<300;i++){if(fn())return;await pause(25);}throw Error('Timeout: '+msg);}
+function counts(w,transmute,metallicize){
+  w.document.getElementById('delta-deck-btn').click();
+  const support=Array.from(w.document.querySelectorAll('#m-body button')).find(b=>b.textContent==='Δ Deck Support');
+  check(support,'renamed category button');support.click();
+  check(w.document.getElementById('m-title').textContent==='Δ Deck — Δ Deck Support','renamed panel');
+  for(const [name,n] of [['transmute',transmute],['metallicize',metallicize]]){
+    const input=w.document.getElementById('delta-support-'+name);check(input&&input.max==='3'&&input.min==='0','native 0–3 count control');
+    input.value=n;input.dispatchEvent(new w.Event('change',{bubbles:true}));
+  }
+  const close=Array.from(w.document.querySelectorAll('#m-btns button')).find(b=>b.textContent==='Close');close.click();
+}
+const allCards=(w,seat)=>['deck','hand','discard','deadzone','bank'].flatMap(z=>w.eval('G')[seat][z]||[]).concat(w.eval('G')[seat].rankZone);
+document.getElementById('run').onclick=async function(){
+  this.disabled=true;report.textContent='Running menu and network loadout checks...';
+  try{
+    await until(()=>windows().every(w=>w.RUNet&&w.openDeltaDeckBuilder),'game loaded');
+    const [a,b,watch]=windows(),room='SUPPORT'+Date.now();
+    a.document.querySelector('.cc[data-k="light"]').click();
+    b.document.querySelector('.cc[data-k="temporal"]').click();
+    const sizes={player:a.buildDeck('light').length,ai:a.buildDeck('temporal').length};
+    counts(a,3,3);counts(b,1,2);counts(watch,0,0);
+    check(a.RU_PLAYER_ACTION_SUPPORT.Transmute===3&&a.RU_PLAYER_ACTION_SUPPORT.Metallicize===3,'six simultaneous added copies');
+    say('PASS renamed menu, both native count controls, independent 0–3 limits and six-copy selection');
+    a.sessionStorage.setItem('ru_tab_client_id',room+'P1');a.RUNet.connect('ws://'+location.host,room,'Support P1',{cls:'light'});
+    await until(()=>a.RUNet.state().seat==='player1','P1 joins');
+    counts(a,2,1);
+    b.sessionStorage.setItem('ru_tab_client_id',room+'P2');b.RUNet.connect('ws://'+location.host,room,'Support P2',{cls:'temporal'});
+    await until(()=>a.RUNet.state().active&&b.RUNet.state().active,'match starts');
+    await pause(700);
+    watch.sessionStorage.setItem('ru_tab_client_id',room+'WATCH');watch.RUNet.connect('ws://'+location.host,room,'Support observer',{spectator:true});
+    await until(()=>watch.RUNet.state().active,'spectator starts');await pause(700);
+    for(const w of windows()){
+      const config=w.eval('G._netActionSupports');
+      check(config.player.Transmute===2&&config.player.Metallicize===1,'fresh P1 loadout confirmation, not stale join');
+      check(config.ai.Transmute===1&&config.ai.Metallicize===2,'independent P2 loadout');
+      for(const [seat,t,m] of [['player',2,1],['ai',1,2]]){
+        const cards=allCards(w,seat);
+        check(cards.filter(c=>c._deltaSupport&&c.name==='Transmute').length===t,seat+' Transmute count');
+        check(cards.filter(c=>c._deltaSupport&&c.name==='Metallicize').length===m,seat+' Metallicize count');
+        check(cards.length===sizes[seat],seat+' total deck size unchanged');
+      }
+    }
+    check(a.ruStateSig()===b.ruStateSig()&&a.ruStateSig()===watch.ruStateSig(),'P1/P2/spectator synchronized');
+    say('PASS real join + loadout confirmation + spectator setup carry both counts for the correct seats');
+    say('PASS freshly changed waiting-room selection replaces stale join loadout');
+    say('PASS exact added counts, unchanged deck sizes and P1/P2/spectator state parity');
+    say('ALL DELTA DECK SUPPORT BROWSER TESTS PASSED');
+  }catch(e){say('FAIL '+e.stack);}
+  this.disabled=false;
+};
+</script>
+</html>

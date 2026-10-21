@@ -160,9 +160,15 @@ function bothConnected(room){ return !!(room.seatSocket[0] && room.seatSocket[0]
 function cleanName(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/['`]/g, '\u2019').replace(/"/g, '\u201d').replace(/&/g, '+').trim().slice(0, 24); }
 // A player's match loadout as sent by their client (join or loadout answer).
 function readLoadout(msg){
+  const actionSupport={};
+  for(const name of ['Transmute','Metallicize']){
+    const n=Number(msg.actionSupport&&msg.actionSupport[name]);
+    actionSupport[name]=Number.isFinite(n)?Math.max(0,Math.min(3,Math.trunc(n))):0;
+  }
   return { cls: String(msg.cls || 'light').slice(0, 32),
            dd: Array.isArray(msg.deltaDeck) ? msg.deltaDeck.slice(0, 3).map(x => String(x).slice(0, 64)) : [],
            as: msg.areaSupport ? String(msg.areaSupport).slice(0, 64) : null,
+           actionSupport,
            evo: msg.evo !== false };
 }
 // Before EVERY match start (first start, a new opponent, a rematch) both players confirm their CURRENT loadout —
@@ -188,6 +194,7 @@ function buildSetup(room, type, includeLog){
     name0: m0.name || 'Player 1', name1: m1.name || 'Player 2',
     seat0DeltaDeck: m0.dd || [], seat1DeltaDeck: m1.dd || [],
     seat0AreaSupport: m0.as || null, seat1AreaSupport: m1.as || null,
+    seat0ActionSupport: m0.actionSupport || null, seat1ActionSupport: m1.actionSupport || null,
     // Match rules are the room's, decided by the host (Player 1) — never each device's own menu settings, or the
     // two clients would build different games.
     allowEvolutions: m0.evo !== false,

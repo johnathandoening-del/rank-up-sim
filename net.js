@@ -124,7 +124,8 @@
       name0: cfg.name0, name1: cfg.name1,
       allowEvolutions: cfg.allowEvolutions !== false,
       deltaDecks: { player: cfg.seat0DeltaDeck || [], ai: cfg.seat1DeltaDeck || [] },
-      areaSupports: { player: cfg.seat0AreaSupport || null, ai: cfg.seat1AreaSupport || null }
+      areaSupports: { player: cfg.seat0AreaSupport || null, ai: cfg.seat1AreaSupport || null },
+      actionSupports: { player: cfg.seat0ActionSupport || null, ai: cfg.seat1ActionSupport || null }
     };
     try { if (typeof startGame === 'function') startGame(); }
     finally { window.RU_NET_CONFIG = null; }
@@ -256,7 +257,7 @@
     var cls = preferCls || (typeof pCls !== 'undefined' && pCls) || 'light';
     var evo = (typeof evolutionsAllowed === 'function') ? !!evolutionsAllowed() : true;
     var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);   // the format's only rule: at most 3
-    return { cls: cls, deltaDeck: dd, areaSupport: window.RU_PLAYER_AREA_SUPPORT || null, evo: evo };
+    return { cls: cls, deltaDeck: dd, areaSupport: window.RU_PLAYER_AREA_SUPPORT || null, actionSupport: window.ruDeltaActionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT), evo: evo };
   }
 
   window.RUNet = {
@@ -279,7 +280,7 @@
         // `evo` is this player's Allow-Evolutions choice (the room uses the host's — Player 1's — for the match).
         var lo = currentLoadout(o.cls);
         // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, evo:lo.evo, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
       ws.onmessage = function(ev){ if (thisWs !== ws) return; try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
         state.connected = false; log2('disconnected');
