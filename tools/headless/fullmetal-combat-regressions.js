@@ -49,6 +49,7 @@ for(const w of ['player','ai']){
     assert.equal(p.pending().owner,w);assert.ok(p.pending().labels.includes('Declare attack - forfeit protection'));
     assert.equal(p.run(`RUFullmetal.protected(G['${w}'].delta[0],'${w}','battle')`),true,'protected until confirmation');
     p.button('Cancel attack');
+    assert.equal(p.run(`ruDeclaredAttackThisTurn('${w}')`),false,'cancelled protection warning is not an attack declaration');
     assert.equal(p.run(`RUFullmetal.protected(G['${w}'].delta[0],'${w}','battle')`),true,'cancel preserves protection');
     assert.equal(p.run(`atkLeft(G['${w}'].delta[0])`),1,'cancel spends no Fullmetal attack');
     assert.equal(p.run(`atkLeft(G['${w}'].rankZone)`),1,'cancel spends no attacker attack');

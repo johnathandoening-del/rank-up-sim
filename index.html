@@ -1075,6 +1075,7 @@ function ruLoseMP(p,amount,cause,after){
   if(!p)return 0;
   let loss=Number(amount)||0;
   const seat=(G.sideOrder||['player','ai']).find(w=>G[w]===p);
+  if(loss>0&&seat&&G._nullifyDamage&&G._nullifyDamage[seat]===(G._turnNo||0)){if(after)after(0);return 0;}
   const apply=n=>{p.mp-=n;if(after)after(n);};
   if(loss>0&&seat&&window.RUFullmetal){
     cause=cause||RUFullmetal.source();
@@ -4364,15 +4365,16 @@ function ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel){
   const declaring=window.zCard(G[aw],aZone),rec=G._atkAddonCards;
   const addons=addonNP>0&&rec&&declaring&&rec.aWho===aw&&rec.attId===declaring.id?rec.cards:[];
   if(window.RUFullmetal&&RUFullmetal.confirmCombat(aw,declaring,addons,()=>ruDeclareAttack(aw,aZone,dw,dZone,addonNP,afterResolve,afterCancel),afterCancel))return;
+  const declaration=window.ruRecordAttackDeclaration(aw,aZone,dw,dZone);
   // Resume after the declaration triggers, not at their beginning: declining a skill must not reoffer it.
   const proceed=function(){
   if(rec&&declaring&&rec.aWho===aw&&rec.attId===declaring.id)addonNP=rec.cards.reduce((n,c)=>n+npOf(c),0);
   const AP=G[aw],att=window.zCard(AP,aZone);
   // What happens after the attack (attacks left, mode, hints) is the ATTACKER's flow — run it as the attacker
   // even when the defender's answer (a Safeguard, a reactive skill) is the input that completed the attack.
-  const done=function(){try{if(afterResolve){if(window.ruWithActor)window.ruWithActor(aw,afterResolve);else afterResolve();}}catch(e){console.error(e);}};
+  const done=function(){window.ruFinishAttackDeclaration(declaration,'negated');try{if(afterResolve){if(window.ruWithActor)window.ruWithActor(aw,afterResolve);else afterResolve();}}catch(e){console.error(e);}};
   if(!att){done();return;}
-  G._defState={};G._lastAtkInfo={aWho:aw,aZone:aZone,attacker:att};
+  G._defState={};
   const retaliate=function(){ if(G.gameOver)return; afterModals(function(){ if(!G.gameOver)offerRetaliation(dw,function(){}); }); };
   // the defender's own "when you / your Numeral is targeted for an attack" answers come before the Safeguard window
   const defend=function(){
@@ -4468,16 +4470,6 @@ function zoneClick(owner,zone){
     }
     return out;
   }
-  try{
-    var me4=ruActor(),p4=side(owner),card4=zoneCardP(p4,zone);
-    if(owner===me4&&G&&G.mode==='atk'&&card4&&card4.class==='phantom'&&card4.numeral===4&&!card4._ru159Phantom4PaidThisTurn&&!card4.usedSkill){
-      card4._ru159Phantom4PaidThisTurn=true;
-      card4.usedSkill=true;
-      var milled=topDeckL4(me4,1,'discard')[0]||null;
-      if(milled&&milled.class==='phantom'){card4._directThisTurn=true;safeLog('Phantom 4: attack-declare cost dropped '+milled.name+'; direct attack enabled.','info');}
-      else safeLog('Phantom 4: attack-declare cost dropped '+(milled?milled.name:'nothing')+'; no direct attack.','info');
-    }
-  }catch(e){}
   return zoneClickL3.apply(this,arguments);
 }
 function zoneClickL3(owner,zone){
@@ -4619,6 +4611,7 @@ function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
     //     casualty. Unchanged from before.
     function applyDefeatCasualty(loserWho,loserZone,loserCard,extraDraws){
       const LP=G[loserWho];
+      if(G._nullifyDamage&&G._nullifyDamage[loserWho]===(G._turnNo||0)){log('Nullify: battle Casualty Damage is negated.','heal');return;}
       if(extraDraws>0&&window.ruBattleShielded&&window.ruBattleShielded(loserWho)){log(`No Casualty Damage (${window.ruBattleShielded(loserWho)}).`,'heal');extraDraws=0;}
       if(loserZone==='delta'){window.defeatDeltaRA3(loserWho);}
       else if(loserZone==='rank'){/* rank card survives; the Deck-pull draws below are the casualty */}
@@ -5153,7 +5146,7 @@ function resolveAtkL27(aWho,aZone,dWho,dZone,addonNP){
       var AP171=sideFn171(aWho),DP171=sideFn171(dWho);
       var att171=window.zoneCard171RAtk27(AP171,aZone),def171=window.zoneCard171RAtk27(DP171,dZone);
       var r=resolveAtkL26.apply(this,arguments);
-      if(AP171&&att171&&def171)AP171._attackedThisTurn=true;
+      if(AP171&&att171&&def171&&G._battleResult)AP171._attackedThisTurn=true;
       return r;
     }
 
@@ -5169,13 +5162,15 @@ function resolveAtk(aWho,aZone,dWho,dZone,addonNP){
       const declaring=window.zCard(G[aWho],aZone),rec=G._atkAddonCards;
       const addons=addonNP>0&&rec&&declaring&&rec.aWho===aWho&&rec.attId===declaring.id?rec.cards:[];
       if(window.RUFullmetal&&RUFullmetal.confirmCombat(aWho,declaring,addons,()=>resolveAtk(aWho,aZone,dWho,dZone,addonNP)))return;
+      const declaration=window.ruRecordAttackDeclaration(aWho,aZone,dWho,dZone,true);
       // A BOT defender reacts for itself here (Safeguard before, Divide / Retaliatory after). A HUMAN defender
       // never gets an automatic reaction — they answer in their own defense prompts (ruDeclareAttack /
       // offerDefense / offerReactiveDefense / offerRetaliation) before and after this resolution.
       var botDef=!!(dWho!==aWho&&G[dWho]&&ruBotControlledSeat(dWho));
-      if(botDef && window.aiConsiderSafeguardRAtk28(aWho,aZone,dWho,dZone,addonNP))return;
+      if(botDef && window.aiConsiderSafeguardRAtk28(aWho,aZone,dWho,dZone,addonNP)){window.ruFinishAttackDeclaration(declaration,'negated');return;}
       var preMP=botDef?G[dWho].mp:null,preCas=botDef?(G[dWho].cas||0):null;
       var r=resolveAtkL28.apply(this,arguments);
+      window.ruFinishAttackDeclaration(declaration,G._battleResult?'resolved':'negated',G._battleResult);
       if(botDef){
         window.aiApplyProtectFlankRAtk28();
         window.aiConsiderDivideRAtk28(dWho,preMP,preCas);
@@ -5487,7 +5482,7 @@ function _aiBase(ph){
       if(window.RUFullmetal)RUFullmetal.confirmCombat('ai',card,declaredAddons,function(){});
       // Reset the defense window state for this specific attack.
       G._defState={};G._lastAtkInfo={aWho:'ai',aZone:zone,attacker:card};
-      offerDefense({aWho:'ai',aZone:zone,attacker:card},()=>{
+      offerDefense({aWho:'ai',aZone:zone,attacker:card,dWho:'player',dZone:tgt.zone},()=>{
         if(G.gameOver)return;
         // If a Safeguard fully negated the attack, skip resolution but still spend the attack.
         if(G._defState.negate){
@@ -5512,6 +5507,7 @@ function _aiBase(ph){
         // Reactive "when being attacked" skills (Light 0/3/6 etc.) get a window BEFORE damage resolves.
         offerReactiveDefense('ai',card,addonNP,realTgt,()=>{
           if(G._reactiveNegateAtk){
+            window.ruFinishAttackDeclaration(G._pendingAttackDeclaration,'negated');
             G._reactiveNegateAtk=false;G._defState={};
             card.attacksLeft=Math.max(0,atkLeft(card)-1);if(card.attacksLeft<=0)ai.attacksUsed[card.id]=true;
             renderAll();afterModals(()=>offerRetaliation(()=>afterModals(()=>setTimeout(runNextAIAtk,400))));return;
@@ -5534,7 +5530,7 @@ function _aiBase(ph){
     // else Rank Zone) and force it. This is this engine's own version of botBattle's equivalent
     // fallback -- this legacy _ai/_aiV1145 chain, not botBattle, is what actually drives the real
     // single-player opponent's Battle Phase (botBattle only runs in ai-vs-ai watch mode).
-    if(!atkQueue.length&&window.ru171UsedAdvE1ThisTurn&&window.ru171UsedAdvE1ThisTurn(ai)&&!ai._attackedThisTurn&&hasLegalAttack('ai')){
+    if(!atkQueue.length&&window.ru171UsedAdvE1ThisTurn&&window.ru171UsedAdvE1ThisTurn(ai)&&!window.ruDeclaredAttackThisTurn('ai')&&hasLegalAttack('ai')){
       const forcedLegal=[];
       [['rank',ai.rankZone],['left-flank',ai.leftFlank],['right-flank',ai.rightFlank],['rear-flank',ai.rearFlank],['delta',ai.delta&&ai.delta[0]]].forEach(([zone,card])=>{
         if(!card||card.canAttack===false||card.frozen||ai.attacksUsed[card.id]||atkLeft(card)<=0)return;
@@ -6829,10 +6825,11 @@ function doCounterAttack(npBonus,opts){
     const defCard=tz==='rank'?ai.rankZone:(tz==='left-flank'?ai.leftFlank:(tz==='right-flank'?ai.rightFlank:(tz==='rear-flank'?ai.rearFlank:(ai.delta&&ai.delta[0]))));
     if(!defCard){log('Counterattack: no target available.','info');return;}
     if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,p.rankZone,[],()=>doResolve(tz)))return;
+    const declaration=window.ruRecordAttackDeclaration(me,'rank',targetSide,tz);
     const myNP=p.rankZone.currentNP||p.rankZone.numeral, theirNP=defCard.currentNP||defCard.numeral;
     G._defState={};
     const resolve=()=>{
-      if(G._defState&&G._defState.negate){log('Counterattack negated.','heal');G._defState={};renderAll();return;}
+      if(G._defState&&G._defState.negate){window.ruFinishAttackDeclaration(declaration,'negated');log('Counterattack negated.','heal');G._defState={};renderAll();return;}
       resolveAtk(me,'rank',targetSide,tz,0);
       if(opts.millOnHit&&myNP>theirNP){mill(targetSide,opts.millOnHit);log(`Counterattack hit \u2014 ${targetLabel} mills ${opts.millOnHit}.`,'dmg');}
       renderAll();
@@ -8705,6 +8702,8 @@ function offerDefense(atkInfo,onDone){
   const aw=atkInfo&&atkInfo.aWho,att=atkInfo&&atkInfo.attacker;
   if(aw&&att&&window.RUFullmetal&&RUFullmetal.confirmCombat(aw,att,[],()=>offerDefense(atkInfo,onDone)))return;
   const dw=ruDefenseSeatOf(atkInfo);
+  const declaration=window.ruRecordAttackDeclaration(aw,atkInfo.aZone,dw,atkInfo.dZone||'rank',true);
+  const finish=onDone;onDone=function(){if(G._defState&&G._defState.negate)window.ruFinishAttackDeclaration(declaration,'negated');finish();};
   if(!isHumanSeat(dw)||dw===(atkInfo&&atkInfo.aWho)){onDone();return;}
   if(hhLocked(dw)){try{log('Halcyon Highlands: '+sidePossLower(dw)+' Safeguards are locked.','info');}catch(e){}onDone();return;}
   const p=G[dw];
@@ -8743,7 +8742,11 @@ function resolveSafeguardL2(idx,card,atkInfo,onDone){
     if(!commit())return;acDropTop(dw,2,'discard');G._defState.recycle=true;G._defState.flanksSafe=true;log('Recycle: milled 2. A classed Flank that would be ceded is recycled instead, and a Classless equal-NP Numeral is searched if available.','info');finish();return;
   }
   if(nm==='Nullify'){
-    if(!commit())return;G._defState.negate=true;G._defState.negateLabel='Nullify';G._defState.protectCas=99;G._defState.noMorale=true;log('Nullify: all Morale and Casualty Damage from this attack is negated.','heal');finish();return;
+    if(!commit())return;
+    (G._nullifyDamage=G._nullifyDamage||{})[dw]=G._turnNo||0;
+    G._casDrawPrevented=G._casDrawPrevented||{};G._casDrawPrevented[dw]=true;
+    G._defState.noMorale=true;
+    log('Nullify: all Morale and Casualty Damage to '+sideObjectLabel(dw)+' is negated this turn; the attack still resolves.','heal');finish();return;
   }
   if(nm==='Revive'){
     if(!commit())return;G._reviveQueued=true;log('Revive: after this Battle Phase, revive an eligible Deadzone Numeral to a Flank and gain MP equal to its Rank.','heal');finish();return;
@@ -11544,7 +11547,7 @@ function useRetL2(idx,card){
   function findClasslessEqual(w,np){const p=G[w];for(const zone of ['deck','discard','deadzone','hand','bank']){const a=p[zone]||[];const c=a.find(x=>x.type==='numeral'&&x.class==='classless'&&(x.numeral??x.currentNP)===np);if(c)return {zone,card:c};}return null;}
   function addClasslessEqual(w,np){const found=findClasslessEqual(w,np);if(found){moveTo(w,found.card,'hand');log(`${sideVerbLabel(w,'add')} ${found.zone==='deck'?ruCardNameFor(w,found.card):found.card.name} from ${found.zone} to hand (Recycle).`,'heal');return true;}log(`Recycle: no Classless Numeral with NP ${np} found.`, 'info');return false;}
   window.addClasslessEqualRAE4=addClasslessEqual;
-  function lastAttack(){return G._lastResolvedAttack||{};}
+  function lastAttack(){return G._lastAttackDeclaration&&G._lastAttackDeclaration.turn===(G._turnNo||0)?G._lastAttackDeclaration.summary:(G._lastResolvedAttack||{});}
   window.lastAttack=lastAttack;
   function isPlayerActionSlotOpen(w){const p=G[w||ruActor()], cap=ruEffectiveA(p);return (p.actUsed||0)<cap;}
   window.isPlayerActionSlotOpen=isPlayerActionSlotOpen;
@@ -15101,7 +15104,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     // legitimate strategic choice, same as for the human player.
     // High quality: pick the objectively least-bad forced attack. Low quality: pick blindly among
     // legal attackers/targets — WHICH attack is not dictated by the mandate.
-    if(!queue.length&&hasLegalAttack(w)&&!p._attackedThisTurn&&window.ru171UsedAdvE1ThisTurn&&window.ru171UsedAdvE1ThisTurn(p)){
+    if(!queue.length&&hasLegalAttack(w)&&!window.ruDeclaredAttackThisTurn(w)&&window.ru171UsedAdvE1ThisTurn&&window.ru171UsedAdvE1ThisTurn(p)){
       const legal=[];
       allField(w).forEach(a=>{
         const c=a.card;
@@ -15149,7 +15152,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       // the player never got the defense window against ai2 (or 'ai' in 3-way). Route player-targeted
       // bot attacks through the same offerDefense window the legacy 2-player path uses.
       if(isHumanSeat(_tside)){
-        window.offerDefense({aWho:w,aZone:it.a.zone,attacker:live,dWho:_tside},_finishAtk);
+        window.offerDefense({aWho:w,aZone:it.a.zone,attacker:live,dWho:_tside,dZone:t.zone},_finishAtk);
       } else { _finishAtk(); }
     }
     next();
@@ -23738,7 +23741,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 (function(){
   'use strict';
-  var HOOKS = window.RU_HOOKS = { attackResolved:[], participantResolved:[], beforeAttack:[], forcedTarget:[], targetBlocked:[], phaseBegan:[], beforeEnd:[],
+  var HOOKS = window.RU_HOOKS = { attackDeclared:[], attackEnded:[], attackResolved:[], participantResolved:[], beforeAttack:[], forcedTarget:[], targetBlocked:[], phaseBegan:[], beforeEnd:[],
     rankedUp:[], promoteBlocked:[], safeguard:[], retaliatory:[], e2:[], removed:[], survives:[], defend:[], entered:[],
     actResolved:[], actResponses:[], actionNegated:[], phaseEnded:[], targeted:[], drawn:[], phaseRedirect:[], skillNegation:[] };
   window.ruHook = function(name, fn){ HOOKS[name].push(fn); };
@@ -23827,6 +23830,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.ruShield=function(seat,amount,until){ (G._mpShields=G._mpShields||[]).push({seat:seat,left:amount,u:until}); };
   window.ruShieldDamage=function(seat,n){
     if(!(n>0))return n;
+    if(G._nullifyDamage&&G._nullifyDamage[seat]===tn())return 0;
     if(window.RUFullmetal)n=window.RUFullmetal.morale(seat,n,'battle',G._battleResult);
     if(battleShielded(seat)){ say('No Morale Damage ('+battleShielded(seat)+').','heal'); return 0; }
     (G._mpShields||[]).forEach(function(s){ if(n>0&&s.seat===seat&&s.left>0&&active(s.u)){ var k=Math.min(n,s.left); s.left-=k; n-=k; say('Damage reduced by '+k+' MP.','heal'); } });
@@ -23959,6 +23963,36 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
 
   // ---- engine entry points that call the class hooks ----
+  // Declarations survive cancellation. Resolution, winning, and damage are separate outcomes.
+  window.ruDeclaredAttackThisTurn=function(w){
+    return (G._attackDeclarations||[]).some(function(e){return e.turn===tn()&&e.aWho===w;});
+  };
+  window.ruRecordAttackDeclaration=function(aw,az,dw,dz,reuse){
+    var att=zc(side(aw),az),def=zc(side(dw),dz);if(!att||!def)return null;
+    var pending=G._pendingAttackDeclaration;
+    if(reuse&&pending&&!pending.status&&pending.turn===tn()&&pending.aWho===aw&&pending.attId===att.id&&pending.dWho===dw)return pending;
+    var cards=ruAttackParticipants(aw,att),summary={aWho:aw,aZone:az,dWho:dw,dZone:dz,attacker:att,defender:def,sideWasAttacked:dw,declared:true,resolved:false,moraleLostBySide:{},casualtiesAddedBySide:{},deadAddedBySide:{}};
+    (G.sideOrder||['player','ai']).forEach(function(w){summary[w+'WasAttacked']=w===dw;summary[w+'MoraleLost']=0;summary[w+'CasualtiesAdded']=0;summary[w+'DeadAdded']=[];});
+    var event={seq:G._attackSeq=(G._attackSeq||0)+1,turn:tn(),aWho:aw,aZone:az,attId:att.id,dWho:dw,dZone:dz,defId:def.id,ids:cards.map(function(c){return c.id;}),summary:summary};
+    G._attackDeclarations=(G._attackDeclarations||[]).filter(function(e){return e.turn===tn();});G._attackDeclarations.push(event);
+    G._lastAttackDeclaration=event;G._pendingAttackDeclaration=event;
+    G._lastAtkInfo={aWho:aw,aZone:az,attacker:att,dWho:dw,dZone:dz,defender:def,turn:tn()};
+    HOOKS.attackDeclared.forEach(function(f){f({aWho:aw,aZone:az,dWho:dw,dZone:dz,att:att,def:def,addons:cards.slice(1)});});
+    return event;
+  };
+  window.ruFinishAttackDeclaration=function(event,status,result){
+    if(!event||event.status)return;
+    var live=(G._attackDeclarations||[]).find(function(e){return e.seq===event.seq&&e.turn===event.turn;});if(!live||live.status)return;
+    live.status=status;live.resolved=status==='resolved';live.winner=live.resolved&&result?result.winner:null;
+    var last=G._lastResolvedAttack;
+    var matched=live.resolved&&last&&last.aWho===live.aWho&&last.attacker&&last.attacker.id===live.attId;
+    if(matched)live.summary=Object.assign({},last,{declared:true,resolved:true});
+    live.summary.resolved=live.resolved;
+    live.moraleDamage=matched?(last.moraleLostBySide||{}):{};
+    live.casualtyDamage=matched?(last.casualtiesAddedBySide||{}):{};
+    if(G._pendingAttackDeclaration&&G._pendingAttackDeclaration.seq===live.seq)G._pendingAttackDeclaration=null;
+    HOOKS.attackEnded.forEach(function(f){f(live);});
+  };
   // An attack: what it was (snap, before it resolves) and what it did (resolved, after).
   window.ruAttackSnap=function(aWho,aZone,dWho,dZone){
     var A=side(aWho),D=side(dWho); if(!A||!D)return null;
@@ -23967,6 +24001,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var addons=(rec&&att&&rec.aWho===aWho&&rec.attId===att.id)?rec.cards.slice():[];
     G._battleParticipants=[att].concat(addons).filter(Boolean).map(function(c){return c.id;});
     var snap={aWho:aWho,aZone:aZone,dWho:dWho,dZone:dZone,att:att,def:def,addons:addons};
+    snap.priorLast=G._lastResolvedAttack;snap.before={};
+    (G.sideOrder||['player','ai']).forEach(function(w){var p=side(w);snap.before[w]={mp:p.mp,cas:p.cas,dead:p.deadzone.slice()};});
     G._battleAttackContext={aWho:aWho,attId:att&&att.id,cards:addons};
     if(window.RUFullmetal)window.RUFullmetal.attackSnap(snap);
     return snap;
@@ -23975,6 +24011,17 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!s||!s.att||!s.def)return;
     window.ruFieldWatch();
     s.result=G._battleResult;
+    if(!s.result){G._battleAttackContext=null;G._battleParticipants=[];return;}
+    // Direct attacks bypass the ordinary combat recorder, but still have real (possibly zero) damage.
+    if(G._lastResolvedAttack===s.priorLast){
+      var last={aWho:s.aWho,aZone:s.aZone,dWho:s.dWho,dZone:s.dZone,attacker:s.att,defender:s.def,sideWasAttacked:s.dWho,moraleLostBySide:{},casualtiesAddedBySide:{},deadAddedBySide:{}};
+      Object.keys(s.before).forEach(function(w){var p=side(w),b=s.before[w];
+        last[w+'WasAttacked']=w===s.dWho;last.moraleLostBySide[w]=last[w+'MoraleLost']=Math.max(0,b.mp-p.mp);
+        last.casualtiesAddedBySide[w]=last[w+'CasualtiesAdded']=Math.max(0,p.cas-b.cas);
+        last.deadAddedBySide[w]=last[w+'DeadAdded']=p.deadzone.filter(function(c){return b.dead.indexOf(c)===-1;});
+      });
+      G._lastResolvedAttack=last;
+    }
     // "defeated in battle": attacked and did not win (G._battleResult); kept for this turn
     if(s.result&&s.result.defId===s.def.id&&s.result.winner!=='defender')(G._defeated=(G._defeated||[]).filter(function(d){ return d.turn===tn(); })).push({id:s.def.id,owner:s.dWho,zone:s.dZone,turn:tn()});
     timeAttack(s);
@@ -24008,6 +24055,18 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var p=side(s.aWho);
     q.forEach(function(e){var i=p.hand.findIndex(function(h){return h.id===e.borrowedId;});
       if(i!==-1){var borrowed=p.hand.splice(i,1)[0];dzAdd(p,borrowed);say('Phantom 6: the attack was unsuccessful; '+borrowed.name+' returns to the Deadzone.','info');}
+    });
+  });
+  ruHook('attackEnded',function(e){
+    if(e.resolved)return;
+    var p=side(e.aWho);
+    (G._phantom6Returns||[]).filter(function(q){return q.who===e.aWho&&e.ids.indexOf(q.attackerId)!==-1;}).forEach(function(q){
+      var i=p.hand.findIndex(function(c){return c.id===q.borrowedId;});if(i!==-1)dzAdd(p,p.hand.splice(i,1)[0]);
+    });
+    G._phantom6Returns=(G._phantom6Returns||[]).filter(function(q){return q.who!==e.aWho||e.ids.indexOf(q.attackerId)===-1;});
+    fieldCards(p).filter(function(c){return e.ids.indexOf(c.id)!==-1;}).forEach(function(c){
+      delete c._cel5Pending;
+      if(c._t9atk){c.currentNP=np(c)+c._t9atk.bonus;delete c._t9atk;}
     });
   });
   // Data-defined declaration skills share the ordinary skill runner and its owned cost pickers.
@@ -25263,12 +25322,15 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // Attack bookkeeping and the battle-triggered skills. snap() runs before an attack resolves, resolved() after.
   // A card that left the Battlefield in this battle (a Rank Zone card that loses stays — its owner takes the casualty).
   function leftField(card,w){ return !!(card&&!card._empty&&!zoneOf(side(w),card)); }
+  ruHook('attackDeclared',function(s){
+    var A=side(s.aWho),T=tn();
+    if(A.rankZone&&[s.att].concat(s.addons||[]).some(function(c){return c.id===A.rankZone.id;}))A._celRankAttacked=A.rankZone.id+'@'+T;
+    var key=s.aWho+'@'+T,hit=(G._celAttacked=G._celAttacked||{})[key]=(G._celAttacked[key]||[]);
+    if(hit.indexOf(s.dWho)===-1)hit.push(s.dWho);
+  });
   ruHook('attackResolved',function(s){
     if(!s||!s.att||!s.def)return;
     var A=side(s.aWho),D=side(s.dWho),T=tn();
-    if(s.aZone==='rank')A._celRankAttacked=s.att.id+'@'+T;
-    var key=s.aWho+'@'+T,hit=(G._celAttacked=G._celAttacked||{})[key]=(G._celAttacked[key]||[]);
-    if(hit.indexOf(s.dWho)===-1)hit.push(s.dWho);
     // casualty damage from cards destroyed in battle (Casualty Draws are counted in G._casCardsThisTurn)
     G._celBattleCas=G._celBattleCas||{};
     [[s.att,s.aWho],[s.def,s.dWho]].forEach(function(x){ if(leftField(x[0],x[1])&&side(x[1]).deadzone.indexOf(x[0])!==-1){ var k=x[1]+'@'+T; G._celBattleCas[k]=(G._celBattleCas[k]||0)+1; } });
@@ -25708,7 +25770,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function isOchre(c){ return !!(c&&(c.class==='ochre'||c.starCls==='ochre')); }
   function isOchreNum(c){ return !!(c&&c.class==='ochre'&&c.type==='numeral'); }
   function foeOf(me){ return (G._lastAtkInfo&&G._lastAtkInfo.aWho&&G._lastAtkInfo.aWho!==me&&G[G._lastAtkInfo.aWho])?G._lastAtkInfo.aWho:oppOf(me); }
-  function attackedBy(me){ var a=G._lastAtkInfo; return !!(a&&a.aWho&&a.aWho!==me&&G.turn===a.aWho); }
+  function attackedBy(me){ var a=G._lastAtkInfo; return !!(a&&a.turn===tn()&&a.dWho===me&&a.aWho!==me&&G.turn===a.aWho); }
   function cardOf(rec){ var l=locate(rec.id); return l&&l.card; }
 
   // ═══ NUMERALS ═══
@@ -25830,8 +25892,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!card||card.name!=='Ochre 9'||!from||(from.rank||0)<3)return;
     window.ruProtect(card,{turn:tn()}); say('Ochre 9: Ranked Up from a Rank³ — it cannot be removed this turn.','heal');
   });
-  ruHook('participantResolved',function(s){
-    if(s.att&&s.att.name==='Ochre 8'&&s.aWho!==s.dWho&&G.turn===s.aWho)s.att._ochre8Atk=tn();
+  ruHook('attackDeclared',function(s){
+    if(s.aWho!==s.dWho&&G.turn===s.aWho)[s.att].concat(s.addons||[]).forEach(function(c){if(c.name==='Ochre 8')c._ochre8Atk=tn();});
   });
 
   // ═══ TURN TIMING ═══
@@ -26094,7 +26156,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function act(){ return window.ruActEffect(); }                          // costs paid: the effect starts here
   // the player who attacked w this turn (else the one who gave w this casualty)
   function foeOf(w){ var a=G._lastAtkInfo; return (a&&a.aWho&&a.aWho!==w&&G[a.aWho])?a.aWho:casualtyGiver(w); }
-  function attackedBy(w){ var a=G._lastAtkInfo; return !!(a&&a.aWho&&a.aWho!==w&&G.turn===a.aWho); }
+  function attackedBy(w){ var a=G._lastAtkInfo; return !!(a&&a.turn===tn()&&a.dWho===w&&a.aWho!==w&&G.turn===a.aWho); }
   // once per turn, per player, per card
   function onceFree(p,key){ return !(p._kisOnce&&p._kisOnce[key]===tn()); }
   function useOnce(p,key){ (p._kisOnce=p._kisOnce||{})[key]=tn(); }
@@ -26434,9 +26496,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         refresh();
       }}
     ]};
+  ruHook('attackDeclared',function(s){
+    [s.att].concat(s.addons||[]).forEach(function(c){if(c.name==='Kismet 8'){var m=(c._kAtk&&c._kAtk.turn===tn())?c._kAtk:(c._kAtk={turn:tn(),n:0});m.n++;}});
+  });
   ruHook('participantResolved',function(s){
     var c=s.att; if(!c||c.name!=='Kismet 8')return;
-    var m=(c._kAtk&&c._kAtk.turn===tn())?c._kAtk:(c._kAtk={turn:tn(),n:0}); m.n++;
     if(!c._k8||c._k8.turn!==tn()||G.gameOver)return;
     var drawn=[];
     living().forEach(function(w){
@@ -26951,7 +27015,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function npTotal(a){ return a.reduce(function(s,c){ return s+np(c); },0); }
   function slotOpen(w){ return (side(w).actUsed||0)<acActionCapForDefense(w); }
   function foeOf(w){ var a=G._lastAtkInfo; return (a&&a.aWho&&a.aWho!==w&&G[a.aWho])?a.aWho:casualtyGiver(w); }
-  function attackedBy(w){ var a=G._lastAtkInfo; return !!(a&&a.aWho&&a.aWho!==w&&G.turn===a.aWho); }
+  function attackedBy(w){ var a=G._lastAtkInfo; return !!(a&&a.turn===tn()&&a.dWho===w&&a.aWho!==w&&G.turn===a.aWho); }
   function otherHand(p,card){ return p.hand.filter(function(c){ return c!==card; }); }
   function deadPool(p,not){ return (p.deadzone||[]).filter(function(c){ return c!==not&&c.name!=='The Lowlands'; }); }
   // the start of w's previous turn (the history entry), or null
@@ -27784,7 +27848,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       // Must-attack: if the bot used an Advantageous Action Card this turn and still owes its attack, NEVER
       // force-end past that obligation — keep waiting; the bot's own forced-swing (botBattle) resolves it.
       try{
-        if(window.ru171UsedAdvE1ThisTurn && ru171UsedAdvE1ThisTurn(G.ai) && !(G.ai && G.ai._attackedThisTurn) && typeof hasLegalAttack === 'function' && hasLegalAttack('ai')){
+        if(window.ru171UsedAdvE1ThisTurn && ru171UsedAdvE1ThisTurn(G.ai) && !window.ruDeclaredAttackThisTurn('ai') && typeof hasLegalAttack === 'function' && hasLegalAttack('ai')){
           lastMoveAt = now;
           return;
         }
@@ -28834,12 +28898,8 @@ window.ruSpecPace=function(base){
   }
   window.ru171UsedAdvE1ThisTurn=usedAdvE1ThisTurn;
 
-  // _attackedThisTurn is set in exactly one place in the entire file (the original base
-  // resolveAtk), and live-diagnostic testing confirms that spot is no longer reliably reached --
-  // enough later patch layers reimplement combat resolution from scratch that the flag can stay
-  // false even after a real attack fully resolves (casualties drawn, MP changed, etc). Set it here
-  // too, from the outermost wrap, purely from the call's own arguments, so the must-attack lock
-  // below always has a real signal to release on regardless of which inner layer actually ran.
+  // Resolution is not proof of declaration: a Safeguard can stop the attack before resolution.
+  // The obligation reads the shared declaration ledger, not damage or the resolution flag.
   function zoneCard171(side,z){
     if(!side)return null;
     if(z==='rank')return side.rankZone;
@@ -28855,7 +28915,7 @@ window.ruSpecPace=function(base){
   // POV-correct wording: this can also surface on the OTHER client (a blocked action is relayed before the
   // inner guard runs, so it re-evaluates there too) — say "You/you" for the local player, the name otherwise.
   function advBlockMsg(where){
-    return ruPOV(G.turn,'{You} used an Advantageous Action Card this turn — {you} must attack before '+where+'.');
+    return ruPOV(G.turn,'{You} used an Advantageous Action Card this turn — {you} must declare an attack before '+where+'.');
   }
   function activeTurnSide171(){return G&&G.turn;}
   function activeTurnPlayer171(){var w=activeTurnSide171();return G&&G[w];}
@@ -28863,7 +28923,7 @@ window.ruSpecPace=function(base){
   if(typeof prevEndTurnNow171==='function'){
     window.endTurnNow=endTurnNow=function(){
       var w=activeTurnSide171(),p=activeTurnPlayer171();
-      if(G&&!G.gameOver&&p&&usedAdvE1ThisTurn(p)&&!p._attackedThisTurn&&hasLegalAttack(w)){
+      if(G&&!G.gameOver&&p&&usedAdvE1ThisTurn(p)&&!window.ruDeclaredAttackThisTurn(w)&&hasLegalAttack(w)){
         log(advBlockMsg('ending the turn'),'dmg');
         return;
       }
@@ -28875,7 +28935,7 @@ window.ruSpecPace=function(base){
   if(typeof prevAdvPhase171==='function'){
     window.advPhase=advPhase=function(){
       var w=activeTurnSide171(),p=activeTurnPlayer171();
-      if(G&&!G.gameOver&&p&&G.phase==='battle'&&usedAdvE1ThisTurn(p)&&!p._attackedThisTurn&&hasLegalAttack(w)){
+      if(G&&!G.gameOver&&p&&G.phase==='battle'&&usedAdvE1ThisTurn(p)&&!window.ruDeclaredAttackThisTurn(w)&&hasLegalAttack(w)){
         log(advBlockMsg('leaving the Battle Phase'),'dmg');
         return;
       }
@@ -29796,7 +29856,8 @@ window.ruSpecPace=function(base){
       parts.push(w,p.mp,p.cas,ids(p.hand),ids(p.deck),ids(p.discard),ids(p.deadzone),(p.bank||[]).length,
         (p.delta||[]).length,cid(p.rankZone),cid(p.leftFlank),cid(p.rightFlank),cid(p.rearFlank),cid(p.delta&&p.delta[0]),p.actUsed||0,
         ids(p.evolutions),(p.delta||[]).map(function(c){return c.id+':'+ids(c.elements);}).join(';'),
-        Object.keys(p.attacksUsed||{}).sort().join(','),p._attackedThisTurn?1:0);
+        Object.keys(p.attacksUsed||{}).sort().join(','),p._attackedThisTurn?1:0,(g._nullifyDamage||{})[w],
+        (g._attackDeclarations||[]).filter(function(e){return e.aWho===w&&e.turn===(g._turnNo||0);}).map(function(e){return e.seq+':'+e.attId+':'+e.dWho+':'+(e.status||'declared');}).join(','));
     });
     var m=modalEl(), pk=pickerEl();
     parts.push(sharedOpen(m)?('M:'+(m._ruOwner||'')+':'+(m._ruStash?m._ruStash.btns.length:(document.getElementById('m-btns')||{children:[]}).children.length)):'M-');
