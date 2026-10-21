@@ -17,9 +17,15 @@ function counts(w,transmute,metallicize){
   const support=Array.from(w.document.querySelectorAll('#m-body button')).find(b=>b.textContent==='Δ Deck Support');
   check(support,'renamed category button');support.click();
   check(w.document.getElementById('m-title').textContent==='Δ Deck — Δ Deck Support','renamed panel');
-  for(const [name,n] of [['transmute',transmute],['metallicize',metallicize]]){
-    const input=w.document.getElementById('delta-support-'+name);check(input&&input.max==='3'&&input.min==='0','native 0–3 count control');
-    input.value=n;input.dispatchEvent(new w.Event('change',{bubbles:true}));
+  check(!w.document.querySelector('#m-body input[type="number"]'),'no numeric steppers');
+  for(const [name,n] of [['Transmute',transmute],['Metallicize',metallicize]]){
+    const card=()=>w.document.querySelector('[data-action-support="'+name+'"]');
+    const data=w.eval('AC')[name];
+    check(card().textContent.includes(data.e1)&&card().textContent.includes(data.e2),'full live card effects');
+    while(w.RU_PLAYER_ACTION_SUPPORT[name]<n)card().querySelector('[data-support-add]').click();
+    while(w.RU_PLAYER_ACTION_SUPPORT[name]>n)card().querySelector('[data-support-remove]').click();
+    check(card().textContent.includes('Copies: '+n+'/3'),'visible copy count');
+    if(n===3){check(card().querySelector('[data-support-add]').disabled,'three-copy cap');card().querySelector('[data-support-add]').click();check(w.RU_PLAYER_ACTION_SUPPORT[name]===3,'disabled add cannot exceed cap');}
   }
   const close=Array.from(w.document.querySelectorAll('#m-btns button')).find(b=>b.textContent==='Close');close.click();
 }
@@ -34,7 +40,7 @@ document.getElementById('run').onclick=async function(){
     const sizes={player:a.buildDeck('light').length,ai:a.buildDeck('temporal').length};
     counts(a,3,3);counts(b,1,2);counts(watch,0,0);
     check(a.RU_PLAYER_ACTION_SUPPORT.Transmute===3&&a.RU_PLAYER_ACTION_SUPPORT.Metallicize===3,'six simultaneous added copies');
-    say('PASS renamed menu, both native count controls, independent 0–3 limits and six-copy selection');
+    say('PASS scrollable full card effects, Add/Remove buttons, visible counts, independent three-copy caps and six-copy selection');
     a.sessionStorage.setItem('ru_tab_client_id',room+'P1');a.RUNet.connect('ws://'+location.host,room,'Support P1',{cls:'light'});
     await until(()=>a.RUNet.state().seat==='player1','P1 joins');
     counts(a,2,1);

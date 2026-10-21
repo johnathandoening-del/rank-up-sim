@@ -29456,18 +29456,22 @@ window.ruSpecPace=function(base){
     asModal('Δ Deck',body,btns);
   }
   function renderAreaSupportPool(){
+    const previousList=document.getElementById('delta-support-list'),scrollTop=previousList?previousList.scrollTop:0;
     var body='<div style="font-family:Cinzel,serif;font-size:.65rem;letter-spacing:.08em;color:#ffb0b8;margin:.15rem 0 .45rem;">Δ Deck → Δ Deck Support</div>';
     var counts=actionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT);
-    body+='<h3 style="font-size:.85rem;margin:.6rem 0;">Action Cards</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.6rem;margin-bottom:.9rem;">';
+    body+='<p style="font-size:.75rem;color:var(--text-dim);">Each added Action Card replaces one random non-Star Action Card in your main deck. Up to 3 copies of each.</p>';
+    body+='<div id="delta-support-list" class="delta-scroll"><h3 style="font-size:.85rem;margin:.6rem 0;">Action Cards</h3>';
     ACTION_SUPPORT_NAMES.forEach(function(name){
-      const card=AC[name],id='delta-support-'+name.toLowerCase();
-      body+='<div style="border:1px solid rgba(140,210,255,.3);border-radius:6px;padding:.6rem;">'+
-        '<strong>'+name+'</strong><div style="font-size:.7rem;color:var(--text-dim);margin:.25rem 0;">'+card.sub+' | M:+'+card.M+'</div>'+
-        '<label for="'+id+'" style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.75rem;">Added copies <input id="'+id+'" type="number" min="0" max="3" step="1" value="'+counts[name]+'" style="width:3.5rem;height:1.8rem;padding:.2rem .35rem;background:var(--bg-card,#101018);color:var(--text,#e0d8bc);border:1px solid rgba(140,210,255,.3);border-radius:4px;font:inherit;" onchange="RU_setActionSupportCount(\''+name+'\',this.value)"></label></div>';
+      const card=AC[name],count=counts[name];
+      body+='<div class="delta-list-card" data-action-support="'+name+'" style="border-color:rgba(140,210,255,.3);background:rgba(140,210,255,.03);">'+
+        '<div style="display:flex;justify-content:space-between;gap:.5rem;align-items:center;flex-wrap:wrap;"><strong style="color:#8fd0ff;">'+name+'</strong><span style="color:var(--gold);font-family:Cinzel,serif;font-size:.7rem;">Copies: '+count+'/3</span></div>'+
+        '<div style="font-size:.72rem;color:var(--text-dim);margin-top:.15rem;">Action Card | '+card.sub+' | M:'+(card.M>=0?'+':'')+card.M+'</div>'+
+        '<div style="font-size:.72rem;margin-top:.3rem;"><strong>Effect 1 (E1):</strong> '+card.e1+'</div>'+
+        '<div style="font-size:.72rem;margin-top:.18rem;"><strong>Effect 2 (E2):</strong> '+card.e2+'</div>'+
+        '<div class="mbr" style="margin-top:.35rem;"><button class="mb mb-skill" data-support-add onclick="RU_setActionSupportCount(\''+name+'\','+(count+1)+')" '+(count>=3?'disabled':'')+'>Add to Deck</button>'+
+        (count?'<button class="mb mb-danger" data-support-remove onclick="RU_setActionSupportCount(\''+name+'\','+(count-1)+')">Remove from Deck</button>':'')+'</div></div>';
     });
-    body+='</div><p style="font-size:.75rem;color:var(--text-dim);">Each added copy replaces one random non-Star Action Card in your main deck. Up to 3 copies of each.</p>';
     body+='<h3 style="font-size:.85rem;margin:.6rem 0;">Area Card</h3><p style="font-size:.78rem;color:var(--text-dim);">Choose one to replace your deck’s normal Area Card. These support choices do not use Evolution slots.</p>';
-    body+='<div class="delta-scroll" style="display:flex;flex-direction:column;gap:.4rem;">';
     AREA_SUPPORT_LIBRARY.forEach(function(c){
       var chosen=window.RU_PLAYER_AREA_SUPPORT===c.id;
       body+='<div style="border:1px solid '+(chosen?'rgba(140,210,255,.6)':'rgba(255,255,255,.12)')+';border-radius:6px;padding:.5rem;background:'+(chosen?'rgba(140,210,255,.08)':'rgba(255,255,255,.02)')+';">'+
@@ -29481,6 +29485,7 @@ window.ruSpecPace=function(base){
       {label:'← Back',cls:'mb-skill',fn:function(){ if(typeof window.deltaBuilderHome==='function')window.deltaBuilderHome(); else if(typeof window.openDeltaDeckBuilder==='function')window.openDeltaDeckBuilder(); }},
       {label:'Close',fn:function(){ if(typeof closeModal==='function')closeModal(); }}
     ]);
+    const list=document.getElementById('delta-support-list');if(list)list.scrollTop=scrollTop;
   }
   window.RU_toggleAreaSupport=function(id){
     window.RU_PLAYER_AREA_SUPPORT=(window.RU_PLAYER_AREA_SUPPORT===id)?null:id;
