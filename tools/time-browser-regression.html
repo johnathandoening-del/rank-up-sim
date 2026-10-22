@@ -1,0 +1,61 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Timed Match Browser Tests</title>
+<style>body{background:#17191b;color:#eee;font:15px system-ui}pre{white-space:pre-wrap}section{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}iframe{width:100%;height:650px}</style>
+<button id="run">Run Timed Match Tests</button><pre id="report">Ready.</pre>
+<section><iframe id="a" src="/index.html"></iframe><iframe id="b" src="/index.html"></iframe><iframe id="watch" src="/index.html"></iframe></section>
+<script>
+const report=document.getElementById('report'),pause=ms=>new Promise(r=>setTimeout(r,ms));
+const windows=()=>['a','b','watch'].map(id=>document.getElementById(id).contentWindow);
+const check=(ok,msg)=>{if(!ok)throw Error(msg);};
+async function until(fn,label){for(let i=0;i<500;i++){if(fn())return;await pause(20);}throw Error('Timeout '+label);}
+const say=s=>report.textContent+='\n'+s;
+function choose(w,type,minutes){const on=w.document.getElementById('enable-time');if(!on.checked)on.click();const select=w.document.getElementById('time-type');select.value=type;select.dispatchEvent(new w.Event('change'));w.document.getElementById('time-minutes').value=minutes;}
+document.getElementById('run').onclick=async function(){
+  this.disabled=true;report.textContent='Running timed controls and online input checks...';
+  try{
+    await until(()=>windows().every(w=>w.RUTime&&w.RUNet),'scripts loaded');
+    const [a,b,watch]=windows();
+    for(const [type,presets] of [['turn','3,5,7'],['player','5,7,10'],['game','7,15,21,35']]){
+      choose(a,type,7);check(Array.from(a.document.querySelectorAll('#time-minutes option')).map(o=>o.value).join(',')===presets,type+' presets');
+    }
+    say('PASS checkbox, three time types and all ten duration presets');
+    choose(a,'player',7);choose(b,'game',35);
+    a.document.querySelector('.cc[data-k="light"]').click();b.document.querySelector('.cc[data-k="light"]').click();
+    const room='TIMED'+Date.now();
+    a.sessionStorage.setItem('ru_tab_client_id',room+'A');
+    a.RUNet.connect('ws://'+location.host,room,'Clock P1',{cls:'light'});
+    await until(()=>a.RUNet.state().seat==='player1','host joins');
+    b.sessionStorage.setItem('ru_tab_client_id',room+'B');b.RUNet.connect('ws://'+location.host,room,'Clock P2',{cls:'light'});
+    await until(()=>a.RUNet.state().active&&b.RUNet.state().active,'start');
+    watch.sessionStorage.setItem('ru_tab_client_id',room+'WATCH');watch.RUNet.connect('ws://'+location.host,room,'Clock observer',{spectator:true});
+    await until(()=>watch.RUNet.state().active&&a.RUTime.snapshot().status==='running'&&b.RUTime.snapshot().status==='running','clock starts for both');
+    for(const w of windows()){
+      check(w.eval('G.timeControl.type')==='player'&&w.eval('G.timeControl.minutes')===7,'host settings govern all views');
+      const timers=Array.from(w.document.querySelectorAll('#hud-strip [data-time-seat]'));
+      check(timers.length===2&&timers.every(p=>!p.hidden),'both player clocks visible');
+      check(timers.find(p=>p.dataset.timeSeat===w.eval('G.turn')).style.opacity==='','active player uses standard stat opacity');
+      check(timers.find(p=>p.dataset.timeSeat!==w.eval('G.turn')).style.opacity==='0.35','inactive player uses 35% opacity');
+    }
+    say('PASS server-owned host rule on P1, P2 and spectator, despite conflicting P2 menu');
+    const turn=a.eval('G.turn'),actor=turn==='player'?a:b;
+    await until(()=>actor.eval('G.mode')!=='switchdraw'||actor.document.querySelector('#m-body button[onclick*="doSD"]'),'switchdraw opens');
+    for(let i=0;i<20&&actor.eval('G.mode')==='switchdraw';i++){
+      const buttons=Array.from(actor.document.querySelectorAll('#m-body button,#m-btns button'));
+      const sw=buttons.find(btn=>String(btn.getAttribute('onclick')).includes('doSD'));
+      const done=buttons.find(btn=>/done|finish|continue/i.test(btn.textContent)&&!btn.disabled);
+      check(sw||done,'switchdraw UI button exists');(sw||done).click();
+      await until(()=>!actor.RUNet.state().clockAwaiting,'input server acknowledgement');await pause(50);
+    }
+    await until(()=>actor.eval('G.mode')!=='switchdraw','draw completed');
+    actor.document.getElementById('btn-end').click();
+    await until(()=>a.eval('G._turnNo')===1&&b.eval('G._turnNo')===1&&watch.eval('G._turnNo')===1,'timed turn passes by relayed button');
+    await until(()=>windows().every(w=>w.RUTime.snapshot().turnNo===1),'clock switches sides');
+    check(a.ruStateSig()===b.ruStateSig()&&a.ruStateSig()===watch.ruStateSig(),'engine parity after timed inputs');
+    for(const w of windows())check(w.RUTime.snapshot().remaining[turn]<420000,'first player budget preserved');
+    say('PASS real switchdraw/End Turn buttons use server echo, all three states agree and player clock switches without resetting');
+    say('ALL TIMED MATCH BROWSER TESTS PASSED');
+  }catch(e){say('FAIL '+e.stack);}
+  this.disabled=false;
+};
+</script>

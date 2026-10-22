@@ -13,7 +13,7 @@
   var ws = null;
   var state = { connected:false, room:null, seat:null, seed:null, name:null, active:false, applied:0, sent:0, lastSeq:0,
                 clientId:null, lastConnect:null, reconnectTimer:null, reconnectTries:0, intentionalClose:false,
-                mySeat:null, name0:null, name1:null, spectator:false, desync:false };
+                mySeat:null, name0:null, name1:null, spectator:false, desync:false, clockAwaiting:false };
 
   // Stable per-tab id so a dropped/reloaded tab reclaims its SAME seat, while a second live tab from the same
   // browser profile can still join as the other player instead of stealing the first seat.
@@ -96,6 +96,7 @@
       inbox.shift();
       var before = sigNow();
       try { window.ruApplyAction(a); state.applied++; } catch(e){ console.error('[net] apply failed', e, a); }
+      if(a.s===engineSeat(state.seat))state.clockAwaiting=false;
       histPush({ dir:'in', a: brief(a), made: a.sig, before: before, after: sigNow(), ready: ready });
     }
   }
@@ -117,18 +118,20 @@
     }
     clearInbox();
     state.seed = cfg.seed; state.mySeat = cfg.spectator ? null : cfg.mySeat; state.name0 = cfg.name0; state.name1 = cfg.name1;
-    state.active = true; state.spectator = !!cfg.spectator; state.applied = 0; state.lastSeq = 0; state.desync = false;
+    state.active = true; state.spectator = !!cfg.spectator; state.applied = 0; state.lastSeq = 0; state.desync = false; state.clockAwaiting=false;
     window.RU_NET_CONFIG = {
       seed: cfg.seed, mySeat: cfg.mySeat, spectator: !!cfg.spectator,
       seat0Class: cfg.seat0Class, seat1Class: cfg.seat1Class, firstSeat: cfg.firstSeat,
       name0: cfg.name0, name1: cfg.name1,
       allowEvolutions: cfg.allowEvolutions !== false,
+      timeControl: cfg.timeControl,
       deltaDecks: { player: cfg.seat0DeltaDeck || [], ai: cfg.seat1DeltaDeck || [] },
       areaSupports: { player: cfg.seat0AreaSupport || null, ai: cfg.seat1AreaSupport || null },
       actionSupports: { player: cfg.seat0ActionSupport || null, ai: cfg.seat1ActionSupport || null }
     };
     try { if (typeof startGame === 'function') startGame(); }
     finally { window.RU_NET_CONFIG = null; }
+    if(window.RUTime&&cfg.clock)RUTime.receive(cfg.clock,cfg.serverNow);
     if (cfg.spectator) setStatus('Spectating room "' + (state.room || '') + '" — read-only.', 'ok');
     else log2('game started — seed ' + cfg.seed + ', you are ' + (cfg.mySeat === 1 ? (cfg.name1 || 'Player 2') : (cfg.name0 || 'Player 1')) + ' (Player ' + (cfg.mySeat + 1) + ').');
   }
@@ -140,7 +143,7 @@
     var lg = cfg.log || [];
     lg.forEach(function(e){
       var seq = Number(e.seq || 0);
-      var a = Object.assign({}, e.action, { s: engineSeat(e.from) });
+      var a = Object.assign({}, e.action, { s: e.from==='server'?e.action.event.turn:engineSeat(e.from) });
       if (seq) state.lastSeq = Math.max(state.lastSeq, seq);
       enqueue(a);
     });
@@ -176,7 +179,7 @@
         var seq = Number(msg.seq || 0);
         if (seq && seq <= state.lastSeq) return;
         if (seq) state.lastSeq = seq;
-        var a = Object.assign({}, msg.action, { s: engineSeat(msg.from) });
+        var a = Object.assign({}, msg.action, { s: msg.from==='server'?msg.action.event.turn:engineSeat(msg.from) });
         if (!a.s) return;
         enqueue(a);
         break;
@@ -192,6 +195,13 @@
         } else if (msg.event === 'join' && !state.active) {
           setStatus((msg.name || 'An opponent') + ' joined — starting…', 'ok');
         }
+        break;
+      case 'clock':
+        if(window.RUTime)RUTime.receive(msg.clock,msg.serverNow);
+        break;
+      case 'action-rejected':
+        state.clockAwaiting=false;
+        if(msg.clock&&window.RUTime)RUTime.receive(msg.clock,msg.serverNow);
         break;
       case 'reset':
         // The opponent left for good — the room reset to a clean waiting state. Return to the lobby so a fresh
@@ -257,7 +267,7 @@
     var cls = preferCls || (typeof pCls !== 'undefined' && pCls) || 'light';
     var evo = (typeof evolutionsAllowed === 'function') ? !!evolutionsAllowed() : true;
     var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);   // the format's only rule: at most 3
-    return { cls: cls, deltaDeck: dd, areaSupport: window.RU_PLAYER_AREA_SUPPORT || null, actionSupport: window.ruDeltaActionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT), evo: evo };
+    return { cls: cls, deltaDeck: dd, areaSupport: window.RU_PLAYER_AREA_SUPPORT || null, actionSupport: window.ruDeltaActionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT), evo: evo, timeControl:window.RUTime?RUTime.menu():null };
   }
 
   window.RUNet = {
@@ -280,7 +290,7 @@
         // `evo` is this player's Allow-Evolutions choice (the room uses the host's — Player 1's — for the match).
         var lo = currentLoadout(o.cls);
         // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
+        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, timeControl:lo.timeControl, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
       ws.onmessage = function(ev){ if (thisWs !== ws) return; try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
         state.connected = false; log2('disconnected');
@@ -291,11 +301,12 @@
       };
       ws.onerror = function(){ log2('socket error'); if (!state.active) { setStatus('Could not reach the server at ' + wsUrl + '. If it was asleep, wait a few seconds and try again.', 'err'); showLeave(false); } };
       // forward this device's inputs to the room (the action model never calls this while applying a relayed input)
-      window.ruOnLocalAction = function(a){ if (state.active && !state.spectator && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type:'action', action:a })); state.sent++;
+      window.ruOnLocalAction = function(a){ if (state.active && !state.spectator && ws && ws.readyState === 1) { if(typeof G!=='undefined'&&G.timeControl&&G.timeControl.enabled)state.clockAwaiting=true; ws.send(JSON.stringify({ type:'action', action:a })); state.sent++;
         var e = histPush({ dir:'out', a: brief(a), made: a.sig }); setTimeout(function(){ e.after = sigNow(); }, 0); } };
     },
     state: function(){ return JSON.parse(JSON.stringify(state)); },
     isActive: function(){ return !!state.active; },
+    clockProgress:function(progress){if(!state.spectator&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'clock-progress',progress}));},
     oppName: function(){ return oppName(); },
     // Vote to rematch (true) or decline/cancel (false). When BOTH seats vote true the server deals a fresh
     // identically-seeded game (a new 'start') and both clients rebuild in the same room.

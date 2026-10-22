@@ -9,6 +9,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
 </style>
 <script src="data.js"></script>
+<script src="match-clock.js"></script>
 <script src="ai-sim.js" defer></script>
 </head>
 <body>
@@ -22,6 +23,12 @@
     <button class="start-btn" id="start-btn" onclick="startGame()" disabled>BEGIN MATCH</button>
     <label class="evo-toggle" id="evo-toggle-label" title="Allow or disable Δ Zone / Evolution cards for this match."><input type="checkbox" id="allow-evolutions" onchange="toggleEvoChoice()" checked>ALLOW EVOLUTIONS</label>
     <button class="delta-btn" id="delta-deck-btn" onclick="openDeltaDeckBuilder()">Δ DECK</button>
+    <label class="evo-toggle"><input type="checkbox" id="enable-time"><span class="clock-icon" aria-hidden="true"></span> Enable Time</label>
+    <div id="time-options" class="time-options" hidden>
+      <label for="time-type">Time Types</label>
+      <select id="time-type"><option value="turn">Per Turn</option><option value="player">Per Player</option><option value="game">Per Game</option></select>
+      <label for="time-minutes">Time</label><select id="time-minutes"></select>
+    </div>
   </div>
   <div class="online-panel" id="online-panel">
     <div class="online-title">&#127760; Play Online <span class="online-beta">beta</span></div>
@@ -958,6 +965,7 @@ function initGame(){
   }
   G=makeGameState(sideOrder,firstTurn,clsFor,buildOrder);
   if(G){ G._seed=window.ruGameSeed(); if(netCfg)ruInstallOnlineSeats(G,netCfg); }
+  if(window.RUTime)RUTime.start(netCfg&&!netCfg.solo?netCfg.timeControl:RUTime.menu());
   if(netCfg&&netCfg.solo){
     try{log(`Coin flip: ${sideVerbLabel(firstTurn,'go','goes')} first!`,'imp');}catch(e){}
   }else if(netCfg){
@@ -3649,13 +3657,14 @@ function beginPhaseL35(ph){
 
 // ---- L36 -> beginPhase ----
 function beginPhase(ph){
+      if(G&&G._timeEnding&&ph!=='end')return;
       // a card's rule may begin another phase instead (a second Battle Phase)
       {const _rd=window.ruPhaseRedirect&&G&&!G.gameOver&&window.ruPhaseRedirect(ph);if(_rd&&_rd!==ph)return beginPhase(_rd);}
       if(G)G._phaseSeq=(G._phaseSeq||0)+1;   // every phase that begins is a new point of the game (the same phase again too)
       // the phase being left ends here, before the next one does anything ("at the end of the phase")
       try{ if(window.ruPhaseEnding&&G&&!G.gameOver&&G.phase&&G.phase!==ph)window.ruPhaseEnding(G.phase); }catch(e){console.error(e);}
       // "After the Battle Phase" effects that need a choice (Shooting Star) resolve before the End Phase hands the turn on
-      if(ph==='end'&&window.ruBeforeEnd&&window.ruBeforeEnd(function(){beginPhase('end');}))return;
+      if(ph==='end'&&!G._timeEnding&&window.ruBeforeEnd&&window.ruBeforeEnd(function(){beginPhase('end');}))return;
       if(ph==='draw'&&window.ruCaptureTurnStart&&G&&!G.gameOver)window.ruCaptureTurnStart();
       var r=beginPhaseL35.apply(this,arguments);
       try{
@@ -3669,6 +3678,7 @@ function beginPhase(ph){
         }
       }catch(e){}
       try{ if(window.ruPhaseBegan&&G&&!G.gameOver)window.ruPhaseBegan(ph); }catch(e){console.error(e);}
+      if(window.RUTime)RUTime.changed();
       return r;
     }
 
@@ -3754,6 +3764,7 @@ function endTurnCore(){
   }
   if(next===null)return; // no other active side left -- the win check should already have ended the match
   G.turn=next;
+  G._timeAttackGrace=null;
   G._turnNo=(G._turnNo||0)+1;
   // One Exchange = one full round: every active side takes exactly one turn. It therefore advances
   // only when the turn wraps back to the side that OPENED the match (the exchange anchor) -- i.e.
@@ -3765,6 +3776,7 @@ function endTurnCore(){
   if(!_exAnchor||(G.eliminated&&G.eliminated[_exAnchor]))_exAnchor=order.find(s=>!(G.eliminated&&G.eliminated[s]));
   if(next===_exAnchor)G.exchange++;
   log(`\u2014 ${sidePossessiveLabel(next)} turn (Exchange ${G.exchange}) \u2014`,'imp');
+  delete G._timeEnding;
   beginPhase('draw');
 }
 
@@ -5781,7 +5793,7 @@ function endGameImmediate(winner,reason){
   const netLive=!!(G&&G._netMode&&!G._soloNet);
   if(netLive){
     // Report the result for ratings (server records it once; both clients report the same canonical winner).
-    try{ if(!G._spectator && window.RUNet && RUNet.reportResult) RUNet.reportResult(winner==='draw'?'draw':(winner||'draw')); }catch(e){}
+    try{ if(!G._spectator && !G._timeLimitReached && window.RUNet && RUNet.reportResult) RUNet.reportResult(winner==='draw'?'draw':(winner||'draw')); }catch(e){}
     // ONLINE: never silently drop the player onto a local bot. Keep BOTH players in the room and let each
     // opt in to a rematch; the game only restarts once every seat has agreed (server deals a fresh 'start').
     // Declining is an explicit choice to leave the room or play on against a local AI instead.
@@ -5822,6 +5834,7 @@ function endGameImmediate(winner,reason){
   // The result is each screen's OWN view — worded for its player, with that player's own Rematch / Leave choices —
   // never a mirror of whichever player's input happened to end the match.
   ruTagViewModal();
+  if(window.RUTime)RUTime.changed();
   const wasMode=G&&G.ruMode,roundInfo=G&&(G.tournament||G.gauntlet);
   if(wasMode==='tournament'&&roundInfo){
     showBracket(true,1700);
@@ -6279,6 +6292,7 @@ function renderHudCenter(){
     '</div>';
   }
   host.innerHTML=seats.map(seatRow).join('');
+  if(window.RUTime)RUTime.paint();
   // Centre the bar on the battlefield centre — the two AI boards sit at ±aiDx, so their masses (and axis-aligned
   // field boxes) are symmetric about it; centring there gives EQUAL distance to P2 and P3. Then size the bar to
   // the live inner-zone gap SYMMETRICALLY about that centre (use the tighter half so it clears both boards).
@@ -6367,6 +6381,7 @@ function renderHudStrip(){
   var loc=document.getElementById('hud-location'), adv=document.getElementById('hud-advantage');
   if(loc)loc.textContent=(area&&area.card)?area.card.name:'Standard Battlefield';
   if(adv){var whoLbl={player:'Player',ai:'AI',ai2:'AI 2'};adv.textContent=(area&&area.who)?(ruIsOnline()?sideNameLabel(area.who):(whoLbl[area.who]||area.who)):'nA';}
+  if(window.RUTime)RUTime.paint();
   renderSwitchdrawReveal();
 }
 window.renderHudStrip=renderHudStrip;
@@ -6391,7 +6406,15 @@ function renderSwitchdrawReveal(){
   if(!rev||!rev.cards||!rev.cards.length||(G&&G.ai2)||!strip){ host.style.display='none'; host.innerHTML=''; return; }
   var aiRow=strip.querySelector('.hud-row[data-side="ai"]'), plRow=strip.querySelector('.hud-row[data-side="player"]');
   if(!aiRow||!plRow){ host.style.display='none'; host.innerHTML=''; return; }
-  function R(e){ return e?e.getBoundingClientRect():null; }
+  function R(e){
+    if(!e)return null;
+    if(strip.classList.contains('time-game')&&e.classList.contains('hud-row')){
+      const rs=Array.from(e.children).map(c=>c.getBoundingClientRect());
+      const top=Math.min(...rs.map(r=>r.top)),bottom=Math.max(...rs.map(r=>r.bottom));
+      return {top,bottom,height:bottom-top,left:Math.min(...rs.map(r=>r.left)),right:Math.max(...rs.map(r=>r.right))};
+    }
+    return e.getBoundingClientRect();
+  }
   var sb=R(strip), ar=R(aiRow), pr=R(plRow);
   var idR=Math.max((R(aiRow.querySelector('.hud-c-id'))||{right:0}).right,(R(plRow.querySelector('.hud-c-id'))||{right:0}).right);
   var metaL=Math.min((R(aiRow.querySelector('.hud-c-meta'))||{left:sb.right}).left,(R(plRow.querySelector('.hud-c-meta'))||{left:sb.right}).left);
@@ -23981,6 +24004,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var event={seq:G._attackSeq=(G._attackSeq||0)+1,turn:tn(),aWho:aw,aZone:az,attId:att.id,dWho:dw,dZone:dz,defId:def.id,ids:cards.map(function(c){return c.id;}),summary:summary};
     G._attackDeclarations=(G._attackDeclarations||[]).filter(function(e){return e.turn===tn();});G._attackDeclarations.push(event);
     G._lastAttackDeclaration=event;G._pendingAttackDeclaration=event;
+    if(window.RUTime)RUTime.declared(aw);
     G._lastAtkInfo={aWho:aw,aZone:az,attacker:att,dWho:dw,dZone:dz,defender:def,turn:tn()};
     HOOKS.attackDeclared.forEach(function(f){f({aWho:aw,aZone:az,dWho:dw,dZone:dz,att:att,def:def,addons:cards.slice(1)});});
     return event;
@@ -29878,6 +29902,7 @@ window.ruSpecPace=function(base){
     var g=G_();
     if(g&&!g.gameOver&&g.mode==='normal'&&['main','standby','battle'].indexOf(g.phase)!==-1&&
        !(g._acts&&g._acts.length)&&window.ruTableClear()&&window.ruOfferOffTurnWindows)ruOfferOffTurnWindows(g.phase);
+    if(window.RUTime)RUTime.changed();
   }
 
   // A fingerprint of the shared game state an input was made in. The receiving client applies a relayed input
@@ -29891,6 +29916,7 @@ window.ruSpecPace=function(base){
   function stateSig(){
     var g=G_(); if(!g) return '';
     var parts=[g.turn,g.phase,g.mode,g.exchange,g._turnNo||0,g.gameOver?1:0,g._phaseSeq||0,g._tlReplay?g._tlReplay.i:'',
+      g._timeAttackGrace?(g._timeAttackGrace.declared?'clock-resolving':'clock-grace'):'clock-main',
       // the attack being declared: its attacker and Addons (choosing an Addon changes only these — without them an Addon
       // click looked like nothing at all, so the bots never attacked with more than one card)
       g.selAttacker?(g.selAttacker.zone+':'+((g.selAttacker.card&&g.selAttacker.card.id)||'')):'-',(g._addons||[]).map(function(x){ return x&&x.card&&x.card.id; }).join(',')];   // _phaseSeq: a phase that begins again (a second Battle Phase) is a new position; _tlReplay: how far a rewritten past has been played again
@@ -29926,6 +29952,7 @@ window.ruSpecPace=function(base){
     if(window.ruTimelineNote) window.ruTimelineNote(a);            // the game's own record of what was played (changing the past)
     if(g._recording){ (g._actionLog=g._actionLog||[]).push(a); }   // local replay-test log
     if(window.ruOnLocalAction){ try{ window.ruOnLocalAction(a); }catch(e){} }  // network hook — set by net.js
+    if(g._netMode&&!g._soloNet&&g.timeControl&&g.timeControl.enabled)return 'deferred';
     return true;
   }
   // A bespoke input made from inside this player's own private dialog (switchdraw "Done", Amalgamation Rank Up):
@@ -29935,7 +29962,7 @@ window.ruSpecPace=function(base){
   window.ruAsInput       = function(a,fn){ var g=G_(); if(!g||!isUserInput()||g._replaying||g._inInput) return fn();
                                          settleNow(); if(!G_()) return false;
                                          if(a.s==null) a.s=localSeat(); var why=refusal(a); if(why){ say(why); return false; }
-                                         before(a); checkpoint(); rec(a); var r=withActor(a.s,function(){ return inContext('shared',fn); }); inputDone(); return r; };
+                                         before(a); checkpoint(); if(rec(a)==='deferred')return; var r=withActor(a.s,function(){ return inContext('shared',fn); }); inputDone(); return r; };
   window.ruActionLog     = function(){ var g=G_(); return g?(g._actionLog||[]):[]; };
   window.ruStartRecording= function(){ var g=G_(); if(g){ g._recording=true; g._actionLog=[]; } };
   window.ruStopRecording = function(){ var g=G_(); if(g) g._recording=false; };
@@ -29954,7 +29981,9 @@ window.ruSpecPace=function(base){
   window.ruInputOwner=inputOwner;
   // A reason this device may NOT give input `a` right now, or '' when it may. Online only.
   function refusal(a){
-    var g=G_(); if(!g||!a||!online()||g._replaying) return '';
+    var g=G_(); if(!g||!a||g._replaying) return '';
+    const timed=window.RUTime&&RUTime.refusal(a);if(timed)return timed;
+    if(!online())return '';
     if(g._spectator) return 'You are spectating — only the players can act.';
     if(g.gameOver) return 'The match is over.';
     // Inputs from the other player that this screen hasn't applied yet come first (room order).
@@ -29994,7 +30023,7 @@ window.ruSpecPace=function(base){
       var why=refusal(a); if(why){ say(why); return; }
       before(a);
       checkpoint();
-      rec(a);
+      if(rec(a)==='deferred')return;
       var r=withActor(a.s,function(){ return inContext('shared',function(){ return orig.apply(self,args); }); });
       inputDone();
       return r;
@@ -30018,6 +30047,7 @@ window.ruSpecPace=function(base){
   var OWN_KIND={playAction:function(c){return c.type==='action'&&c.sub==='Advantageous';},activateArea:function(c){return c.type==='area';},
     flank:function(c){return c.type==='numeral'||c.type==='digit';},rearFlank:function(c){return c.type==='numeral';},relieveHand:function(c){return c.type==='numeral';}};
   function inWindow(g,seat,a){
+    if(g&&g.gameOver)return false;
     if(g&&a.t==='amalgSkill'&&g[seat]&&(g[seat].delta||[]).some(c=>c.id===a.id&&c.evoType==='fullmetal'))return true;
     var w=a&&OWN_WINDOWS[a.t]; if(!w) return true;
     if(!g||g.turn!==seat||!w[g.phase]) return false;
@@ -30098,7 +30128,7 @@ window.ruSpecPace=function(base){
           var a={t:'modal', i:i};
           var why=refusal(a); if(why){ say(why); return; }
           if(outer){ before(a); checkpoint(); }
-          rec(a);
+          if(rec(a)==='deferred')return;
           var seat=(m&&m._ruOwner)||localSeat();
           var res=withActor(seat,function(){ return inContext('shared',function(){ return f?f.call(self,ev):undefined; }); });
           if(outer) inputDone();
@@ -30129,7 +30159,7 @@ window.ruSpecPace=function(base){
     var a={t:'pick', ids:ids, ix:ix||[]};
     var why=refusal(a); if(why){ say(why); return; }
     if(outer){ before(a); checkpoint(); }
-    rec(a);
+    if(rec(a)==='deferred')return;
     var seat=(pk&&pk._ruOwner)||localSeat();
     var r=withActor(seat,function(){ return inContext('shared',run); });
     if(outer) inputDone();
@@ -30159,7 +30189,7 @@ window.ruSpecPace=function(base){
     var a={t:'pickCancel'};
     var why=refusal(Object.assign({},a,{t:'pick'})); if(why){ say(why); return; }
     if(outer){ before(a); checkpoint(); }
-    rec(a);
+    if(rec(a)==='deferred')return;
     var seat=(pk&&pk._ruOwner)||localSeat();
     var r=withActor(seat,function(){ return inContext('shared',function(){ return _xOrig.apply(self,args); }); });
     if(outer) inputDone();
@@ -30170,6 +30200,7 @@ window.ruSpecPace=function(base){
   function dispatch(g,seat,a){
     if(!inWindow(g,seat,a)) return;          // outside the action's window: refused, like an illegal click
     switch(a.t){
+      case 'clockExpire': if(window.RUTime)RUTime.expire(a.event); break;
       case 'adv': window.advPhase(); break;
       case 'end': window.endTurnNow(); break;
       case 'cancel': window.cancelAll(); break;
@@ -30260,6 +30291,7 @@ window.ruSpecPace=function(base){
 })();
 </script>
 <script src="fullmetal.js"></script>
+<script src="time-controls.js"></script>
 <script src="ai/tiers.js"></script>
 <script src="ai/state.js"></script>
 <script src="ai/moves.js"></script>
