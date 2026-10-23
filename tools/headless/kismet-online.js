@@ -196,19 +196,20 @@ function skillTests() {
         ruFieldWatch(); ruDrop(foe,mkAct('Reverse')); ruFieldWatch();
         me.deck=[mkAct('Repair'),mkAct('Plus')].concat(me.deck);
         foe.deck=[mkAct('Plus'),mkNum(ND.light.find(c=>c.n===1),'light')].concat(foe.deck);
-        beginPhase('main');
+        G.turn='${seat}';beginPhase('main');
       `);
-      p.button('Use Kismet 8'); p.button('Activate Skill'); p.decline();
+      p.apply({t:'startSkill',s:seat,source:'rank',id:p.run('me.rankZone.id')}); p.button('Activate Skill'); p.decline();
       assert.equal(p.run(`G.${seat}.rankZone.A`),1);
       assert.equal(p.run('ruActionDropsThisTurn()'),3,'includes a prior drop by the other player and both costs');
-      p.run("beginPhase('battle')"); p.button('Kismet 8 ->'); p.decline();
+      const attack=()=>{p.apply({t:'atkMode',s:seat});p.apply({t:'zone',s:seat,o:seat,z:'rank'});p.apply({t:'zone',s:seat,o:other,z:'rank'});p.decline();};
+      p.run("beginPhase('battle')"); attack();
       assert.equal(p.run(`G.${other}.mp`),17,'eight tie damage plus all five Action drops, not two draws');
       assert.equal(p.run(`G.${seat}.mp`),29,'S1 two Morale, eight tie damage, S2 five Morale');
-      p.button('Kismet 8 ->'); p.decline();
+      attack();
       assert.equal(p.run(`G.${other}.mp`),8,'second tie and only one new drop (six minus five)');
       assert.equal(p.run(`G.${seat}.mp`),22,'S1 is not paid again; S2 pays only the new drop');
       p.finish(`${seat} Kismet 8`);
-      console.log(`PASS ${seat} Kismet 8: A1, off-turn attacks, one-time S1 and incremental all-player S2`);
+      console.log(`PASS ${seat} Kismet 8: A1, owner-turn attacks, one-time S1 and incremental all-player S2`);
     }
   }
 }

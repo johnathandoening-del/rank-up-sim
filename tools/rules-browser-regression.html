@@ -1,0 +1,84 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Deck And Counterattack Browser Regression</title>
+<style>body{background:#17191b;color:#eee;font:14px system-ui}pre{white-space:pre-wrap}section{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}iframe{width:100%;height:780px;border:1px solid #555}h2{font-size:16px}</style>
+<h1>Controlled Online Rules Fixtures</h1>
+<p>Real WebSocket relay, P1/P2 and spectator. Deterministic test positions, not natural-play evidence.</p>
+<button id="run">Run Counterstrike Test</button>
+<button id="deck" disabled>Run Deck Exhaustion Test</button>
+<button id="glyph" disabled>Show Amalgamation Alignment</button>
+<pre id="report">Ready.</pre>
+<section><div><h2>P1</h2><iframe id="a" src="/index.html"></iframe></div><div><h2>P2</h2><iframe id="b" src="/index.html"></iframe></div><div><h2>Spectator</h2><iframe id="watch" src="/index.html"></iframe></div></section>
+<script>
+const report=document.getElementById('report'),pause=ms=>new Promise(r=>setTimeout(r,ms));
+const views=()=>['a','b','watch'].map(id=>document.getElementById(id).contentWindow);
+const check=(ok,msg)=>{if(!ok)throw Error(msg);};
+async function until(fn,label){for(let i=0;i<500;i++){if(fn())return;await pause(20);}throw Error('Timeout '+label);}
+const say=s=>report.textContent+='\n'+s;
+const all=code=>views().forEach(w=>w.eval(code));
+const parity=()=>{const sigs=views().map(w=>w.ruStateSig());check(sigs.every(s=>s===sigs[0]),'P1/P2/spectator parity');};
+async function button(w,label){
+  await until(()=>Array.from(w.document.querySelectorAll('#m-btns button')).some(b=>b.textContent.includes(label)),label);
+  Array.from(w.document.querySelectorAll('#m-btns button')).find(b=>b.textContent.includes(label)).click();
+  await until(()=>!w.RUNet.state().clockAwaiting,'input acknowledgement');await pause(100);
+}
+function position(){
+  all(`closeModal();_modalQueue.length=0;PCK=null;SF=null;ruSettleReset();_RUcq.length=0;_RUcbusy=false;
+    G.turn='player';G.phase='battle';G.mode='normal';G._turnNo=4;G.exchange=3;G._turnsCompletedBy={player:1,ai:1};
+    G._attackDeclarations=[];G._pendingAttackDeclaration=null;G._acts=[];G._actLog=[];
+    ['player','ai'].forEach(s=>{var p=G[s];p.mp=100;p.cas=0;p.actUsed=0;p.attacksUsed={};p.hand=[];p.bank=[];p.discard=[];p.deadzone=[];p.delta=[];p.leftFlank=p.rightFlank=p.rearFlank=null;
+      p.rankZone=mkNum({n:5,r:1,A:1,M:0,S:null,ca:true,st:'Basic'},'classless');
+      p.deck=Array.from({length:40},()=>mkNum({n:1,r:0,A:1,M:0,S:null,ca:true,st:'Basic'},'classless'));p._firstDrawDone=true;});
+    ruFieldWatch();renderAll();`);
+}
+document.getElementById('run').onclick=async function(){
+  this.disabled=true;report.textContent='Starting real online fixtures...';
+  try{
+    check(['localhost','127.0.0.1'].includes(location.hostname),'Local regression only');
+    await until(()=>views().every(w=>w.RUNet),'scripts loaded');
+    const [a,b,watch]=views(),room='RULES'+Date.now();
+    a.document.querySelector('.cc[data-k="light"]').click();b.document.querySelector('.cc[data-k="light"]').click();
+    a.sessionStorage.setItem('ru_tab_client_id',room+'A');a.RUNet.connect('ws://'+location.host,room,'Rules P1',{cls:'light'});
+    await until(()=>a.RUNet.state().seat==='player1','host');
+    b.sessionStorage.setItem('ru_tab_client_id',room+'B');b.RUNet.connect('ws://'+location.host,room,'Rules P2',{cls:'light'});
+    await until(()=>a.RUNet.state().active&&b.RUNet.state().active,'match');
+    watch.sessionStorage.setItem('ru_tab_client_id',room+'WATCH');watch.RUNet.connect('ws://'+location.host,room,'Rules observer',{spectator:true});
+    await until(()=>watch.RUNet.state().active,'spectator');await pause(1000);
+    position();
+    all(`G.player.hand=[mkAct('Cease')];G.ai.hand=[mkAct('Counterstrike')];G.ai.rankZone.attacksLeft=0;G.ai.attacksUsed[G.ai.rankZone.id]=true;
+      G._lastAtkInfo={aWho:'player',aZone:'rank',dWho:'ai',dZone:'rank',attacker:G.player.rankZone};
+      offerRetaliation('ai',function(){});renderAll();`);
+    await button(b,'Use Counterstrike');
+    await until(()=>a.document.querySelector('#m-btns').textContent.includes('Use Cease'),'P1 Safeguard against counterattack');
+    say('PASS P2 Counterstrike offers P1 an own-turn Safeguard through real relayed input');
+    await button(a,'Use Cease');
+    for(let i=0;i<10;i++){
+      const w=views().find(w=>Array.from(w.document.querySelectorAll('#m-btns button')).some(b=>b.textContent.startsWith('Pass')&&!b.disabled));
+      if(!w)break;await button(w,'Pass');
+    }
+    await until(()=>views().every(w=>w.eval("G._attackDeclarations.length===1&&G._lastAttackDeclaration.status==='negated'")),'Cease settles');
+    parity();
+    for(const w of views())check(w.eval('G.ai.rankZone.attacksLeft===0&&G.player.actUsed===1&&G.ai.actUsed===1'),'one counterattack, both Action budgets charged');
+    say('PASS Cease stops exactly one declared counterattack; no spare attack is granted; all three states agree');
+    document.getElementById('deck').disabled=false;document.getElementById('glyph').disabled=false;
+  }catch(e){say('FAIL '+e.stack);}
+};
+document.getElementById('deck').onclick=async function(){
+  try{
+    position();
+    all(`G.player.deck=G.player.deck.slice(0,2);G.ai.hand=[mkAct('Deckstroy')];offerRetaliation('ai',function(){});renderAll();`);
+    await button(views()[1],'Use Deckstroy');
+    await until(()=>views().every(w=>w.eval('G.gameOver')),'mandatory mill loss');parity();
+    for(const w of views())check(w.eval('G.player.deck.length===0&&G.player.discard.length===2'),'both remaining cards milled before loss');
+    say('PASS real Deckstroy input mills two available cards then immediately ends the match on all three screens');
+  }catch(e){say('FAIL '+e.stack);}
+};
+document.getElementById('glyph').onclick=function(){
+  try{
+    all(`closeModal();_modalQueue.length=0;var old=G.gameOver;G.gameOver=false;G.allowEvolutions=true;
+      G._netDeltaDecks={player:['amalg-unknown-2'],ai:['fullmetal-3']};installDeltaDecks();
+      ['player','ai'].forEach(s=>{var p=G[s],e=p.evolutions[0];if(e){p.delta=[e];e.elements=[];}});renderAll();G.gameOver=old;`);
+    say('Alignment preview: both evolution families use the same vertical glyph offset.');
+  }catch(e){say('FAIL '+e.stack);}
+};
+</script>

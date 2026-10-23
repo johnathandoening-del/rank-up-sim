@@ -133,6 +133,12 @@ function eight(){
       foe.deck=[mkAct('Plus'),mkAct('Repair'),mkNum(ND.light[2],'light')].concat(foe.deck);
       ruFieldWatch();beginPhase('main');
     `);
+    if(!own){
+      assert.equal(p.run(`!!SDEFS['Kismet 8'].check('${seat}',G.${seat}.rankZone)`),false);
+      assert.ok(!p.pending().labels||!p.pending().labels.some(x=>x.includes('Use Kismet 8')));
+      p.finish(`${seat} Kismet 8 unavailable on opponent turn`);
+      continue;
+    }
     if(own)p.apply({t:'startSkill',s:seat,source:'rank',id:p.run(`G.${seat}.rankZone.id`)});
     else p.button('Use Kismet 8');
     p.button('Activate Skill');p.decline();

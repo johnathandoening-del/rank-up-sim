@@ -1025,37 +1025,44 @@ function initGame(){
 // ═══════════════════════════════════════════
 // CARD OPS
 // ═══════════════════════════════════════════
+function ruDeckSeat(p){return (G.sideOrder||['player','ai','ai2','ai3']).find(w=>G[w]===p);}
+function ruRequireDeck(p){
+  const who=p&&ruDeckSeat(p);
+  if(!who||G.gameOver||(G.eliminated&&G.eliminated[who]))return false;
+  if(p.deck.length)return true;
+  const opp=G[oppOf(who)];
+  if(opp&&opp.deadzone.some(c=>c.name==='The Lowlands')&&p.discard.length){
+    p.deck.push(...shuffle(p.discard.splice(0)));
+    log(`${sideVerbLabel(who,'shuffle','shuffles')} Discard into Deck (The Lowlands).`,'info');
+    return true;
+  }
+  log(`${sideSubjectLabel(who)} cannot complete a required Deck operation and loses (deck-out).`,'dmg');
+  window.finalizeDeckOut(who);
+  return false;
+}
+// The requested count, not the available count, determines whether a mandatory transfer succeeds.
+function ruTakeDeckCards(p,n,bottom,visit){
+  const out=[];
+  for(let i=0;i<n;i++){
+    if(!ruRequireDeck(p))break;
+    const c=bottom?p.deck.pop():p.deck.shift();
+    out.push(c);
+    if(visit)visit(c,i);
+  }
+  return out;
+}
 function draw(who,n){
   const p=G[who];
-  for(let i=0;i<n;i++){
-    if(!p.deck.length){
-      // Negative's Lowlands nullifies deck-out for opponent
-      const opp=G[oppOf(who)];
-      if(opp.deadzone.some(c=>c.name==='The Lowlands')&&p.discard.length){
-        p.deck.push(...shuffle(p.discard.splice(0)));
-        log(`${window.sideVerbLabel?sideVerbLabel(who,'shuffle','shuffles'):(sideVerbLabel(who,'shuffle'))} Discard into Deck (The Lowlands).`,'info');
-      } else {
-        // Deck-out is deferred to the phase boundary (like Morale/Casualty): flag it now; RUfinalizeWin
-        // finalizes it at end of phase, and only if the Deck is STILL empty then (an in-phase refill —
-        // Return, The Lowlands — clears it). Do NOT end the game the instant a draw fails.
-        G._deckOutPending=G._deckOutPending||{};
-        if(!G._deckOutPending[who]){
-          G._deckOutPending[who]=true;
-          try{log(`${window.sideVerbLabel?sideVerbLabel(who,'have','has'):(sideVerbLabel(who,'have','has'))} no cards left to draw — deck-out is checked at end of phase.`,'dmg');}catch(e){}
-        }
-        return;
-      }
-    }
-    const dc=p.deck.shift();
+  return ruTakeDeckCards(p,n,false,dc=>{
     if(G._drawToDrop&&G._drawToDrop[who]>0){G._drawToDrop[who]--;ruDrop(p,dc);log(`${sideSubjectLabel(who)} ${isLocalHumanSeat(who)?'draw':'draws'} ${dc.name}, which is sent to the Drop.`,'dmg');}
     else{p.hand.push(dc);if(window.ruDrawnHook)window.ruDrawnHook(who,dc);}
-  }
+  });
 }
 // Deck-out only counts at the moment a draw is actually attempted and fails — combine it with
 // whatever else is true for both sides RIGHT NOW so Loss vs Collapse (deck-out + another loss-con
 // at once) vs Scrape/Draw (opponent has their own conditions too) all classify correctly.
 window.finalizeDeckOut=function(w){
-  const EG=window.endGame||endGame;
+  const EG=G._simulating?function(winner,reason){G.gameOver=true;G.winner=winner;G._lastWinResult={winner,reason};}:(window.endGameImmediate||endGameImmediate);
   // 3+-way: the side that decked out simply loses and is eliminated (greyed out). The match ends
   // only if that leaves <=1 side standing -- otherwise the remaining opponents fight on.
   const order=['player','ai','ai2','ai3'].filter(function(s){return G[s];});
@@ -1067,6 +1074,16 @@ window.finalizeDeckOut=function(w){
     }
     const standing=order.filter(function(s){return !G.eliminated[s];});
     if(standing.length<=1)return EG(standing[0]||null,{reason:'deck-out',loser:w});
+    if(G.turn===w&&!G._simulating){
+      const game=G;
+      const pass=function(){
+        if(G!==game||G.gameOver||G.turn!==w)return;
+        SF=null;_modalQueue.length=0;closeModal();PCK=null;
+        el('picker-modal').classList.remove('open');
+        cancelAll();G.phase='end';endTurnCore();
+      };
+      if(window.ruWhenSettled)ruWhenSettled(null,pass,{defer:true});else setTimeout(pass,0);
+    }
     try{updEliminatedVisuals();renderAll();}catch(e){}
     return;
   }
@@ -1111,7 +1128,7 @@ window.ruActionDropsThisTurn=function(){
 };
 function mill(who,n){
   const p=G[who];let milled=0;
-  for(let i=0;i<n;i++){if(!p.deck.length)break;ruDrop(p,p.deck.shift());milled++;}
+  ruTakeDeckCards(p,n,false,(deckCard,i)=>{ruDrop(p,deckCard);milled++;});
   if(milled)log(`${sideVerbLabel(who,'mill')} ${milled} card(s).`,'dmg');
 }
 // ── DEADZONE REMOVAL (player chooses which; Rank³⁺ may return to hand) ──
@@ -1345,7 +1362,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
     var p=G[who];
     if(G.eliminated&&G.eliminated[who]){ log2((window.sideSubjectLabel?sideSubjectLabel(who):who)+' is already eliminated; the Casualty Draw is ignored.','info'); return step(); }
     if(p.noCasDmgTurns>0){ if(window.RUFullmetal)window.RUFullmetal.negated(who,entry);log2((window.sideVerbLabel?sideVerbLabel(who,'are','is'):(sideVerbLabel(who,'are','is')))+' protected from Casualty Damage this turn.','heal'); return step(); }
-    if(!p.deck || !p.deck.length){ G._deckOutPending=G._deckOutPending||{}; if(!G._deckOutPending[who]){G._deckOutPending[who]=true; try{ log2((window.sideVerbLabel?sideVerbLabel(who,'have','has'):(sideVerbLabel(who,'have','has')))+' no cards left to draw — deck-out is checked at end of phase.','dmg'); }catch(e){}} return step(); }   // (this draw can't happen: the queue moves on — stopping here left it stuck forever)
+    if(!ruRequireDeck(p))return step();
 
     // Draw ONE card; it enters the Deadzone (signed-counter aware: deficit fills go to Discard).
     var card = p.deck.shift();
@@ -1529,9 +1546,9 @@ function applyE2L4(who,card){
     if(nm==='Studious Star'){
       const run=(targetWho)=>{
         const tp=G[targetWho];const top=tp.deck.splice(0,Math.min(5,tp.deck.length));
-        if(!top.length){log('Studious Star (E2): target Deck had no cards.','info');return;}
+        if(!top.length){ruRequireDeck(tp);return;}
         const acts=top.filter(c=>c.type==='action');
-        const finish=(chosen)=>{top.forEach(c=>ruDrop(tp,c));log(`Studious Star (E2): top 5 of ${sidePossLower(targetWho)} Deck sent to Drop${chosen?`; ${chosen.name}'s secondary effect resolves`:''}.`,'info');if(chosen)applyE2(who,chosen);else{checkWin();renderAll();}};
+        const finish=(chosen)=>{top.forEach(c=>ruDrop(tp,c));ruTakeDeckCards(tp,5-top.length,false,c=>ruDrop(tp,c));if(G.gameOver)return;log(`Studious Star (E2): top 5 of ${sidePossLower(targetWho)} Deck sent to Drop${chosen?`; ${chosen.name}'s secondary effect resolves`:''}.`,'info');if(chosen)applyE2(who,chosen);else{checkWin();renderAll();}};
         if(isHumanSeat(who)&&acts.length){ruOwnedPicker(who,'Studious Star (E2) — choose an Action Card secondary effect to use.',acts,1,1,true,picks=>finish(picks[0]||null));}
         else finish(acts[0]||null);
       };
@@ -2315,8 +2332,7 @@ function applyE2L19(w,card){
           window.addMRAE19(w,card);
           window.dropTopRAE19(w,2,'discard');
           window.moveToRAE19(p,card,'discard');
-          var top=o.deck&&o.deck.length?o.deck.shift():null;
-          if(top){window.dzAdd(o,top);if(window.isActionRAtk16(top))top._e2Negated=true;}
+          var top=ruTakeDeckCards(o,1,false,c=>{window.dzAdd(o,c);if(window.isActionRAtk16(c))c._e2Negated=true;})[0];
           window.safeLogRD4('Betray (E2): paid top 2 Deck to Drop; opponent top Deck card went to Deadzone'+(top&&window.isActionRAtk16(top)?' and its Action effect was negated.':'.'),'dmg');window.renderSafeRD4();window.checkSafeRAtk16();
           return;
         }
@@ -2948,6 +2964,12 @@ function beginPhaseBase(ph){
   const turnPossessive=sidePossessiveLabel(G.turn);
 
   if(ph==='draw'){
+    const budgetTurn=(G._turnNo||0)+':'+G.turn;
+    if(G._actionBudgetTurn!==budgetTurn){
+      G._actionBudgetTurn=budgetTurn;
+      (G.sideOrder||['player','ai']).forEach(w=>{if(G[w]){G[w].actUsed=0;G[w]._advCardsThisTurn=[];}});
+    }
+    if(!ruRequireDeck(p))return;
     // Opening placement applies each starting Numeral 0's signed M once, before any first-turn draws.
     if(!G._n0MoraleApplied){
       G._n0MoraleApplied=true;
@@ -2964,6 +2986,7 @@ function beginPhaseBase(ph){
     G._sdSession=(G._sdSession||0)+1; // new switchdraw session; the reveal resets only when THIS seat actually switches (persists showing the last switchdraw otherwise)
     if(G._skipStartDraw&&G._skipStartDraw[G.turn]){delete G._skipStartDraw[G.turn];log(`${turnSubject} ${isLocalHumanSeat(G.turn)?'do':'does'} not draw this turn.`,'info');}
     else draw(G.turn,2);
+    if(G.gameOver||(G.eliminated&&G.eliminated[G.turn]))return;
     // FIRST TURN PER PLAYER: Action Cards must be switchdrawn. Area and Rank³+ are optional for the human only.
     const firstForThisPlayer=!p._firstDrawDone;
     if(firstForThisPlayer){
@@ -3029,7 +3052,7 @@ function beginPhaseBase(ph){
   }
   else if(ph==='main'){
     G._sdReveal=null;                 // switchdraw reveal clears once Main Phase begins (shown through Draw/Promotion/Rally only)
-    p.actUsed=0;p._advCardsThisTurn=[];const maxA=ruEffectiveA(p);
+    const maxA=ruEffectiveA(p);
     if(p.mx1NoActionNext){p.mx1NoActionNext=false;p.actUsed=ruEffectiveA(p);log('Maximum 1 effect: '+sideSubjectLabel(G.turn)+' cannot use Action Cards this turn.','dmg');}
     log(`${turnPossessive} Main Phase \u2014 ${maxA} Action slot(s). Use Skills/Area Cards.`);
     wildfireMainPhase(); // Wildfire passive triggers during its owner's opponent's Main Phase
@@ -3047,9 +3070,6 @@ function beginPhaseBase(ph){
   }
   else if(ph==='battle'){
     p.attacksUsed={};
-    // Every DEFENDING seat (each non-active, non-eliminated seat) gets fresh Action slots for this Battle
-    // Phase so it can answer attacks with Safeguard / Retaliatory cards — the same rule for every player.
-    livingOpponentsOf(G.turn).forEach(function(d){ if(G[d])G[d].actUsed=0; });
     G._defState={};G._sgUsedThisAttack=false;
     log(`${turnPossessive} Battle Phase!`);
     if(myTurn){show('btn-atk');show('btn-sd');setHint('\u2694 Declare Attack. You may use Safeguard/Retaliatory cards from hand now.');}
@@ -3299,7 +3319,7 @@ function beginPhaseL14(ph){
         // in the live End-Phase hub as synchronous auto-resolution (same no-prompt pattern as the
         // Seventh Star E1 drain above).
         // Seventh Star E2: restore Seven-surge NP / Seventh RP, then resolve the queued End-Phase drop.
-        (G.sideOrder||['player','ai']).forEach(function(w){const p=window.psideRA9(w);if(!p)return;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,p.delta&&p.delta[0]].filter(Boolean).forEach(function(c){if(c._ru165SevenSurgeNP){c.currentNP=(c.currentNP||0)-c._ru165SevenSurgeNP;c._ru165SevenSurgeNP=0;}if(c._ru165SeventhStarOldRP!=null){c.currentRP=c._ru165SeventhStarOldRP;delete c._ru165SeventhStarOldRP;}});});
+        (G.sideOrder||['player','ai']).forEach(function(w){const p=window.psideRA9(w);if(!p)return;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,p.delta&&p.delta[0]].filter(Boolean).forEach(function(c){if(c._ru165SevenSurgeNP){c.currentNP=((c.currentNP ?? 0))-c._ru165SevenSurgeNP;c._ru165SevenSurgeNP=0;}if(c._ru165SeventhStarOldRP!=null){c.currentRP=c._ru165SeventhStarOldRP;delete c._ru165SeventhStarOldRP;}});});
         if(G._ru165SeventhStarQueued){(G.sideOrder||['player','ai']).forEach(function(w){let n=G._ru165SeventhStarQueued[w]||0;if(!n)return;const p=window.psideRA9(w);let dropped=0;while(n>0&&p.hand.length){ruDrop(p,p.hand.shift());n--;dropped++;}const milled=window.dropTopRBP13(w,n,'discard').length;window.logSafeAI8('Seventh Star (E2): '+window.pnameRBP13(w)+' dropped '+(dropped+milled)+' card(s) from hand/deck.','dmg');G._ru165SeventhStarQueued[w]=0;});}
         // Maximum 0: clear temporary Rank MAX for the side whose turn is ending.
         (function(){const p=window.psideRA9(G.turn);if(!p)return;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,p.delta&&p.delta[0]].filter(Boolean).forEach(function(c){if(c._ru162TempRankMax&&!c.isRankMax){c._rankMaxTemp=false;c._ru162TempRankMax=false;c.currentRP=c.rank||0;if(c.rankLabel==='MAX')delete c.rankLabel;if(c.printedRank==='MAX')delete c.printedRank;}});})();
@@ -3824,7 +3844,7 @@ window.ruRefreshSwitchdrawList=ruRefreshSwitchdrawList;
 function ruRankUpFromOK(card){
   if(!card||card.fromN==null)return true;
   const p=G&&G[ruActor()],rz=p&&p.rankZone;
-  return !!(rz&&!rz._empty&&Number(rz.numeral!=null?rz.numeral:(rz.currentNP||0))>=card.fromN);
+  return !!(rz&&!rz._empty&&Number(rz.numeral!=null?rz.numeral:((rz.currentNP ?? 0)))>=card.fromN);
 }
 window.ruRankUpFromOK=ruRankUpFromOK;
 function tryPromote(card){
@@ -3843,7 +3863,7 @@ function tryPromote(card){
   if(r&&mp&&mp.rankZone&&mp.rankZone.id!==beforeRankId&&window.ruRankedUp)window.ruRankedUp(me,beforeRank,mp.rankZone);
   if(r&&mp&&mp.rankZone&&mp.rankZone.id!==beforeRankId&&mp.rankZone.class==='haste'){
     mp._rankedToHasteThisTurn=true;
-    try{log('Fast Track: Haste Rank Up is eligible for the 8 MP burst this turn.','info');}catch(e){}
+    if(mp.deadzone.some(c=>c.name==='Fast Track'))try{log('Fast Track: Haste Rank Up is eligible for the 8 MP burst this turn.','info');}catch(e){}
   }
   return r;
 }
@@ -3851,7 +3871,7 @@ function tryPromoteCore(card){
   const me=ruActor(),p=G[me];
   if(card.type!=='numeral'){ruNotice(me,'Only Numeral cards can go in Rank Zone.');return false;}
   if(G.turn===me&&G.phase!=='promotion'){ruNotice(me,'You can only promote during your Promotion phase.','dmg');return false;}
-  const cNP=(p.rankZone.numeral!=null?p.rankZone.numeral:p.rankZone.currentNP),cRP=(p.rankZone.rank!=null?p.rankZone.rank:(p.rankZone.currentRP||0));
+  const cNP=(p.rankZone.numeral!=null?p.rankZone.numeral:p.rankZone.currentNP),cRP=(p.rankZone.rank!=null?p.rankZone.rank:((p.rankZone.currentRP ?? 0)));
   const nd=card.numeral-cNP,rd=(card.rank||0)-cRP;
   // Standard: NP +1..+3 with Rank +0 or +1
   // Same-card: NP=0 with Rank=0 (exact same card stacked)  
@@ -3897,7 +3917,7 @@ function tryMaximumRankUp(card){
     ruOwnedPicker(me,`Maximum Rank Up — Stand Down 1 Rank³ (Bank / Rank / Flank).`,r3.map(e=>e.card).filter(c=>c.id!==r1picks[0].id),1,1,false,(r3picks)=>{
       if(!r3picks.length)return;
       const c1=r1picks[0],c3=r3picks[0];
-      const npTotal=(c1.currentNP||c1.numeral||0)+(c3.currentNP||c3.numeral||0);
+      const npTotal=((c1.currentNP ?? c1.numeral)||0)+((c3.currentNP ?? c3.numeral)||0);
       if(npTotal<card.numeral){log(`Combined NP (${npTotal}) must be ≥ ${card.numeral} for Maximum Rank Up.`,'dmg');return;}
       // Re-check each card's CURRENT zone at the moment it's actually removed, rather than the
       // 'src' tag captured before the two async picker gaps above -- removing c1 first can shift
@@ -4006,7 +4026,7 @@ function doRelieve(handIdx,card){
   const me=ruActor(),p=G[me];const {zone,card:old}=G.selRelieveTarget;
   const newRank=card.rank||0;const oldRank=old.rank||0;
   // A Flank Zone card (including a Chief Flank) can never exceed the Rank Zone's NP.
-  const rNP=p.rankZone?(p.rankZone.currentNP||p.rankZone.numeral||0):0;
+  const rNP=p.rankZone?((p.rankZone.currentNP ?? p.rankZone.numeral)||0):0;
   if((card.numeral||0)>rNP){
     ruNotice(me,`Cannot place ${card.name} (NP${card.numeral}) in a Flank Zone: a Flank card cannot exceed your Rank Zone NP (${rNP}).`,'dmg');
     return;
@@ -4056,7 +4076,7 @@ function eligibleRelieveTargets(p,card){
   return r;
 }
 function eligibleRelieveTargetsBy(p,card){
-  const rNP=p.rankZone?(p.rankZone.currentNP||p.rankZone.numeral||0):0;
+  const rNP=p.rankZone?((p.rankZone.currentNP ?? p.rankZone.numeral)||0):0;
   if((card.numeral||0)>rNP)return {targets:[],reason:`${card.name} (NP${card.numeral}) must be ≤ Rank Zone NP (${rNP}).`};
   const rRP=p.rankZone?(p.rankZone.currentRP!=null?p.rankZone.currentRP:(p.rankZone.rank||0)):0;
   const rank=card.rank||0;
@@ -4133,11 +4153,11 @@ function applySkillFx(who,zone,card){
   }
   if(nm==='Inferno 3'){ruLoseMP(opp,3,'numeral');log('Inferno 3 skill: Opponent -3 MP.','dmg');}
   if(nm==='Inferno 4'){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;log('Inferno 4 skill: Rank Zone gets another attack. Opponent loses 3 MP at end of Damage Step.','info');}
-  if(nm==='Blizzard 2'){if(opp.rankZone){opp.rankZone.currentNP=Math.max(0,opp.rankZone.currentNP-1);opp.rankZone.frozen=true;}log('Blizzard 2: Opponent\'s Rank Zone -1 NP, frozen.','dmg');}
-  if(nm==='Negative 2'){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=Math.max(0,opp.rankZone.currentNP-2);log('Negative 2: Rank Zone gets another attack; opponent\'s Rank Zone -2 NP.','info');}
-  if(nm==='Negative 3'){const t=[opp.rankZone,opp.leftFlank,opp.rightFlank].find(c=>c&&!c.isDigit);if(t)t.currentNP=Math.max(0,t.currentNP-3);log('Negative 3: Target opponent Numeral -3 NP until end of their next turn.','dmg');}
-  if(nm==='Negative 5'){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=Math.max(0,c.currentNP-3);});log('Negative 5: All opponent Battlefield Numerals -3 NP.','dmg');}
-  if(nm==='Negative 7'){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=Math.max(0,c.currentNP-3);c.currentRP=Math.max(0,c.currentRP-1);});log('Negative 7: All opponent Battlefield Numerals -3 NP, -1 RP.','dmg');}
+  if(nm==='Blizzard 2'){if(opp.rankZone){opp.rankZone.currentNP=(opp.rankZone.currentNP-1);opp.rankZone.frozen=true;}log('Blizzard 2: Opponent\'s Rank Zone -1 NP, frozen.','dmg');}
+  if(nm==='Negative 2'){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=(opp.rankZone.currentNP-2);log('Negative 2: Rank Zone gets another attack; opponent\'s Rank Zone -2 NP.','info');}
+  if(nm==='Negative 3'){const t=[opp.rankZone,opp.leftFlank,opp.rightFlank].find(c=>c&&!c.isDigit);if(t)t.currentNP=(t.currentNP-3);log('Negative 3: Target opponent Numeral -3 NP until end of their next turn.','dmg');}
+  if(nm==='Negative 5'){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=(c.currentNP-3);});log('Negative 5: All opponent Battlefield Numerals -3 NP.','dmg');}
+  if(nm==='Negative 7'){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=(c.currentNP-3);c.currentRP=(c.currentRP-1);});log('Negative 7: All opponent Battlefield Numerals -3 NP, -1 RP.','dmg');}
   if(nm==='Maximum 2'){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;const f=p.leftFlank||p.rightFlank;if(f)f.attacksLeft=atkLeft(f)+1;log('Maximum 2: Rank Zone and one Flank get another attack.','info');}
   if(nm==='Maximum 4'){[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>{c.attacksLeft=atkLeft(c)+1;if(p.attacksUsed)delete p.attacksUsed[c.id];c.canAttack=true;});logAs(who,'Maximum 4: All {your} Numerals get another attack.','info');}
   if(nm==='Maximum 6'){[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>{c.attacksLeft=atkLeft(c)+1;if(p.attacksUsed)delete p.attacksUsed[c.id];c.canAttack=true;c.currentNP+=1;});logAs(who,'Maximum 6: All {your} Numerals get another attack and +1 NP.','info');}
@@ -4482,9 +4502,9 @@ function zoneClick(owner,zone){
   function topDeckL4(w,n,dest){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();out.push(c);putToL4(p,c,dest==='deadzone'?'deadzone':'discard');
-    }
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;out.push(c);putToL4(p,c,dest==='deadzone'?'deadzone':'discard');
+    });
     return out;
   }
   return zoneClickL3.apply(this,arguments);
@@ -4613,7 +4633,7 @@ function zoneClickL1(owner,zone){
 // COMBAT RESOLUTION
 // ═══════════════════════════════════════════
 function resolveAtkBase(aWho,aZone,dWho,dZone,addonNP){
-    addonNP=addonNP||0;const AP=G[aWho],DP=G[dWho],att=zCard(AP,aZone),def=zCard(DP,dZone);if(!att||!def)return;const ds=G._defState||{};let aNP=npOf(att)+addonNP;if(ds.reduceAttackerNP&&dZone!=='rank'){aNP=Math.max(0,aNP-effRank(att));log(`Reduce: attacking ${att.name} loses ${effRank(att)} NP (now ${aNP}).`,'heal');}const dNP=npOf(def),aRP=effRank(att),dRP=effRank(def),an=sideSubjectLabel(aWho),dn=sideSubjectLabel(dWho);
+    addonNP=addonNP||0;const AP=G[aWho],DP=G[dWho],att=zCard(AP,aZone),def=zCard(DP,dZone);if(!att||!def)return;const ds=G._defState||{};let aNP=npOf(att)+addonNP;if(ds.reduceAttackerNP&&dZone!=='rank'){aNP=(aNP-effRank(att));log(`Reduce: attacking ${att.name} loses ${effRank(att)} NP (now ${aNP}).`,'heal');}const dNP=npOf(def),aRP=effRank(att),dRP=effRank(def),an=sideSubjectLabel(aWho),dn=sideSubjectLabel(dWho);
     if(ds.negate){G._defState={};log(`${ds.negateLabel||'Safeguard'}: ${sidePossessiveLabel(aWho)} attack with ${att.name} is negated!`,'heal');checkWin();return;}
     const negated=checkSkillFlags_preCombat(aWho,aZone,dWho,dZone,aNP,dNP,att,def);if(negated){checkWin();return;}
     log(`⚔ ${an}: ${att.name}${addonNP?` +${addonNP} Addon`:''} (NP:${aNP}) vs ${sidePossLower(dWho)} ${def.name} (NP:${dNP})`,'imp');
@@ -5278,7 +5298,7 @@ function _aiBase(ph){
   if(G.gameOver)return;
   const ai=G.ai,pl=G.player;
   if(ph==='promotion'){
-    const cNP=(ai.rankZone.numeral!=null?ai.rankZone.numeral:ai.rankZone.currentNP),cRP=(ai.rankZone.rank!=null?ai.rankZone.rank:(ai.rankZone.currentRP||0));
+    const cNP=(ai.rankZone.numeral!=null?ai.rankZone.numeral:ai.rankZone.currentNP),cRP=(ai.rankZone.rank!=null?ai.rankZone.rank:((ai.rankZone.currentRP ?? 0)));
     // Standard promotion: NP +1..+3, Rank +0 or +1
     let cands=ai.hand.filter(c=>c.type==='numeral'&&(c.numeral-cNP)>=1&&(c.numeral-cNP)<=3&&(c.rank||0)-cRP>=0&&(c.rank||0)-cRP<=1);
     // Also allow same-card stacking
@@ -5410,7 +5430,7 @@ function _aiBase(ph){
       let bestTgt=null;
       if(hasFl){
         const fls=[pl.leftFlank&&{zone:'left-flank',card:pl.leftFlank},pl.rightFlank&&{zone:'right-flank',card:pl.rightFlank}].filter(Boolean);
-        fls.sort((a,b)=>(a.card.currentNP||a.card.numeral)-(b.card.currentNP||b.card.numeral));
+        fls.sort((a,b)=>((a.card.currentNP ?? a.card.numeral))-((b.card.currentNP ?? b.card.numeral)));
         // STRATEGIC target choice  not "smallest" and not "biggest", but the best REASON to attack:
         //   + must be a clash we win (losing/even trades scored low),
         //   + remove the bigger / skilled THREAT,
@@ -5419,8 +5439,8 @@ function _aiBase(ph){
         //   + if this is the LAST blocker, clearing it opens the Rank Zone  worth more when the
         //     opponent is vulnerable (low MP / high casualties),
         //   + deny a dangerous SKILL.
-        const _mNP=card.currentNP||card.numeral;
-        const _np=f=>(f.card.currentNP||f.card.numeral);
+        const _mNP=(card.currentNP ?? card.numeral);
+        const _np=f=>((f.card.currentNP ?? f.card.numeral));
         const _sk=f=>((f.card.skillType&&f.card.skillType!=='Basic')?1:0);
         const _onlyFlank=fls.length===1;
         const _oppVuln=(pl.mp<=14?(15-pl.mp):0)+(pl.cas>=8?(pl.cas-7)*1.5:0)+(pl.cas<=-3?(-3-pl.cas):0);
@@ -5437,7 +5457,7 @@ function _aiBase(ph){
         bestTgt=_bestF;
       } else if(pl.rankZone){bestTgt={zone:'rank',card:pl.rankZone};}
       if(!bestTgt)return;
-      const myNP=card.currentNP||card.numeral;const theirNP=bestTgt.card.currentNP||bestTgt.card.numeral;
+      const myNP=(card.currentNP ?? card.numeral);const theirNP=(bestTgt.card.currentNP ?? bestTgt.card.numeral);
       const willWin=myNP>theirNP,willTie=myNP===theirNP;
       // Class archetype ("fish don't climb trees"): aggressive decks (high Off, low Def) press
       // even trades and chip; control/defensive decks (low Off, high Def) preserve their board,
@@ -5510,8 +5530,8 @@ function _aiBase(ph){
         }
         let addonNP=0;
         if(zone==='rank'&&ai.leftFlank&&!ai.attacksUsed[ai.leftFlank.id]){
-          const fRP=ai.leftFlank.currentRP||ai.leftFlank.rank||0;const aRP=card.currentRP||card.rank||0;
-          if(aRP<3||(aRP-fRP)>=2){addonNP=ai.leftFlank.currentNP||ai.leftFlank.numeral;ruSpendAttack('ai',ai.leftFlank,true);log(`AI Addon: +${addonNP} NP from ${ai.leftFlank.name}.`,'info');}
+          const fRP=(ai.leftFlank.currentRP ?? ai.leftFlank.rank)||0;const aRP=(card.currentRP ?? card.rank)||0;
+          if(aRP<3||(aRP-fRP)>=2){addonNP=(ai.leftFlank.currentNP ?? ai.leftFlank.numeral);ruSpendAttack('ai',ai.leftFlank,true);log(`AI Addon: +${addonNP} NP from ${ai.leftFlank.name}.`,'info');}
         }
         // Re-find target (state may have changed after defense)
         const hasFl=pl.leftFlank||pl.rightFlank;let realTgt=tgt;
@@ -5554,11 +5574,11 @@ function _aiBase(ph){
         const hasFl=pl.leftFlank||pl.rightFlank;let tgt=null;
         if(hasFl){
           const fls=[pl.leftFlank&&{zone:'left-flank',card:pl.leftFlank},pl.rightFlank&&{zone:'right-flank',card:pl.rightFlank}].filter(Boolean);
-          fls.sort((a,b)=>(a.card.currentNP||a.card.numeral)-(b.card.currentNP||b.card.numeral));
+          fls.sort((a,b)=>((a.card.currentNP ?? a.card.numeral))-((b.card.currentNP ?? b.card.numeral)));
           tgt=fls[0];
         } else if(pl.rankZone){tgt={zone:'rank',card:pl.rankZone};}
         if(!tgt)return;
-        const myNP=card.currentNP||card.numeral,theirNP=tgt.card.currentNP||tgt.card.numeral;
+        const myNP=(card.currentNP ?? card.numeral),theirNP=(tgt.card.currentNP ?? tgt.card.numeral);
         forcedLegal.push({zone,card,tgt,diff:myNP-theirNP});
       });
       if(forcedLegal.length){
@@ -5580,7 +5600,7 @@ function _aiL1(ph){
 // fell through to the previous tier regardless -- deleted outright rather than preserved.
 function _aiL3(ph){
   if(ph==='promotion'){
-    if(G.gameOver)return;const ai=G.ai,cNP=(ai.rankZone.numeral!=null?ai.rankZone.numeral:ai.rankZone.currentNP),cRP=(ai.rankZone.rank!=null?ai.rankZone.rank:(ai.rankZone.currentRP||0));
+    if(G.gameOver)return;const ai=G.ai,cNP=(ai.rankZone.numeral!=null?ai.rankZone.numeral:ai.rankZone.currentNP),cRP=(ai.rankZone.rank!=null?ai.rankZone.rank:((ai.rankZone.currentRP ?? 0)));
     let cands=ai.hand.filter(c=>c.type==='numeral'&&(((c.numeral-cNP)>=1&&(c.numeral-cNP)<=3&&((c.rank||0)-cRP)>=0&&((c.rank||0)-cRP)<=1)||(c.numeral===cNP&&((c.rank||0)===cRP||(c.rank||0)-cRP===1))));
     if(cands.length){cands.sort((a,b)=>(a.numeral-b.numeral)||((a.rank||0)-(b.rank||0)));const pick=cands[0];ai.hand.splice(ai.hand.indexOf(pick),1);ai.bank.unshift(ai.rankZone);const mg=pick.M||0;ai.mp+=mg;ai.rankZone={...pick,currentNP:pick.numeral,currentRP:pick.rank||0,attacksLeft:1,usedSkill:false,frozen:false};log(`AI promotes legally to ${pick.name}.${mg?` ${mg>0?'+':''}${mg} MP.`:''}`,'info');checkWin();}
     renderAll();beginPhase('rally');return;
@@ -5629,7 +5649,7 @@ function _aiL8(ph){
   const r=_aiL7(ph);
   if(ph==='promotion'&&G&&G.ai&&G.ai.rankZone&&G.ai.rankZone.id!==before&&G.ai.rankZone.class==='haste'){
     G.ai._rankedToHasteThisTurn=true;
-    window.logSafeAI8('Fast Track: AI Haste Rank Up is eligible for the 8 MP burst this turn.','info');
+    if(G.ai.deadzone.some(c=>c.name==='Fast Track'))window.logSafeAI8('Fast Track: AI Haste Rank Up is eligible for the 8 MP burst this turn.','info');
   }
   return r;
 }
@@ -5687,7 +5707,7 @@ function effRank(card){
   return rawOf(card);
 }
 function ownsAreaInDead(who,name){return G[who].deadzone.some(c=>c&&c.type==='area'&&c.name===name);}
-function bfRPtotal(who){return [G[who].rankZone,G[who].leftFlank,G[who].rightFlank].filter(c=>c&&c.type==='numeral').reduce((s,c)=>s+(c.currentRP||c.rank||0),0);}
+function bfRPtotal(who){return [G[who].rankZone,G[who].leftFlank,G[who].rightFlank].filter(c=>c&&c.type==='numeral').reduce((s,c)=>s+((c.currentRP ?? c.rank)||0),0);}
 function areaAge(who,name){const t=(G[who].areaTimers||{})[name];return t===undefined?0:((G._turnNo||0)-t);}
 
 // Wildfire: once it has been in a player's Deadzone for 3+ turns, during that owner's OPPONENT's Main Phase
@@ -5734,8 +5754,8 @@ function checkAreaPassives(){
       if(p.hand.length<=p._handBaseline){p._handBaseline=p.hand.length;return;}
       const added=p.hand.length-p._handBaseline;
       if(added>0&&ownsAreaInDead(other(who),'Drawbridge')){
-        const n=Math.min(added,p.deck.length);
-        for(let i=0;i<n;i++){const c=p.deck.shift();ruDrop(p,c);}
+        const n=added;
+        ruTakeDeckCards(p,n,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);});
         if(n)log(`Drawbridge (${sidePossLower(other(who))} Deadzone): ${sideObjectLabel(who)} added ${added} card(s) outside the Draw Phase — drop ${n} from top of Deck.`,'dmg');
       }
       p._handBaseline=p.hand.length;
@@ -6653,7 +6673,7 @@ function animateDrawnCards(container){
 // ═══════════════════════════════════════════
 // The Rear Flank Zone (Extension): an Extension Numeral of Rank 0-2 (never Extension 8, whose own text bans it) with NP
 // no higher than the Rank Zone's, once the Rank Zone and both Flank Zones hold Extension cards and the Rear is empty.
-function ruCanRearFlank(p,card){return !!(p&&card&&card.type==='numeral'&&card.class==='extension'&&p.class==='extension'&&!p.rearFlank&&p.rankZone&&p.leftFlank&&p.rightFlank&&[p.rankZone,p.leftFlank,p.rightFlank].every(c=>c&&c.class==='extension')&&(card.rank||0)<3&&card.numeral!==8&&(card.numeral||0)<=(p.rankZone.currentNP||p.rankZone.numeral||0));}
+function ruCanRearFlank(p,card){return !!(p&&card&&card.type==='numeral'&&card.class==='extension'&&p.class==='extension'&&!p.rearFlank&&p.rankZone&&p.leftFlank&&p.rightFlank&&[p.rankZone,p.leftFlank,p.rightFlank].every(c=>c&&c.class==='extension')&&(card.rank||0)<3&&card.numeral!==8&&(card.numeral||0)<=((p.rankZone.currentNP ?? p.rankZone.numeral)||0));}
 function tryRearFlank(card){
   const me=ruActor(),p=G[me];
   if(G.turn!==me||G.gameOver||!ruCanRearFlank(p,card))return false;
@@ -6764,13 +6784,13 @@ function useAdv(idx,card){
   else if(nm==='Rank Star'){if(p.rankZone){p.rankZone.currentNP+=1;p.rankZone.currentRP+=1;}if(p.leftFlank)p.leftFlank.currentNP+=1;if(p.rightFlank)p.rightFlank.currentNP+=1;log('Rank Star: All +1 NP, Rank Zone +1 RP.','heal');}
   else if(nm==='Battle Star'){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,(p.delta&&p.delta[0])].filter(Boolean).forEach(c=>{c.currentNP+=3;c.currentRP+=1;});log('Battle Star: All +3 NP, +1 RP.','heal');}
   else if(nm==='Neo Rank Star'){if(p.rankZone){p.rankZone.currentNP+=1;p.rankZone.currentRP+=2;}if(p.deadzone.length>=2)p.deadzone.splice(-2,2);log('Neo Rank Star: Rank Zone +1 NP, +2 RP. Drop 2 from Deadzone.','heal');}
-  else if(nm==='Neo Battle Star'){if(p.rankZone){p.rankZone.currentNP+=2;p.rankZone.currentRP+=1;}if(p.leftFlank){p.leftFlank.currentNP+=2;p.leftFlank.currentRP+=1;}if(p.rightFlank){p.rightFlank.currentNP+=2;p.rightFlank.currentRP+=1;}[o.rankZone,o.leftFlank,o.rightFlank].filter(Boolean).forEach(c=>c.currentNP=Math.max(0,c.currentNP-2));log(`Neo Battle Star: ${sidePossessiveLabel(me)} Numerals +2 NP/+1 RP; opponent -2 NP.`,'heal');}
+  else if(nm==='Neo Battle Star'){if(p.rankZone){p.rankZone.currentNP+=2;p.rankZone.currentRP+=1;}if(p.leftFlank){p.leftFlank.currentNP+=2;p.leftFlank.currentRP+=1;}if(p.rightFlank){p.rightFlank.currentNP+=2;p.rightFlank.currentRP+=1;}[o.rankZone,o.leftFlank,o.rightFlank].filter(Boolean).forEach(c=>c.currentNP=(c.currentNP-2));log(`Neo Battle Star: ${sidePossessiveLabel(me)} Numerals +2 NP/+1 RP; opponent -2 NP.`,'heal');}
   else if(nm==='Multi-Star'){p.mp-=3;mill(me,4);[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,(p.delta&&p.delta[0])].filter(c=>c&&c.type==='numeral').forEach(c=>{c.currentNP*=2;c.currentRP*=2;});log(`Multi-Star: Pay 3 MP, mill 4. ${sidePossessiveLabel(me)} Numerals NP+RP doubled!`,'heal');}
   else if(nm==='Multiply'){p.mp-=2;mill(me,2);[p.rankZone,p.leftFlank,p.rightFlank,o.rankZone,o.leftFlank,o.rightFlank].filter(Boolean).forEach(c=>c.currentNP*=2);log('Multiply: Pay 2 MP, mill 2. ALL Battlefield Numerals NP doubled!','info');}
   else if(nm==='Repair'){if(p.deadzone.length){p.deadzone.pop();log('Repair: Drop 1 from Deadzone.','info');}else log('Repair: No Deadzone cards.','info');}
   else if(nm==='Draw Star'){draw(me,3);log('Draw Star: Draw 3 cards.','info');}
   else if(nm==='Neo Draw Star'){draw(me,5);if(p.rankZone)p.rankZone.currentNP+=2;log('Neo Draw Star: Draw 5 cards, Rank Zone +2 NP.','info');}
-  else if(nm==='Shining Star'){[p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&c.class==='light').forEach(c=>c.currentNP+=2);[o.rankZone,o.leftFlank,o.rightFlank].filter(c=>c&&CM[c.class]&&CM[c.class].align==='Malevolent').forEach(c=>c.currentNP=Math.max(0,c.currentNP-1));log('Shining Star: Light +2 NP; Malevolent -1 NP.','heal');}
+  else if(nm==='Shining Star'){[p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&c.class==='light').forEach(c=>c.currentNP+=2);[o.rankZone,o.leftFlank,o.rightFlank].filter(c=>c&&CM[c.class]&&CM[c.class].align==='Malevolent').forEach(c=>c.currentNP=(c.currentNP-1));log('Shining Star: Light +2 NP; Malevolent -1 NP.','heal');}
   else if(nm==='Shaded Star'){const allNP=[p.rankZone,p.leftFlank,p.rightFlank,o.rankZone,o.leftFlank,o.rightFlank].filter(Boolean).map(c=>c.currentNP);const minNP=Math.min(...allNP);[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>{c.currentNP+=minNP;c.currentRP+=2;});log(`Shaded Star: +${minNP} NP (lowest on field), +2 RP.`,'heal');}
   else if(nm==='MAX Star'){if(o.deadzone.length){o.deadzone.pop();o.cas=Math.max(-7,(o.cas||0)-1);}else o.cas=Math.max(-7,(o.cas||0)-1);if(p.deadzone.length){p.deadzone.pop();p.cas=Math.max(-7,(p.cas||0)-1);}else p.cas=Math.max(-7,(p.cas||0)-1);[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>{c.currentNP+=2;c.currentRP+=2;});log(`MAX Star: Both drop 1 Deadzone. ${sidePossessiveLabel(me)} Numerals +2 NP, +2 RP.`,'heal');}
   else if(nm==='Reverse'){log('Reverse: Opponent\'s Dead Draw effects negated until end of turn.','info');}
@@ -6790,7 +6810,7 @@ function useSafe(idx,card){
   else if(nm==='Divide'){log('Divide: After Damage Calculation this turn, drop last of Deck to halve all Morale Damage taken.','info');}
   else if(nm==='Return'){log('Return: If a Numeral would be defeated, shuffle 3 cards from Discard into Deck. Resolve through the v13 timing window.','info');}
   else if(nm==='Reduce'){logAs(me,'Reduce: When {your} Flank Zone card is targeted, the attacking card loses NP equal to its Rank.','info');}
-  else if(nm==='Freezing Star'){const fNP=o.rankZone?(o.rankZone.currentNP||o.rankZone.numeral):0;p.mp+=fNP;o.mp+=fNP;log(`Freezing Star: Negate attack. Both players gain ${fNP} MP.`,'heal');}
+  else if(nm==='Freezing Star'){const fNP=o.rankZone?((o.rankZone.currentNP ?? o.rankZone.numeral)):0;p.mp+=fNP;o.mp+=fNP;log(`Freezing Star: Negate attack. Both players gain ${fNP} MP.`,'heal');}
   else{log(`${nm}: effect is routed through the v13 card engine for its legal timing.`,'info');}
   checkWin();renderAll();
 }
@@ -6824,7 +6844,7 @@ function useRetL3(idx,card){
       if(!ok)return; if(!commitFromHand(card))return; millN(me,1,'discard');
       const refund=la[me+'MoraleLost']||0; p.mp+=refund; ruSetLastMoraleTo(me,Math.max(0,ruLastMoraleTo(me)-refund));
       const _subFoe=(G._lastAtkInfo&&G._lastAtkInfo.aWho&&G._lastAtkInfo.aWho!==me&&G[G._lastAtkInfo.aWho])?G[G._lastAtkInfo.aWho]:G[oppOf(me)];
-      if(_subFoe&&_subFoe.rankZone)_subFoe.rankZone.currentNP=Math.max(0,npVal(_subFoe.rankZone)-refund);
+      if(_subFoe&&_subFoe.rankZone)_subFoe.rankZone.currentNP=(npVal(_subFoe.rankZone)-refund);
       log(`Subtract: Morale Damage from the last attack is negated (${refund} MP restored); attacker Rank Zone loses ${refund} NP.`, 'heal');
       checkWin();renderAll();
     },c=>c===card);return;
@@ -6840,7 +6860,6 @@ function doCounterAttack(npBonus,opts){
   const ai=G[targetSide],targetLabel=sidePossessiveLabel(targetSide);
   if(!ai){log('Counterattack: no opponent target available.','info');return;}
   if(!p.rankZone){log('No Rank Zone card able to counterattack.','info');return;}
-  p.rankZone.canAttack=true; p.rankZone.attacksLeft=(p.rankZone.attacksLeft||0)+1;
   if(npBonus)buffNP(p.rankZone,npBonus);
   // Valid targets follow the same click-highlight path as a normal player attack.
   // Digit flanks are immune and cannot be targeted.
@@ -6852,24 +6871,19 @@ function doCounterAttack(npBonus,opts){
   const doResolve=(tz)=>{
     const defCard=tz==='rank'?ai.rankZone:(tz==='left-flank'?ai.leftFlank:(tz==='right-flank'?ai.rightFlank:(tz==='rear-flank'?ai.rearFlank:(ai.delta&&ai.delta[0]))));
     if(!defCard){log('Counterattack: no target available.','info');return;}
-    if(window.RUFullmetal&&RUFullmetal.confirmCombat(me,p.rankZone,[],()=>doResolve(tz)))return;
-    const declaration=window.ruRecordAttackDeclaration(me,'rank',targetSide,tz);
-    const myNP=p.rankZone.currentNP||p.rankZone.numeral, theirNP=defCard.currentNP||defCard.numeral;
-    G._defState={};
-    const resolve=()=>{
-      if(G._defState&&G._defState.negate){window.ruFinishAttackDeclaration(declaration,'negated');log('Counterattack negated.','heal');G._defState={};renderAll();return;}
-      resolveAtk(me,'rank',targetSide,tz,0);
-      if(opts.millOnHit&&myNP>theirNP){mill(targetSide,opts.millOnHit);log(`Counterattack hit \u2014 ${targetLabel} mills ${opts.millOnHit}.`,'dmg');}
+    ruDeclareAttack(me,'rank',targetSide,tz,0,()=>{
+      const result=G._lastAttackDeclaration;
+      if(opts.millOnHit&&result&&result.aWho===me&&result.resolved&&result.winner==='attacker'){
+        mill(targetSide,opts.millOnHit);log(`Counterattack hit \u2014 ${targetLabel} mills ${opts.millOnHit}.`,'dmg');
+      }
       renderAll();
-    };
-    if(window.ruTargetedHook&&window.ruTargetedHook(me,'rank',targetSide,tz,resolve,0))return;
-    resolve();
+    });
   };
   if(targets.length===1){ doResolve(targets[0].zone); return; }
   ruOwnPrompt(me);
   openModal('Counterattack \u2014 choose your target',
     '<p style="font-size:.82rem;">Select which of '+sidePossLower(targetSide)+' cards '+sidePossLower(me)+' Rank Zone attacks.</p>',
-    targets.map(t=>({label:`${targetLabel} ${t.card.name} (NP ${t.card.currentNP||t.card.numeral})`,cls:'mb-skill',fn:()=>{closeModal();doResolve(t.zone);}}))
+    targets.map(t=>({label:`${targetLabel} ${t.card.name} (NP ${(t.card.currentNP ?? t.card.numeral)})`,cls:'mb-skill',fn:()=>{closeModal();doResolve(t.zone);}}))
   );
 }
 
@@ -7178,7 +7192,7 @@ function renderPick(){
     w.appendChild(nc);
     // Show NP value badge on picker cards
     const npBadge=document.createElement('div');
-    const npVal=card.type==='numeral'?(card.currentNP||card.numeral||0):(card.type==='area'?'Area':0);
+    const npVal=card.type==='numeral'?((card.currentNP ?? card.numeral)||0):(card.type==='area'?'Area':0);
     npBadge.style.cssText='position:absolute;bottom:1px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:var(--gold);font-size:.5rem;font-family:Cinzel,serif;padding:1px 3px;border-radius:2px;z-index:3;white-space:nowrap;';
     npBadge.textContent=`NP:${npVal}`;w.appendChild(npBadge);
     w.onclick=()=>{
@@ -7187,7 +7201,7 @@ function renderPick(){
       if(PCK.sel.includes(card))PCK.sel=PCK.sel.filter(x=>x!==card);
       else if(PCK.sel.length<PCK.max)PCK.sel.push(card);
       renderPick();
-      const npT=PCK.sel.reduce((s,c)=>s+(c.currentNP||c.numeral||0),0);
+      const npT=PCK.sel.reduce((s,c)=>s+((c.currentNP ?? c.numeral)||0),0);
       el('pk-status').textContent=PCK.npMode?`NP total: ${npT} / needs ≥${PCK.npMin}`:`Selected ${PCK.sel.length}: ${PCK.sel.map(c=>c.name).join(', ')||'—'}`;
       const ok=PCK.npMode?(npT>=PCK.npMin):(PCK.sel.length>=PCK.min);
       el('pk-confirm').disabled=!ok&&!PCK.opt;
@@ -7350,6 +7364,7 @@ function _openMultiSkill(who,fieldZone,card,def){
   openModal(`${card.name} — Skills`,body,btns);
 }
 function runStep(){
+  if(G.gameOver||(SF&&G.eliminated&&G.eliminated[SF.who])){SF=null;return;}
   if(!SF)return;
   const steps=SF.def.steps||[];
   if(SF.stepIdx>=steps.length){SF=null;if(G)G._advApplyMult=null;checkWin();renderAll();return;}
@@ -7433,7 +7448,7 @@ function execStepBase(step){
           else if(step.to==='deck_top')p.deck.unshift(c);
           else if(step.to==='deadzone'||step.to==='deadzone_cas'){dzAdd(p,c);}});
         ctx.deckPicks.push(...picks);if(picks.length)log(`Found: ${(step.to==='hand'&&!isLocalHumanSeat(who))?(picks.length===1?'a card':picks.length+' cards'):picks.map(c=>c.name).join(', ')} → ${step.to}.`,'info');if(step.shuffle)shuffle(p.deck);renderAll();runStep();});break;}
-    case 'mill':{const count=step.count||1,milled=[];for(let i=0;i<count;i++){if(!p.deck.length)break;const c=p.deck.shift();ruDrop(p,c);milled.push(c);ctx.milledCards.push(c);}
+    case 'mill':{const count=step.count||1,milled=[];ruTakeDeckCards(p,count,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);milled.push(c);ctx.milledCards.push(c);});
       if(milled.length)log(`Milled: ${milled.map(c=>c.name).join(', ')}.`,'info');renderAll();runStep();break;}
     case 'move_self':{
       const dest=step.to;
@@ -7467,7 +7482,7 @@ function execStepBase(step){
       const pool=step.filter?p.hand.filter(step.filter):p.hand;
       if(!pool.length){log(`No cards in hand (need NP ≥ ${minNP}). Skill cancelled.`,'dmg');SF=null;renderAll();return;}
       ruOwnedPickerNP(who,`Your Hand — ${step.label}`,pool,minNP,(picks)=>{
-        const total=picks.reduce((s,c)=>s+(c.currentNP||c.numeral||0),0);
+        const total=picks.reduce((s,c)=>s+((c.currentNP ?? c.numeral)||0),0);
         if(total<minNP){log(`NP total ${total} < ${minNP}. Skill cancelled.`,'dmg');SF=null;renderAll();return;}
         picks.forEach(c=>{const i=p.hand.indexOf(c);if(i!==-1)p.hand.splice(i,1);const dest=step.to||'discard';if(dest==='discard')ruDrop(p,c);else if(dest==='deadzone'){dzAdd(p,c);}});
         ctx.handPicks.push(...picks);log(`Dropped from hand (NP total: ${total}): ${picks.map(c=>c.name).join(', ')}.`,'info');renderAll();runStep();});break;}
@@ -7486,7 +7501,7 @@ function execStepBase(step){
       setHint((step.label||'Select opponent card')+' — click highlighted zone');show('btn-can');break;}
     case 'verify_np':{
       const srcs=step.sources||['handPicks','bankPicks'];
-      const total=srcs.reduce((s,src)=>s+(ctx[src]||[]).reduce((t,c)=>t+(c.currentNP||c.numeral||0),0),0);
+      const total=srcs.reduce((s,src)=>s+(ctx[src]||[]).reduce((t,c)=>t+((c.currentNP ?? c.numeral)||0),0),0);
       if(total<step.min){log(`NP total (${total}) < required minimum (${step.min}). Skill cancelled.`,'dmg');SF=null;renderAll();return;}
       runStep();break;}
     case 'effect':{if(window.RUFullmetal)window.RUFullmetal.effect(who,card,()=>step.fn(who,p,opp,fieldZone,card,ctx,G));else step.fn(who,p,opp,fieldZone,card,ctx,G);renderAll();runStep();break;}
@@ -7496,7 +7511,7 @@ function execStepBase(step){
     // target, a once-per-turn mark) — so an opponent's answer to the skill comes after it.
     case 'async':{const mine=SF;step.fn(who,card,function(ok,value){if(SF!==mine)return;if(!ok){SF=null;renderAll();return;}if(step.key)ctx[step.key]=value;renderAll();runStep();},ctx,fieldZone);break;}
     case 'pay_mp':{p.mp+=(step.gain||0)-(step.amount||0);if(step.amount)log(`Paid ${step.amount} MP.`,'dmg');if(step.gain)log(`+${step.gain} MP.`,'heal');renderAll();runStep();break;}
-    case 'deck_bottom':{const count=step.count||1,taken=[];for(let i=0;i<count;i++){if(!p.deck.length)break;const c=p.deck.pop();taken.push(c);if((step.to||'discard')==='discard')ruDrop(p,c);else if(step.to==='deadzone'){dzAdd(p,c);}}
+    case 'deck_bottom':{const count=step.count||1,taken=[];ruTakeDeckCards(p,count,true,(deckCard,i)=>{const c=deckCard;taken.push(c);if((step.to||'discard')==='discard')ruDrop(p,c);else if(step.to==='deadzone'){dzAdd(p,c);}});
       if(taken.length)log(`Last ${taken.length} of Deck → ${step.to||'discard'}: ${taken.map(c=>c.name).join(', ')}.`,'info');renderAll();runStep();break;}
     case 'draw':{draw(who,step.count||1);log(`${sideVerbLabel(who,'draw')} ${step.count||1}.`,'info');renderAll();runStep();break;}
     case 'drop_hand_all':{if(p.hand.length){log(`Dropped entire hand (${p.hand.length} card(s)).`,'info');ruDrop(p,...p.hand);p.hand=[];}renderAll();runStep();break;}
@@ -7608,12 +7623,12 @@ function openBankView(who){
   let body=`<p style="font-size:.8rem;color:var(--text-dim);margin-bottom:.6rem;">Your Bank holds Numerals that were promoted over. Skilled Bank cards can still use their skills.</p>`;
   body+=`<div style="display:flex;flex-direction:column;gap:.4rem;">`;
   p.bank.forEach((card,i)=>{
-    const rp=card.currentRP||card.rank||0;const stars=ruIsRankUltraDisplay(card)?'ULTRA':ruIsRankMaxDisplay(card)?'MAX':(rp===0?'⁰':rp<0?window.ruRankStars(-rp,true):window.ruRankStars(rp));
+    const rp=(card.currentRP ?? card.rank)||0;const stars=ruIsRankUltraDisplay(card)?'ULTRA':ruIsRankMaxDisplay(card)?'MAX':(rp===0?'⁰':rp<0?window.ruRankStars(-rp,true):window.ruRankStars(rp));
     const def=SDEFS[card.name];const hasSkill=def&&!card.usedSkill&&(def.source==='bank'||def.source==='any')&&def.phases.includes(G.phase);
     body+=`<div style="background:var(--zone-bg);border:1px solid ${hasSkill?'rgba(200,160,80,.6)':'var(--border-gold)'};border-radius:6px;padding:.5rem .7rem;display:flex;align-items:center;gap:.6rem;">
       <div style="flex:1">
         <div style="font-family:'Cinzel',serif;font-size:.82rem;">${card.name} ${stars}</div>
-        <div style="color:var(--text-dim);font-size:.7rem;">NP: ${card.currentNP||card.numeral} | ${card.skillType||'Basic'}</div>
+        <div style="color:var(--text-dim);font-size:.7rem;">NP: ${(card.currentNP ?? card.numeral)} | ${card.skillType||'Basic'}</div>
         ${card.skillCost?`<div style="font-size:.68rem;color:var(--text-dim);margin-top:.15rem;">${card.skillCost}</div>`:''}
       </div>
       ${hasSkill?`<button class="mb mb-skill" style="font-size:.6rem;padding:.25rem .6rem;" onclick="closeModal();startSkill(ruLocalSeatId(),'bank',G[ruLocalSeatId()].bank[${i}])">Use Skill</button>`:`<span style="font-size:.65rem;color:var(--text-dim);">${card.usedSkill?'Used':'No skill'}</span>`}
@@ -7673,7 +7688,7 @@ const SDEFS={
       if(!p.bank.some(c=>c.name==='Light 0')){log('Requires Light 0 in Bank.','dmg');SF=null;return;}
       if(!p.deadzone.some(c=>c.name==='Shining Justice')){log('Requires Shining Justice in Deadzone.','dmg');SF=null;return;}
       ruDrop(p,...p.hand);p.hand=[];
-      const lr=p.bank.filter(c=>c.class==='light').reduce((s,c)=>s+(c.currentRP||c.rank||0),0);
+      const lr=p.bank.filter(c=>c.class==='light').reduce((s,c)=>s+((c.currentRP ?? c.rank)||0),0);
       card.currentNP+=lr;p.mp+=lr;
       const fc=[p.leftFlank,p.rightFlank].filter(Boolean).length;
       window.addAttacksRA(card,fc);card._light9s2=fc;
@@ -7711,11 +7726,11 @@ const SDEFS={
   {type:'pick_bank',count:2,min:2,to:'none',label:'Select 2 cards from your Bank (NP total of all 3 must be >9).'},
   {type:'verify_np',sources:['handPicks','bankPicks'],min:10},
   {type:'effect',fn(who,p,opp,fz,card,ctx,G){
-    const all=[...ctx.handPicks,...ctx.bankPicks].sort((a,b)=>(a.currentNP||a.numeral)-(b.currentNP||b.numeral));
+    const all=[...ctx.handPicks,...ctx.bankPicks].sort((a,b)=>((a.currentNP ?? a.numeral))-((b.currentNP ?? b.numeral)));
     const low2=all.slice(0,2),high1=all[2];
     low2.forEach(c=>{const h=p.hand.indexOf(c);if(h!==-1)p.hand.splice(h,1);const b=p.bank.indexOf(c);if(b!==-1)p.bank.splice(b,1);ruDrop(p,c);});
     const h=p.hand.indexOf(high1);if(h!==-1)p.hand.splice(h,1);const b=p.bank.indexOf(high1);if(b!==-1)p.bank.splice(b,1);dzAdd(p,high1);
-    const lowR=(low2[0]?low2[0].rank:0)||0;const hiRP=all.slice(1).reduce((s,c)=>s+(c.currentRP||c.rank||0),0);const dmg=lowR*hiRP;
+    const lowR=(low2[0]?low2[0].rank:0)||0;const hiRP=all.slice(1).reduce((s,c)=>s+((c.currentRP ?? c.rank)||0),0);const dmg=lowR*hiRP;
     ruLoseMP(opp,dmg,'numeral');[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).forEach(c=>c.attacksLeft=0);
     log(`Inferno 9: ${low2.map(c=>c.name).join('+')} dropped; ${high1.name} to Deadzone. Opponent -${dmg} MP. Cannot attack.`,'dmg');
   }}
@@ -7730,7 +7745,7 @@ const SDEFS={
 ]},
 'Blizzard 2':{source:'bank',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){if(opp.rankZone){opp.rankZone.currentNP=Math.max(0,opp.rankZone.currentNP-1);opp.rankZone.frozen=true;}log('Blizzard 2: Opponent\'s Rank Zone -1 NP and frozen until end of their next turn.','dmg');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){if(opp.rankZone){opp.rankZone.currentNP=(opp.rankZone.currentNP-1);opp.rankZone.frozen=true;}log('Blizzard 2: Opponent\'s Rank Zone -1 NP and frozen until end of their next turn.','dmg');}}
 ]},
 'Blizzard 5':{source:'field',phases:['battle'],attackTrigger:true,steps:[
   {type:'mill',count:1},
@@ -7754,7 +7769,7 @@ const SDEFS={
   {type:'pick_hand',count:2,min:2,to:'discard',filter:c=>c.type==='numeral',label:'Drop 2 Numeral cards from your hand with combined NP total ≥9.'},
   {type:'verify_np',sources:['handPicks'],min:9},
   {type:'pick_bank',count:1,min:1,to:'deadzone',label:'Cede 1 card from your Bank to Deadzone (its Rank = how many turns the Digit is protected).'},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){const ceded=ctx.bankPicks[0];const pt=ceded?(ceded.currentRP||ceded.rank||0):0;const digit=makeDigit();digit._protectTurns=pt;if(!opp.leftFlank){opp.leftFlank=digit;log(`Blizzard 9: Cipher¹ Digit 1 placed in opponent's Left Flank. Protected ${pt} turn(s).`,'imp');}else if(!opp.rightFlank){opp.rightFlank=digit;log(`Blizzard 9: Cipher¹ Digit 1 placed in opponent's Right Flank. Protected ${pt} turn(s).`,'imp');}else log('Blizzard 9: No open opponent Flank Zone available.','info');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){const ceded=ctx.bankPicks[0];const pt=ceded?((ceded.currentRP ?? ceded.rank)||0):0;const digit=makeDigit();digit._protectTurns=pt;if(!opp.leftFlank){opp.leftFlank=digit;log(`Blizzard 9: Cipher¹ Digit 1 placed in opponent's Left Flank. Protected ${pt} turn(s).`,'imp');}else if(!opp.rightFlank){opp.rightFlank=digit;log(`Blizzard 9: Cipher¹ Digit 1 placed in opponent's Right Flank. Protected ${pt} turn(s).`,'imp');}else log('Blizzard 9: No open opponent Flank Zone available.','info');}}
 ]},
 'Shadow 0':{source:'field',phases:['battle'],attackTrigger:true,steps:[
   {type:'pick_hand',count:1,min:1,to:'discard',label:'Drop 1 card from your hand (paid when declaring attack with Shadow 0).'},
@@ -7772,8 +7787,8 @@ const SDEFS={
   {type:'pick_opp_zone',label:'Target a Numeral on opponent\'s Battlefield.',filter:c=>!!c&&c.type==='numeral'&&!c.isDigit},
   {type:'effect',fn(who,p,opp,fz,card,ctx,G){
     if(!ctx.oppTargetCard){SF=null;return;}
-    const tNP=ctx.oppTargetCard.currentNP||ctx.oppTargetCard.numeral;
-    const eligible=p.hand.filter(c=>(c.currentNP||c.numeral)>=tNP);
+    const tNP=(ctx.oppTargetCard.currentNP ?? ctx.oppTargetCard.numeral);
+    const eligible=p.hand.filter(c=>((c.currentNP ?? c.numeral))>=tNP);
     if(!eligible.length){log(`Need hand card(s) with NP ≥ ${tNP} to pay Shadow 3's cost.`,'dmg');SF=null;renderAll();return;}
     const doControl=()=>{
       ruOwnedPicker(who,`Hand — Drop cards with NP ≥ ${tNP} (target: ${ctx.oppTargetCard.name} NP:${tNP})`,eligible,eligible.length,1,false,(picks)=>{
@@ -7792,7 +7807,7 @@ const SDEFS={
     // Both Flank Zones full → make room or cancel.
     if(ruBotControlledSeat(who)){
       const l=p.leftFlank,r=p.rightFlank;
-      if((l.currentNP||l.numeral)<=(r.currentNP||r.numeral)){ruDrop(p,l);p.leftFlank=null;}else{ruDrop(p,r);p.rightFlank=null;}
+      if(((l.currentNP ?? l.numeral))<=((r.currentNP ?? r.numeral))){ruDrop(p,l);p.leftFlank=null;}else{ruDrop(p,r);p.rightFlank=null;}
       log('AI Shadow 3: Stood Down its weaker Flank to make room.','info');doControl();return;
     }
     const l=p.leftFlank,r=p.rightFlank;
@@ -7826,7 +7841,7 @@ const SDEFS={
   {type:'effect',fn(who,p,opp,fz,card,ctx,G){G._shadow9=who;log('Shadow 9: When attacking, opponent\'s Advantageous E2 effects negated. If opponent receives Action Card in Damage Step, its Morale Boost is subtracted instead.','info');}}
 ]},
 'Maximum 0':{source:'field',phases:['battle'],check(who,card){return !card._mx0used;},steps:[
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){card._mx0used=true;const all=[p.rankZone,p.leftFlank,p.rightFlank,opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean);const mx=Math.max(...all.map(c=>c.currentRP||c.rank||0),0)+1;card.currentRP=mx;card._rankMaxTemp=true;log(`Maximum 0: Treated as Rank MAX (RP:${mx}) this turn. (Once per game.)`, 'info');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){card._mx0used=true;const all=[p.rankZone,p.leftFlank,p.rightFlank,opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean);const mx=Math.max(...all.map(c=>(c.currentRP ?? c.rank)||0),0)+1;card.currentRP=mx;card._rankMaxTemp=true;log(`Maximum 0: Treated as Rank MAX (RP:${mx}) this turn. (Once per game.)`, 'info');}}
 ]},
 'Maximum 1':{source:'any',phases:['main','standby'],steps:[
   {type:'move_self',to:'discard'},
@@ -7860,15 +7875,15 @@ const SDEFS={
       SF=null;renderAll();return;
     }
     const eligible=p.hand.filter(c=>true);
-    const totalAvail=eligible.reduce((s,c)=>s+(c.currentNP||c.numeral||0),0);
+    const totalAvail=eligible.reduce((s,c)=>s+((c.currentNP ?? c.numeral)||0),0);
     if(eligible.length<5||totalAvail<25){log('Maximum 10: optional skill needs 5 hand cards with NP total ≥ 25. Skipped.','info');SF=null;renderAll();return;}
     ruOwnedPicker(who,'Maximum 10 — drop exactly 5 hand cards with NP total ≥ 25 (or Cancel to skip).',eligible,5,5,false,(picks)=>{
       if(!picks||picks.length!==5){log('Maximum 10 skill skipped.','info');SF=null;renderAll();return;}
-      const tot=picks.reduce((s,c)=>s+(c.currentNP||c.numeral||0),0);
+      const tot=picks.reduce((s,c)=>s+((c.currentNP ?? c.numeral)||0),0);
       if(tot<25){log(`Selected NP total ${tot} < 25 — skill skipped.`,'dmg');SF=null;renderAll();return;}
       const lowestRank=Math.min(...picks.map(c=>c.rank||0));
       picks.forEach(c=>{const i=p.hand.indexOf(c);if(i!==-1)p.hand.splice(i,1);ruDrop(p,c);});
-      for(let i=0;i<5;i++){if(p.deck.length)ruDrop(p,p.deck.shift());}
+      ruTakeDeckCards(p,5,false,(deckCard,i)=>{ruDrop(p,deckCard);});
       G._noAttackingAdvantage=G._noAttackingAdvantage||{};G._noAttackingAdvantage[who]=true;
       const dropped=picks.filter(c=>c.type==='action');
       logAs(who,`Maximum 10: dropped 5 (NP ${tot}) and milled 5. {You} cannot use Attacking Advantage this turn. If an Action Card's effect resolves during the end of turn, it will persist for ${lowestRank} additional turn(s) instead of resolving immediately.`,'imp');
@@ -7895,14 +7910,14 @@ const SDEFS={
     {type:'effect',fn(who,p,opp,fz,card,ctx,G){
       const eligible=p.hand.filter(c=>true);
       const canMake=(()=>{ // can a subset total exactly 11?
-        const vals=eligible.map(c=>c.currentNP||c.numeral||0);const tgt=11;const dp=new Set([0]);
+        const vals=eligible.map(c=>(c.currentNP ?? c.numeral)||0);const tgt=11;const dp=new Set([0]);
         for(const v of vals){for(const s of [...dp]){if(s+v<=tgt)dp.add(s+v);}}return dp.has(11);
       })();
       if(!canMake){log('Maximum 11 Skill 1: no combination of hand cards totals exactly 11. Skipped.','info');SF=null;renderAll();return;}
       ruOwnedPickerNP(who,'Maximum 11 — drop hand cards whose NP total is exactly 11.',eligible,11,(picks)=>{
-        const tot=picks.reduce((s,c)=>s+(c.currentNP||c.numeral||0),0);
+        const tot=picks.reduce((s,c)=>s+((c.currentNP ?? c.numeral)||0),0);
         if(tot!==11){log(`Total ${tot} ≠ 11 — skill skipped.`,'dmg');SF=null;renderAll();return;}
-        const highest=Math.max(...picks.map(c=>c.currentNP||c.numeral||0));
+        const highest=Math.max(...picks.map(c=>(c.currentNP ?? c.numeral)||0));
         picks.forEach(c=>{const i=p.hand.indexOf(c);if(i!==-1)p.hand.splice(i,1);ruDrop(p,c);});
         openModal('Maximum 11 — declare an Action Card type',
           '<p style="font-size:.82rem;">Declare which Action Card type you are betting on:</p>',
@@ -7953,7 +7968,7 @@ const SDEFS={
       ruOwnedPicker(who,'Maximum 12 Skill 1 — send 1 card from your hand to the Deadzone. Advantageous effects are multiplied by that card\'s Rank this turn.',p.hand.slice(),1,1,false,(picks)=>{
         if(!picks.length){SF=null;renderAll();return;}
         const c=picks[0];const i=p.hand.indexOf(c);if(i!==-1)p.hand.splice(i,1);dzAdd(p,c);
-        const mult=(c.rank||0);const mor=Math.floor((c.currentNP||c.numeral||0)/2);
+        const mult=(c.rank||0);const mor=Math.floor(((c.currentNP ?? c.numeral)||0)/2);
         G._advMultiplier=G._advMultiplier||{};G._advMultiplier[who]=mult;p.mp+=mor;
         log(`Maximum 12 Skill 1: Advantageous effects ${mult===0?'nullified (×0)':'×'+mult} this turn. Sent ${c.name} to Deadzone. +${mor} MP.`,mult===0?'dmg':'heal');
         checkWin();SF=null;renderAll();
@@ -8014,31 +8029,31 @@ const SDEFS={
 ]},
 'Negative 2':{source:'bank',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},{type:'mill',count:1},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=Math.max(0,opp.rankZone.currentNP-2);log('Negative 2: Rank Zone gets another attack. Opponent\'s Rank Zone -2 NP.','dmg');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){if(p.rankZone)p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=(opp.rankZone.currentNP-2);log('Negative 2: Rank Zone gets another attack. Opponent\'s Rank Zone -2 NP.','dmg');}}
 ]},
 'Negative 3':{source:'any',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},{type:'mill',count:1},
   {type:'pick_opp_zone',label:'Select a Numeral on opponent\'s Battlefield to apply -3 NP until end of their next turn.',filter:c=>!!c&&c.type==='numeral'&&!c.isDigit},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){if(ctx.oppTargetCard){ctx.oppTargetCard.currentNP=Math.max(0,ctx.oppTargetCard.currentNP-3);ctx.oppTargetCard._neg3=true;log(`Negative 3: ${ctx.oppTargetCard.name} -3 NP until end of their next turn.`,'dmg');}}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){if(ctx.oppTargetCard){ctx.oppTargetCard.currentNP=(ctx.oppTargetCard.currentNP-3);ctx.oppTargetCard._neg3=true;log(`Negative 3: ${ctx.oppTargetCard.name} -3 NP until end of their next turn.`,'dmg');}}}
 ]},
 'Negative 5':{source:'bank',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},{type:'mill',count:2},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>c.currentNP=Math.max(0,c.currentNP-3));log('Negative 5: All opponent Battlefield Numerals -3 NP.','dmg');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>c.currentNP=(c.currentNP-3));log('Negative 5: All opponent Battlefield Numerals -3 NP.','dmg');}}
 ]},
 'Negative 7':{source:'bank',phases:['main','standby','battle'],steps:[
   {type:'move_self',to:'deadzone'},{type:'mill',count:3},
-  {type:'effect',fn(who,p,opp,fz,card,ctx,G){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=Math.max(0,c.currentNP-3);c.currentRP=Math.max(0,c.currentRP-1);});log('Negative 7: All opponent Battlefield Numerals -3 NP, -1 RP.','dmg');}}
+  {type:'effect',fn(who,p,opp,fz,card,ctx,G){[opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=(c.currentNP-3);c.currentRP=(c.currentRP-1);});log('Negative 7: All opponent Battlefield Numerals -3 NP, -1 RP.','dmg');}}
 ]},
 'Negative 9':{source:'field',phases:['main','standby'],steps:[
   {type:'pick_bank',count:2,min:2,to:'none',label:'Select 2 cards from your Bank.'},
   {type:'pick_hand',count:2,min:2,to:'none',label:'Select 2 cards from your hand.'},
   {type:'effect',fn(who,p,opp,fz,card,ctx,G){
-    const all=[...ctx.bankPicks,...ctx.handPicks].sort((a,b)=>(b.currentNP||b.numeral)-(a.currentNP||a.numeral));
+    const all=[...ctx.bankPicks,...ctx.handPicks].sort((a,b)=>((b.currentNP ?? b.numeral))-((a.currentNP ?? a.numeral)));
     const highest=all[0],rest=all.slice(1);
     const bi=p.bank.indexOf(highest);if(bi!==-1)p.bank.splice(bi,1);const hi2=p.hand.indexOf(highest);if(hi2!==-1)p.hand.splice(hi2,1);dzAdd(p,highest);
     rest.forEach(c=>{const h=p.hand.indexOf(c);if(h!==-1)p.hand.splice(h,1);const b=p.bank.indexOf(c);if(b!==-1)p.bank.splice(b,1);ruDrop(p,c);});
     const nLoss=highest.numeral||0;
-    [opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>c.currentNP=Math.max(0,c.currentNP-nLoss));
+    [opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>c.currentNP=(c.currentNP-nLoss));
     if(p.deadzone.length>0)p.hand.push(p.deadzone[p.deadzone.length-1]);
     if(opp.deadzone.length>0)opp.hand.push(opp.deadzone[opp.deadzone.length-1]);
     log(`Negative 9: ${highest.name} ceded to Deadzone. Opponent Numerals -${nLoss} NP. Both players add 1 from Deadzone to hand.`,'dmg');
@@ -8054,8 +8069,8 @@ const SDEFS={
 // ═══════════════════════════════════════════
 const ALL_NUMS=c=>c&&c.type==='numeral';
 function _advMul(){if(!(G._advApplyMult&&G._advMultiplier))return 1;var m=G._advMultiplier[G._advApplyMult];return (m==null)?1:m;}
-function buffNP(card,n){if(card){card.currentNP=(card.currentNP||card.numeral||0)+n*_advMul();}}
-function buffRP(card,n){if(card){card.currentRP=(card.currentRP||card.rank||0)+n*_advMul();}}
+function buffNP(card,n){if(card){card.currentNP=((card.currentNP ?? card.numeral)||0)+n*_advMul();}}
+function buffRP(card,n){if(card){card.currentRP=((card.currentRP ?? card.rank)||0)+n*_advMul();}}
 // Generic replay of just the E1 EFFECT (never the cost) of an already-resolved Advantageous card,
 // by name, driven straight off its own live ACDEFS entry -- introspects real step data instead of
 // hardcoding a parallel copy of each card's logic. 'effect' steps get their fn re-invoked directly
@@ -8098,7 +8113,7 @@ const ACDEFS={
     {type:'pay_mp',amount:2},
     {type:'move_self',to:'discard'},
     {type:'mill',count:2},
-    {type:'effect',fn(w,p,o){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,o.rankZone,o.leftFlank,o.rightFlank,o.rearFlank].filter(ALL_NUMS).forEach(c=>c.currentNP=(c.currentNP||c.numeral)*2);log('Multiply: NP of ALL Numerals on the Battlefield doubled until end of turn.','imp');}},
+    {type:'effect',fn(w,p,o){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,o.rankZone,o.leftFlank,o.rightFlank,o.rearFlank].filter(ALL_NUMS).forEach(c=>c.currentNP=((c.currentNP ?? c.numeral))*2);log('Multiply: NP of ALL Numerals on the Battlefield doubled until end of turn.','imp');}},
   ]},
   'Explore':{steps:[
     {type:'move_self',to:'discard'},
@@ -8110,7 +8125,7 @@ const ACDEFS={
   'Muster':{steps:[
     {type:'move_self',to:'discard'},
     {type:'drop_hand_all'},
-    {type:'effect',fn(w,p,o){const rNP=p.rankZone?(p.rankZone.currentNP||p.rankZone.numeral||0):0;let added=0;for(let n=0;n<rNP;n++){const c=p.deck.find(x=>x.type==='numeral'&&x.numeral===n);if(c){p.deck.splice(p.deck.indexOf(c),1);p.hand.push(c);added++;}}log(`Muster: added ${added} Numeral(s) (one of each value below Rank Zone NP ${rNP}) from Deck to hand.`,'heal');}},
+    {type:'effect',fn(w,p,o){const rNP=p.rankZone?((p.rankZone.currentNP ?? p.rankZone.numeral)||0):0;let added=0;for(let n=0;n<rNP;n++){const c=p.deck.find(x=>x.type==='numeral'&&x.numeral===n);if(c){p.deck.splice(p.deck.indexOf(c),1);p.hand.push(c);added++;}}log(`Muster: added ${added} Numeral(s) (one of each value below Rank Zone NP ${rNP}) from Deck to hand.`,'heal');}},
   ]},
   'Search':{steps:[
     {type:'move_self',to:'discard'},
@@ -8161,7 +8176,7 @@ const ACDEFS={
     {type:'pay_mp',amount:3},
     {type:'move_self',to:'discard'},
     {type:'mill',count:4},
-    {type:'effect',fn(w,p,o){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,(p.delta&&p.delta[0])].filter(c=>c&&(c.type==='numeral'||c.type==='evolution')).forEach(c=>{c.currentNP=(c.currentNP||c.numeral)*2;c.currentRP=(c.currentRP||c.rank||0)*2;});logAs(w,'Multi-Star: RP and NP of all {your} Numerals (Rank, Flanks, Rear Flank, and Delta) doubled until end of turn.','imp');}},
+    {type:'effect',fn(w,p,o){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,(p.delta&&p.delta[0])].filter(c=>c&&(c.type==='numeral'||c.type==='evolution')).forEach(c=>{c.currentNP=((c.currentNP ?? c.numeral))*2;c.currentRP=((c.currentRP ?? c.rank)||0)*2;});logAs(w,'Multi-Star: RP and NP of all {your} Numerals (Rank, Flanks, Rear Flank, and Delta) doubled until end of turn.','imp');}},
   ]},
   'Neo Rank Star':{steps:[
     {type:'move_self',to:'discard'},
@@ -8172,7 +8187,7 @@ const ACDEFS={
     {type:'move_self',to:'discard'},
     {type:'take_deadzone',count:1,to:'discard',label:'Drop 1 card from your Deadzone.'},
     {type:'pick_hand',count:2,min:2,to:'discard',label:'Drop 2 cards from your hand.'},
-    {type:'effect',fn(w,p,o){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(c=>{buffNP(c,2);buffRP(c,1);});[o.rankZone,o.leftFlank,o.rightFlank,o.rearFlank].filter(ALL_NUMS).forEach(c=>c.currentNP=Math.max(0,(c.currentNP||c.numeral)-2));logAs(w,`Neo Battle Star: {your} Numerals +2 NP/+1 RP; {opp's} Numerals -2 NP.`,'heal');}},
+    {type:'effect',fn(w,p,o){[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(c=>{buffNP(c,2);buffRP(c,1);});[o.rankZone,o.leftFlank,o.rightFlank,o.rearFlank].filter(ALL_NUMS).forEach(c=>c.currentNP=(((c.currentNP ?? c.numeral))-2));logAs(w,`Neo Battle Star: {your} Numerals +2 NP/+1 RP; {opp's} Numerals -2 NP.`,'heal');}},
   ]},
   'Neo Draw Star':{steps:[
     {type:'move_self',to:'discard'},
@@ -8183,11 +8198,11 @@ const ACDEFS={
   ]},
   'Shining Star':{steps:[
     {type:'move_self',to:'discard'},
-    {type:'effect',fn(w,p,o,fz,card,ctx,G){[p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&c.class==='light').forEach(c=>buffNP(c,2));[o.rankZone,o.leftFlank,o.rightFlank].filter(c=>c&&CM[c.class]&&CM[c.class].align==='Malevolent').forEach(c=>c.currentNP=Math.max(0,(c.currentNP||c.numeral)-1));G._shiningStarDrop=w;log('Shining Star: Light Numerals +2 NP; Malevolent Numerals -1 NP. (Drop 1 from Deadzone after Battle Phase.)','heal');}},
+    {type:'effect',fn(w,p,o,fz,card,ctx,G){[p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&c.class==='light').forEach(c=>buffNP(c,2));[o.rankZone,o.leftFlank,o.rightFlank].filter(c=>c&&CM[c.class]&&CM[c.class].align==='Malevolent').forEach(c=>c.currentNP=(((c.currentNP ?? c.numeral))-1));G._shiningStarDrop=w;log('Shining Star: Light Numerals +2 NP; Malevolent Numerals -1 NP. (Drop 1 from Deadzone after Battle Phase.)','heal');}},
   ]},
   'Shaded Star':{steps:[
     {type:'move_self',to:'discard'},
-    {type:'effect',fn(w,p,o){const board=[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank];window.oppList(w).forEach(function(s){const op=G[s];board.push(op.rankZone,op.leftFlank,op.rightFlank,op.rearFlank);});const all=board.filter(ALL_NUMS).map(c=>c.currentNP||c.numeral);const lo=all.length?Math.min(...all):0;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(c=>{buffNP(c,lo);buffRP(c,2);});logAs(w,`Shaded Star: +${lo} NP (lowest on ALL Battlefields) and +2 RP to {your} Rank/Flank cards.`,'heal');}},
+    {type:'effect',fn(w,p,o){const board=[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank];window.oppList(w).forEach(function(s){const op=G[s];board.push(op.rankZone,op.leftFlank,op.rightFlank,op.rearFlank);});const all=board.filter(ALL_NUMS).map(c=>(c.currentNP ?? c.numeral));const lo=all.length?Math.min(...all):0;[p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(c=>{buffNP(c,lo);buffRP(c,2);});logAs(w,`Shaded Star: +${lo} NP (lowest on ALL Battlefields) and +2 RP to {your} Rank/Flank cards.`,'heal');}},
   ]},
   'MAX Star':{steps:[
     {type:'move_self',to:'discard'},
@@ -8384,7 +8399,7 @@ function playActionL11(idx,card){const me=ruActor();
     p.hand.splice(idx,1); window.putToPA11(p,card,'discard'); p.actUsed = (p.actUsed || 0) + 1; p.mp += card.M || 0;
     if(window.ruActBegin)window.ruActBegin(me,card,'hand');
     var finishBuff = function(){
-      window.battlefieldNumeralsPA11(me).forEach(function(e){ e.card.currentNP = (e.card.currentNP || e.card.numeral || 0) + 2; e.card.currentRP = (e.card.currentRP || e.card.rank || 0) + 2; });
+      window.battlefieldNumeralsPA11(me).forEach(function(e){ e.card.currentNP = ((e.card.currentNP ?? e.card.numeral) || 0) + 2; e.card.currentRP = ((e.card.currentRP ?? e.card.rank) || 0) + 2; });
       window.finishPA11('MAX Star: both players dropped chosen Deadzone cards; '+sidePossLower(me)+' Numerals gained +2 NP/+2 RP.','heal');
     };
     var _msSelfPool2 = (p.deadzone || []).filter(function(c){return c && c.name !== 'The Lowlands';});
@@ -8425,14 +8440,14 @@ function checkSkillFlags_preCombat(aWho,aZone,dWho,dZone,aNP,dNP,att,def){
   }
   // Blizzard 5: attacker gets -2 NP on target
   if(G._blizzard5NP&&(!G._blizzard5By||G._blizzard5By===aWho)){
-    def.currentNP=Math.max(0,def.currentNP-G._blizzard5NP);
+    def.currentNP=(def.currentNP-G._blizzard5NP);
     log(`Blizzard 5: Target loses ${G._blizzard5NP} NP.`,'dmg');G._blizzard5NP=0;G._blizzard5By=null;
   }
   // Deckstructive 0 shield
   if(def&&def._d0shield&&dWho!==aWho){
     def._d0shield=false;
-    log(`Deckstructive 0 negates this attack! Attacker will mill ${att.currentNP||att.numeral} cards after Battle Phase.`,'info');
-    G._d0millQueued={who:aWho,count:att.currentNP||att.numeral};
+    log(`Deckstructive 0 negates this attack! Attacker will mill ${(att.currentNP ?? att.numeral)} cards after Battle Phase.`,'info');
+    G._d0millQueued={who:aWho,count:(att.currentNP ?? att.numeral)};
     r=true; // NEGATED
   }
   // Light 3: defensive use (tracked via flag, player manually triggers)
@@ -8447,7 +8462,7 @@ function checkSkillFlags_moraleCalc(aWho,dWho,att,def,moraleVal){
   else if(def&&def._moraleShield&&dWho!==aWho){log(`${def.name}'s Morale Shield negates all Morale Damage.`,'info');moraleR=0;}
   else{
     // Negative 0: gain MP when attacked
-    if(def&&def._neg0&&dWho!==aWho){G[dWho].mp+=(att.currentNP||att.numeral);log(`Negative 0: ${sideVerbLabel(dWho,'gain')} ${att.currentNP||att.numeral} MP.`,'heal');def._neg0=false;}
+    if(def&&def._neg0&&dWho!==aWho){G[dWho].mp+=((att.currentNP ?? att.numeral));log(`Negative 0: ${sideVerbLabel(dWho,'gain')} ${(att.currentNP ?? att.numeral)} MP.`,'heal');def._neg0=false;}
   }
   if(att&&(att._zeroNoMorale||att._ru152Zero8NoMorale)){
     try{log('Zero 8: Morale Damage from this attack is 0.','heal');}catch(e){}
@@ -8567,7 +8582,7 @@ function reactiveDefenses(aWho,att,addonNP,tgt,dw){
       if(then)then(); paid(true);
     });
   };
-  const topToDrop=n=>{ for(let k=0;k<n&&p.deck.length;k++)ruDrop(p,p.deck.shift()); };
+  const topToDrop=n=>{ ruTakeDeckCards(p,n,false,(deckCard,k)=>{ruDrop(p,deckCard);}); };
   const is=(cls,n)=>tc.type==='numeral'&&tc.class===cls&&tc.numeral===n&&tc.skillType!=='Basic'&&!tc.usedSkill;
   const add=(card,label,x)=>out.push(Object.assign({card:card,label:label,mark:function(){ card.usedSkill=true; }},x));
   const defState=()=>(G._defState=G._defState||{});
@@ -9187,9 +9202,9 @@ const ADEFS = {
       { label: 'Mill \u2192 Benevolent -1 NP (once/turn)', cost: 'Mill 1 card.',
         check(who){return !G[who]._ddMillUsed;},
         fn(who,p,opp){
-          if(!p.deck.length){log('No cards to mill.','info');return;}
-          const mc=p.deck.shift();ruDrop(p,mc);
-          [opp.rankZone,opp.leftFlank,opp.rightFlank,p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&CM[c.class]?.align==='Benevolent').forEach(c=>c.currentNP=Math.max(0,c.currentNP-1));
+          const mc=ruTakeDeckCards(p,1,false,c=>ruDrop(p,c))[0];
+          if(!mc||G.gameOver)return;
+          [opp.rankZone,opp.leftFlank,opp.rightFlank,p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&CM[c.class]?.align==='Benevolent').forEach(c=>c.currentNP=(c.currentNP-1));
           p._ddMillUsed=true;
           log(`Dark Domain: Milled ${mc.name}. All Benevolent Numerals -1 NP until end of turn.`,'dmg');
           checkWin();renderAll();
@@ -9220,7 +9235,7 @@ const ADEFS = {
         check(who){return G[who].hand.length>=1&&!G[who]._hgUltUsed;},
         fn(who,p,opp){
           const count=p.hand.length;ruDrop(p,...p.hand);p.hand=[];
-          for(let i=0;i<count;i++){if(p.deck.length)ruDrop(p,p.deck.shift());}
+          ruTakeDeckCards(p,count,false,(deckCard,i)=>{ruDrop(p,deckCard);});
           p._hgUltUsed=true;
           [p.rankZone,p.leftFlank,p.rightFlank].filter(c=>c&&c.class==='maximum').forEach(c=>{c.currentRP=99;c._rankMaxTemp=true;});
           logAs(who,`Higher Ground ULTIMATE: Dropped ${count} cards + milled ${count}. {Your} Maximum Numerals are Rank MAX until end of turn!`,'imp');
@@ -9264,7 +9279,7 @@ const ADEFS = {
         check(who){return G[who].hand.length>=4&&!G[who]._tlUltUsed;},
         fn(who,p,opp){
           ruDrop(p,...p.hand);p.hand=[];p._tlUltUsed=true;
-          [opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=-(c.currentNP||c.numeral||0);});
+          [opp.rankZone,opp.leftFlank,opp.rightFlank].filter(Boolean).forEach(c=>{c.currentNP=-((c.currentNP ?? c.numeral)||0);});
           log('The Lowlands ULTIMATE: All opponent Battlefield Numerals switch to negative NP values until end of turn!','imp');
           checkWin();renderAll();
         }
@@ -9483,7 +9498,7 @@ ADEFS['Seven Heaven']={
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===card)p[z]=null;});
     if(to==='hand')p.hand.push(card); else if(to==='bank')bankInsert(p,card); else if(to==='deck_bottom')p.deck.push(card); else if(to==='deck_top')p.deck.unshift(card); else if(to==='deadzone'){window.dzAdd(p,card);} else ruDrop(p,card);
   }
-  function removeTopDeck(who,count,to){const p=G[who],arr=[];for(let i=0;i<count;i++){if(!p.deck.length)break;const c=p.deck.shift();arr.push(c);if(to==='deadzone'){dzAdd(p,c);}else ruDrop(p,c);}return arr;}
+  function removeTopDeck(who,count,to){const p=G[who],arr=[];ruTakeDeckCards(p,count,false,(deckCard,i)=>{const c=deckCard;arr.push(c);if(to==='deadzone'){dzAdd(p,c);}else ruDrop(p,c);});return arr;}
   function topDeck(p,n){return p.deck.slice(0,Math.min(n,p.deck.length));}
   function classNum(cls,n){return c=>c&&c.type==='numeral'&&c.class===cls&&(n==null||c.numeral===n);}
   function numVal(c){return c?(c.currentNP??c.numeral??0):0;}
@@ -9645,7 +9660,7 @@ ADEFS['Seven Heaven']={
     'Phantom 1':{source:'any',phases:['main','standby','battle'],steps:[
       {type:'move_self',to:'discard'},
       {type:'search_deck',count:1,min:1,to:'hand',filter:c=>c.class==='phantom',label:'Add one Phantom-class card from Deck to hand.'},
-      {type:'effect',fn(w,p,o){const c=o.deck.pop();if(c){dzAdd(o,c);log(`Phantom 1: opponent's last Deck card (${c.name}) goes to Deadzone (not a Casualty Draw trigger).`,'dmg');}}}
+      {type:'effect',fn(w,p,o){const c=ruTakeDeckCards(o,1,true,x=>dzAdd(o,x))[0];if(c)log(`Phantom 1: opponent's last Deck card (${c.name}) goes to Deadzone (not a Casualty Draw trigger).`,'dmg');}}
     ]},
     'Phantom 3':{source:'any',phases:['main','standby','battle'],steps:[
       {type:'move_self',to:'deadzone'},
@@ -9745,7 +9760,7 @@ ADEFS['Seven Heaven']={
     ['rankZone','leftFlank','rightFlank','rearFlank'].forEach(z=>{if(p[z]===card)p[z]=null;});
     if(to==='hand')p.hand.push(card);else if(to==='deck_top')p.deck.unshift(card);else if(to==='deck_bottom')p.deck.push(card);else if(to==='bank')bankInsert(p,card);else if(to==='deadzone'){window.dzAdd(p,card);}else ruDrop(p,card);
   }
-  function dropTop(who,n){for(let i=0;i<n;i++){if(!G[who].deck.length)break;ruDrop(G[who],G[who].deck.shift());}}
+  function dropTop(who,n){ruTakeDeckCards(G[who],n,false,(deckCard,i)=>{ruDrop(G[who],deckCard);});}
   window.dropTopRD1=dropTop;
   function findAndMoveFastTrack(who){
     const p=G[who];let c=p.discard.find(x=>x.name==='Fast Track');
@@ -10396,7 +10411,7 @@ ADEFS['Seven Heaven']={
       if(!targets.length){safeLog(card.name+': no Numeral on any Battlefield to target.','info');return;}
       chooseAmalgElement(w,card,'deadzone',function(el){
         if(!el)return;
-        if(p.deck.length)ruDrop(p,p.deck.shift());
+        ruTakeDeckCards(p,1,false,c=>ruDrop(p,c));
         var wasZero=el.numeral===0;
         window.cChoose(w,targets,1,card.name+' — choose a Numeral on any Battlefield to target.',function(pk){
           var t=pk&&pk[0]; if(!t)return;
@@ -10441,10 +10456,10 @@ ADEFS['Seven Heaven']={
         if(!card.elements||!card.elements.length){safeLog(card.name+': no Elements to send to the Deadzone.','dmg');return;}
         card.elements.slice().forEach(el=>{window.dzAdd(p,el);});
         card.elements=[];
-        for(let i=0;i<12&&p.deck.length;i++)ruDrop(p,p.deck.shift());
+        ruTakeDeckCards(p,12,false,(deckCard,i)=>{ruDrop(p,deckCard);});
         card._b12Skill1Used=true;
         card._b12AdvSnapshot=(p._advCardsThisTurn||[]).slice();
-        const r2=(side)=>{const pw=G[side];ruDrop(pw,...pw.hand.splice(0));let n=0;for(let i=0;i<6;i++){if(!pw.deck.length){if(!pw.discard.length)break;pw.deck=shuffle(pw.discard.splice(0));}if(!pw.deck.length)break;const dc=pw.deck.shift();pw.hand.push(dc);const dr=(dc.currentRP!=null?dc.currentRP:(dc.rank||0));if(dc.type==='numeral'&&dr>=2)n++;}return n;};
+        const r2=(side)=>{const pw=G[side];ruDrop(pw,...pw.hand.splice(0));return draw(side,6).filter(dc=>dc.type==='numeral'&&(dc.currentRP??dc.rank??0)>=2).length;};
         const opps=allOpponents(w);
         const rPlayer=r2(w);
         const rOpps=opps.reduce((sum,opp)=>sum+r2(opp),0);
@@ -10537,7 +10552,7 @@ ADEFS['Seven Heaven']={
         var ei=card.elements.indexOf(el); if(ei>=0)card.elements.splice(ei,1);
         window.dzAdd(p,el);
         safeLog(card.name+': '+el.name+' Element sent to the Deadzone.','dmg');
-        if(p.deck.length)ruDrop(p,p.deck.shift());
+        ruTakeDeckCards(p,1,false,c=>ruDrop(p,c));
         card.usedSkill=true;
         card._amalg5BaseNP=card.currentNP!=null?card.currentNP:(card.numeral||5);
         card.currentNP=card._amalg5BaseNP+3;
@@ -10637,13 +10652,13 @@ ADEFS['Seven Heaven']={
         if(card.numeral===9)card._cooldownUntil=G.exchange+3;
         if(key==='benevolent-1'){const before=p.hand.length;draw(who,1);const d=p.hand[p.hand.length-1];if(d&&d.type==='numeral'){p.mp+=d.rank||0;log(`${card.name}: drew ${d.name} and gained ${d.rank||0} MP.`, 'heal');}}
         else if(key==='benevolent-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;p.mp+=2;opp.mp+=2;log(`${card.name}: Rank Zone gets another attack. Both players gain 2 MP.`, 'heal');}
-        else if(key==='malevolent-1'){if(opp.deck.length){const t=opp.deck.shift();ruDrop(opp,t);log(`${card.name}: opponent sends ${t.name} (top of Deck) to the Drop.`, 'dmg');}else log(`${card.name}: opponent Deck is empty.`, 'info');}
-        else if(key==='malevolent-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=Math.max(0,(opp.rankZone.currentNP||opp.rankZone.numeral||0)-2);log(`${card.name}: Rank Zone gets another attack; opponent Rank Zone -2 NP this turn.`, 'dmg');}
+        else if(key==='malevolent-1'){const t=ruTakeDeckCards(opp,1,false,c=>ruDrop(opp,c))[0];if(t)log(`${card.name}: opponent sends ${t.name} (top of Deck) to the Drop.`, 'dmg');}
+        else if(key==='malevolent-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=(((opp.rankZone.currentNP ?? opp.rankZone.numeral)||0)-2);log(`${card.name}: Rank Zone gets another attack; opponent Rank Zone -2 NP this turn.`, 'dmg');}
         // benevolent-3/malevolent-3 (Amalgamation 3) handled entirely by the later,
         // unconditional startAmalgamationSkill override -- afterElement() is never invoked
         // for these keys, so a branch here would be dead code. Removed.
         else if(key==='benevolent-4'){if(p.rankZone)p.rankZone.currentNP+=4;G._amalgStartMP=G._amalgStartMP||{};G._amalgStartMP[oppOf(who)]=(G._amalgStartMP[oppOf(who)]||0)+2;log(`${card.name}: Rank Zone +4 NP. Opponent gains 2 MP at start of their next turn.`, 'heal');}
-        else if(key==='malevolent-4'){if(opp.rankZone)opp.rankZone.currentNP=Math.max(0,(opp.rankZone.currentNP||opp.rankZone.numeral)-4);log(`${card.name}: opponent Rank Zone -4 NP.`, 'dmg');}
+        else if(key==='malevolent-4'){if(opp.rankZone)opp.rankZone.currentNP=(((opp.rankZone.currentNP ?? opp.rankZone.numeral))-4);log(`${card.name}: opponent Rank Zone -4 NP.`, 'dmg');}
         else if(key==='benevolent-5'){
           // malevolent-5 never reaches this branch -- it's fully intercepted by the later,
           // unconditional startAmalgamationSkill override (its own more accurate reimplementation
@@ -10651,7 +10666,7 @@ ADEFS['Seven Heaven']={
           // Cost text is "...and send the top card of your Deck to the Drop when this card
           // attacks" -- the element half is already paid by spendElement() before afterElement()
           // runs; this is the missing second half of the cost.
-          if(p.deck.length)ruDrop(p,p.deck.shift());
+          ruTakeDeckCards(p,1,false,c=>ruDrop(p,c));
           if(window.markNPMod){window.markNPMod(card,who,3,2);if(p.rankZone)window.markNPMod(p.rankZone,who,3,2);}
           else{card.currentNP+=3;if(p.rankZone)p.rankZone.currentNP+=3;}
           card._amalgB5PendingBonus=true;
@@ -10679,10 +10694,10 @@ ADEFS['Seven Heaven']={
           if(opp.hand.length){window.cChoose(oppOf(who),opp.hand,1,card.name+' — opponent: choose a card to cede to Deadzone.',function(pk){var c=pk[0];if(c){var i=opp.hand.indexOf(c);if(i>=0)opp.hand.splice(i,1);window.dzAdd(opp,c);}});}
           commonNoAtk();logAs(who,`${card.name}: added 1 from Deadzone to hand; {Opp} {opp:cede|cedes} 1 from hand. {You} cannot attack this turn.`,'dmg');
         }
-        else if(key==='benevolent-8'){const milled=[];for(let i=0;i<2&&p.deck.length;i++){const c=p.deck.shift();ruDrop(p,c);milled.push(c);}const val=(milled.find(c=>c.type==='numeral')||elCard||{numeral:0}).numeral||0;if(p.rankZone&&window.markNPMod)window.markNPMod(p.rankZone,oppOf(who),val,1);if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+([p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).length);G._amalg8BankMorale=G._amalg8BankMorale||{};G._amalg8BankMorale[who]=true;logAs(who,`${card.name}: milled 2. Rank Zone +${val} NP until the end of {opp's} next turn; extra attacks equal Flanks. {You} {gain|gains} MP equal to {your} Bank size at the end of the turn.`,'heal');}
-        else if(key==='malevolent-8'){const milled=[];for(let i=0;i<2&&p.deck.length;i++){const c=p.deck.shift();ruDrop(p,c);milled.push(c);}const milledNumeral=milled.find(c=>c.type==='numeral')||elCard||{numeral:0,rank:0};const val=milledNumeral.numeral||0,rv=milledNumeral.rank!=null?milledNumeral.rank:0;if(opp.rankZone&&window.markNPMod)window.markNPMod(opp.rankZone,who,-val,1);if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+rv;G._amalg8MoraleDealt=G._amalg8MoraleDealt||{};G._amalg8MoraleDealt[who]=true;logAs(who,`${card.name}: {opp's} Rank Zone -${val} NP until the end of {opp's} next turn; {your} Rank Zone gets ${rv} additional attack(s). {You} {gain|gains} MP equal to Morale Damage dealt this turn, at the end of the turn.`,'dmg');}
-        else if(key==='benevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}for(let i=0;i<2&&p.deck.length;i++)ruDrop(p,p.deck.shift());card.currentNP+=p.bank.length;card._dropOppDeadAfterAttack=true;if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: +${p.bank.length} NP. Opponent drops 1 Deadzone after each attack by this card; this card cannot attack for 2 turns after this.`, 'dmg');}
-        else if(key==='malevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}for(let i=0;i<2&&p.deck.length;i++)ruDrop(p,p.deck.shift());ruLoseMP(opp,9,'numeral');if(opp.deck.length>=9)mill(oppOf(who),9);else for(let i=0;i<4;i++)casDraw(oppOf(who));if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: opponent loses 9 MP and must drop 9 cards or take 4 Dead Draws.`, 'dmg');}
+        else if(key==='benevolent-8'){const milled=[];ruTakeDeckCards(p,2,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);milled.push(c);});const val=(milled.find(c=>c.type==='numeral')||elCard||{numeral:0}).numeral||0;if(p.rankZone&&window.markNPMod)window.markNPMod(p.rankZone,oppOf(who),val,1);if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+([p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).length);G._amalg8BankMorale=G._amalg8BankMorale||{};G._amalg8BankMorale[who]=true;logAs(who,`${card.name}: milled 2. Rank Zone +${val} NP until the end of {opp's} next turn; extra attacks equal Flanks. {You} {gain|gains} MP equal to {your} Bank size at the end of the turn.`,'heal');}
+        else if(key==='malevolent-8'){const milled=[];ruTakeDeckCards(p,2,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);milled.push(c);});const milledNumeral=milled.find(c=>c.type==='numeral')||elCard||{numeral:0,rank:0};const val=milledNumeral.numeral||0,rv=milledNumeral.rank!=null?milledNumeral.rank:0;if(opp.rankZone&&window.markNPMod)window.markNPMod(opp.rankZone,who,-val,1);if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+rv;G._amalg8MoraleDealt=G._amalg8MoraleDealt||{};G._amalg8MoraleDealt[who]=true;logAs(who,`${card.name}: {opp's} Rank Zone -${val} NP until the end of {opp's} next turn; {your} Rank Zone gets ${rv} additional attack(s). {You} {gain|gains} MP equal to Morale Damage dealt this turn, at the end of the turn.`,'dmg');}
+        else if(key==='benevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}ruTakeDeckCards(p,2,false,(deckCard,i)=>{ruDrop(p,deckCard);});card.currentNP+=p.bank.length;card._dropOppDeadAfterAttack=true;if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: +${p.bank.length} NP. Opponent drops 1 Deadzone after each attack by this card; this card cannot attack for 2 turns after this.`, 'dmg');}
+        else if(key==='malevolent-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}ruTakeDeckCards(p,2,false,(deckCard,i)=>{ruDrop(p,deckCard);});ruLoseMP(opp,9,'numeral');if(opp.deck.length>=9)mill(oppOf(who),9);else for(let i=0;i<4;i++)casDraw(oppOf(who));if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: opponent loses 9 MP and must drop 9 cards or take 4 Dead Draws.`, 'dmg');}
         else if(key==='unknown-1'){draw(who,1);log(`${card.name}: draw 1.`, 'info');}
         else if(key==='unknown-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;log(`${card.name}: Rank Zone gets another attack.`, 'info');}
         // unknown-3 (Amalgamation 3) handled entirely by the later, unconditional
@@ -10703,10 +10718,10 @@ ADEFS['Seven Heaven']={
           if(uDeadPool.length){window.cChoose(who,uDeadPool,1,card.name+' — choose a card from Deadzone to add to hand.',function(pk){var c=pk[0];if(c){var i=p.deadzone.indexOf(c);if(i>=0){p.deadzone.splice(i,1);p.cas=Math.max(-7,(p.cas||0)-1);p.hand.push(c);log(card.name+': '+c.name+' added to hand from Deadzone.','heal');}}});}
           else log(`${card.name}: Deadzone is empty.`, 'info');
         }
-        else if(key==='unknown-8'){const top=p.deck.shift();if(top)ruDrop(p,top);const rv=top?(top.rank||0):0;[p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(f=>{if(window.markNPMod)window.markNPMod(f,who,8,1);else f.currentNP+=8;});if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+rv;p.mp+=(top?nVal(top):0);logAs(who,`${card.name}: Flanks +8 NP until end of turn; Rank Zone gets ${rv} extra attack(s). {You} {gain|gains} ${top?nVal(top):0} MP.`,'heal');}
-        else if(key==='unknown-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}if(p.deck.length)ruDrop(p,p.deck.shift());if(opp.deck.length>=9)mill(oppOf(who),9);else for(let i=0;i<3;i++)casDraw(oppOf(who));if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: opponent drops 9 or takes 3 Dead Draws.`, 'dmg');}
+        else if(key==='unknown-8'){const top=ruTakeDeckCards(p,1,false,c=>ruDrop(p,c))[0];if(G.gameOver)return;const rv=top?(top.rank||0):0;[p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(f=>{if(window.markNPMod)window.markNPMod(f,who,8,1);else f.currentNP+=8;});if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+rv;p.mp+=(top?nVal(top):0);logAs(who,`${card.name}: Flanks +8 NP until end of turn; Rank Zone gets ${rv} extra attack(s). {You} {gain|gains} ${top?nVal(top):0} MP.`,'heal');}
+        else if(key==='unknown-9'){if(p.hand.length){window.cChoose(who,p.hand,1,card.name+' — choose a card from hand to Drop.',function(pk){var h=pk[0];if(h){var i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}});}ruTakeDeckCards(p,1,false,c=>ruDrop(p,c));if(opp.deck.length>=9)mill(oppOf(who),9);else for(let i=0;i<3;i++)casDraw(oppOf(who));if(window.markFrozen)window.markFrozen(card,who,2);log(`${card.name}: opponent drops 9 or takes 3 Dead Draws.`, 'dmg');}
         else if(key==='benevolent-10'){
-          for(let i=0;i<10&&p.deck.length;i++)ruDrop(p,p.deck.shift());
+          ruTakeDeckCards(p,10,false,(deckCard,i)=>{ruDrop(p,deckCard);});
           const discardN=Math.min(5,p.hand.length);
           const finishB10=()=>{
             p.mp+=10;opp.mp+=10;
@@ -10836,7 +10851,7 @@ ADEFS['Seven Heaven']={
   function cardRank(c){return c?(c.currentRP??c.rank??0):0;}
   function sendHandToDeadzone(w,min){const p=G[w];if(p.hand.length<(min||0))return false;const n=p.hand.length;p.hand.splice(0).forEach(c=>{window.dzAdd(p,c);});return n;}
   function dropHand(w,min){const p=G[w];if(p.hand.length<(min||0))return false;const n=p.hand.length;ruDrop(p,...p.hand.splice(0));return n;}
-  function millTop(w,n){let k=0;for(let i=0;i<n;i++){if(!G[w].deck.length)break;ruDrop(G[w],G[w].deck.shift());k++;}if(k)log(`${sideVerbLabel(w,'drop')} ${k} card(s) from the top of ${ownerLabel(w)} Deck.`,'dmg');return k;}
+  function millTop(w,n){let k=0;ruTakeDeckCards(G[w],n,false,(deckCard,i)=>{ruDrop(G[w],deckCard);k++;});if(k)log(`${sideVerbLabel(w,'drop')} ${k} card(s) from the top of ${ownerLabel(w)} Deck.`,'dmg');return k;}
   function cedeCardToDead(w,card){const p=G[w];if(!card)return false;['hand','bank','discard','deck'].forEach(z=>{const a=p[z];if(Array.isArray(a)){const i=a.indexOf(card);if(i!==-1)a.splice(i,1);}});zoneList().forEach(z=>{if(p[z]===card)p[z]=null;});if(p.delta&&p.delta[0]===card)p.delta=[];window.dzAdd(p,card);return true;}
   function moveZoneToDead(w,z){const p=G[w];let card=null;if(z==='rank')card=p.rankZone;else if(z==='left')card=p.leftFlank;else if(z==='right')card=p.rightFlank;else if(z==='rear')card=p.rearFlank;else if(z==='delta')card=p.delta&&p.delta[0];if(!card)return;
     // Fission 0's Rank-Zone removal immunity would block the p.rankZone= reassignment below, but
@@ -11073,7 +11088,7 @@ ADEFS['Seven Heaven']={
       {type:'effect',fn(who,p,opp,fieldZone,card){
         const source=card._fissionSourceNP||1;
         moveCard(p,card,'bank');
-        if(p.rankZone){p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+source;p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}
+        if(p.rankZone){p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+source;p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}
         log(`Fission 2: invested; Rank Zone +${source} NP and another attack.`,'heal');
       }}
     ]},
@@ -11081,7 +11096,7 @@ ADEFS['Seven Heaven']={
       {type:'effect',fn(who,p,opp,fieldZone,card){
         mill(who,1);moveCard(p,card,'discard');
         const target=opp.rankZone||p.rankZone;if(!target)return;
-        const controller=(target===opp.rankZone)?opp:p;const oldNP=target.currentNP||target.numeral||0;
+        const controller=(target===opp.rankZone)?opp:p;const oldNP=(target.currentNP ?? target.numeral)||0;
         if(target===opp.rankZone)ruDrop(opp,target),opp.rankZone=ruEmptyRank('fission3-'+uid());else ruDrop(p,target),p.rankZone=ruEmptyRank('fission3-'+uid());
         const placed=fissionSplitToFlanks(controller,oldNP,'Fission 3');
         if(placed.length===2){const diff=Math.abs((placed[0].numeral||0)-(placed[1].numeral||0));p.mp+=diff;opp.mp+=diff;log(`Fission 3: both players gain ${diff} MP.`,'heal');}
@@ -11092,7 +11107,7 @@ ADEFS['Seven Heaven']={
       {type:'pick_hand',count:1,min:1,to:'discard',filter:(c)=>c&&c.type==='numeral',label:'Discard a Numeral. Best result if its NP equals opponent hand size.'},
       {type:'effect',fn(who,p,opp,fieldZone,card,ctx){
         const picked=ctx.handPicks[0];if(!picked)return;const target=opp.rankZone;if(!target)return;
-        const oldNP=target.currentNP||target.numeral||0;ruDrop(opp,target);opp.rankZone=ruEmptyRank('fission4-'+uid());
+        const oldNP=(target.currentNP ?? target.numeral)||0;ruDrop(opp,target);opp.rankZone=ruEmptyRank('fission4-'+uid());
         const total=Math.max(1,oldNP-(picked.numeral||0));fissionSplitToFlanks(opp,total,'Fission 4');
         const diff=G[oppOf(who)].hand.length;p.mp+=diff;G._noAttack=G._noAttack||{};G._noAttack[who]=true;logAs(who,`Fission 4: {you} {gain|gains} ${diff} MP and cannot attack this turn.`,'heal');
       }}
@@ -11438,13 +11453,13 @@ function acField(p){return [p.rankZone,p.leftFlank,p.rightFlank,p.rearFlank,(p.d
 function acNumerals(p){return acField(p).filter(c=>c.type==='numeral'||c.type==='evolution');}
 function acDropTop(w,n,dest='discard'){
   const p=G[w], out=[];
-  for(let i=0;i<n;i++){if(!p.deck.length)break;const c=p.deck.shift();out.push(c);if(dest==='deadzone'){dzAdd(p,c);}else ruDrop(p,c);}
+  ruTakeDeckCards(p,n,false,(deckCard,i)=>{const c=deckCard;out.push(c);if(dest==='deadzone'){dzAdd(p,c);}else ruDrop(p,c);});
   if(out.length)log(`${sideVerbLabel(w,dest==='deadzone'?'cede':'mill')} ${out.length}: ${out.map(c=>c.name).join(', ')}.`,dest==='deadzone'?'dmg':'info');
   return out;
 }
 function acDropBottom(w,n,dest='discard'){
   const p=G[w], out=[];
-  for(let i=0;i<n;i++){if(!p.deck.length)break;const c=p.deck.pop();out.push(c);if(dest==='deadzone'){dzAdd(p,c);}else ruDrop(p,c);}
+  ruTakeDeckCards(p,n,true,(deckCard,i)=>{const c=deckCard;out.push(c);if(dest==='deadzone'){dzAdd(p,c);}else ruDrop(p,c);});
   if(out.length)log(`${sideVerbLabel(w,'drop')} bottom ${out.length}: ${out.map(c=>c.name).join(', ')}.`, 'info');
   return out;
 }
@@ -11524,11 +11539,11 @@ function useRetL2(idx,card){
   else if(nm==='Betray'){if(!commit('deadzone'))return;G._defState=G._defState||{};G._defState.protectCas=99;const hi=acHighestNumeral(acNumerals(ai)),lo=acLowestNumeral(acNumerals(ai));if(hi&&lo&&hi!==lo){const d=Math.max(0,acNP(hi)-acNP(lo));ruLoseMP(ai,d);log(`Betray: Casualty Damage negated; opponent's ${hi.name} turns on ${lo.name}, causing ${d} MP loss.`, 'dmg');}else log('Betray: Casualty Damage negated.','heal');}
   else if(nm==='Subtract'){
     // Same self-selection gap as Assassinate/Protect Star/Divide Star above.
-    acSpendHand(me,1,'Subtract — drop 1 card from hand.',(picks)=>{if(!picks)return;const i=p.hand.indexOf(card);if(i<0)return;if(!commit())return;acDropTop(me,1,'discard');const dmg=ruLastMoraleTo(me);p.mp+=dmg;if(ai.rankZone)ai.rankZone.currentNP=Math.max(0,acNP(ai.rankZone)-dmg);log(`Subtract: refunded ${dmg} Morale Damage and reduced opponent Rank Zone by ${dmg} NP.`, 'heal');checkWin();renderAll();},c=>c!==card);return;
+    acSpendHand(me,1,'Subtract — drop 1 card from hand.',(picks)=>{if(!picks)return;const i=p.hand.indexOf(card);if(i<0)return;if(!commit())return;acDropTop(me,1,'discard');const dmg=ruLastMoraleTo(me);p.mp+=dmg;if(ai.rankZone)ai.rankZone.currentNP=(acNP(ai.rankZone)-dmg);log(`Subtract: refunded ${dmg} Morale Damage and reduced opponent Rank Zone by ${dmg} NP.`, 'heal');checkWin();renderAll();},c=>c!==card);return;
   }
   else if(nm==='Haunting Star'){
     if(!commit())return;
-    if(p.rankZone){p.rankZone.currentRP=(p.rankZone.currentRP||p.rankZone.rank||0)+2;}
+    if(p.rankZone){p.rankZone.currentRP=((p.rankZone.currentRP ?? p.rankZone.rank)||0)+2;}
     log('Haunting Star: Rank Zone +2 RP, then makes an immediate direct avenging attack.','imp');
     // This is used reactively (Retaliatory, via offerRetaliation) during the OPPONENT's turn --
     // the old flag-only approach (_directThisTurn + attacksLeft, expecting a later "Direct Attack"
@@ -11567,7 +11582,7 @@ function useRetL2(idx,card){
   window.moveToRAE4=moveTo;
   function drawN(w,n){for(let i=0;i<n;i++)draw(w,1);}
   window.drawNRAE4=drawN;
-  function millN(w,n,dest='discard'){const p=G[w],out=[];for(let i=0;i<n&&p.deck.length;i++){const c=p.deck.shift();out.push(c);if(dest==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);}return out;}
+  function millN(w,n,dest='discard'){const p=G[w],out=[];ruTakeDeckCards(p,n,false,(deckCard,i)=>{const c=deckCard;out.push(c);if(dest==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);});return out;}
   window.millN=millN;
   function shuffleDropToDeck(w,n){const p=G[w];let k=0;while(k<n&&p.discard.length){p.deck.push(p.discard.pop());k++;}if(k)shuffle(p.deck);return k;}
   function moveFromDead(w,n,dest='discard',filter){const p=G[w];let k=0;for(const c of [...p.deadzone]){if(k>=n)break;if(c.name==='The Lowlands')continue;if(filter&&!filter(c))continue;rem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);if(dest==='hand')p.hand.push(c);else if(dest==='deck')p.deck.push(c);else if(dest==='discard'&&c&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}else ruDrop(p,c);k++;}if(!filter&&k<n){p.cas=Math.max(-7,(p.cas||0)-(n-k));}return k;}
@@ -12290,9 +12305,9 @@ function useRetL2(idx,card){
       // knows it'd lose and never follows up on" waste. Doesn't apply to Bank/hand-sourced
       // skills (no specific field card is receiving the bonus attack to evaluate).
       if(entry.where==='field'){
-        const myNP=c.currentNP||c.numeral||0;
+        const myNP=(c.currentNP ?? c.numeral)||0;
         const oppZones=[opp&&opp.rankZone,opp&&opp.leftFlank,opp&&opp.rightFlank].filter(Boolean);
-        const canWin=oppZones.some(z=>myNP>(z.currentNP||z.numeral||0));
+        const canWin=oppZones.some(z=>myNP>((z.currentNP ?? z.numeral)||0));
         if(!canWin)s-=22;
       }
     }
@@ -12415,10 +12430,10 @@ function useRetL2(idx,card){
           picks.forEach(c=>{moveKnown(p,c,step.to||'hand');ctx.deckPicks.push(c);});
         }
         else if(step.type==='mill'){
-          for(let i=0;i<(step.count||1);i++){if(!p.deck.length)break;const c=p.deck.shift();ruDrop(p,c);ctx.milledCards.push(c);}
+          ruTakeDeckCards(p,step.count||1,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);ctx.milledCards.push(c);});
         }
         else if(step.type==='deck_bottom'){
-          for(let i=0;i<(step.count||1);i++){if(!p.deck.length)break;const c=p.deck.pop();if((step.to||'discard')==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);ctx.milledCards.push(c);}
+          ruTakeDeckCards(p,step.count||1,true,(deckCard,i)=>{const c=deckCard;if((step.to||'discard')==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);ctx.milledCards.push(c);});
         }
         else if(step.type==='auto_random_bank'){
           const rb=p.bank.filter(c=>!c.noRemove);if(!rb.length)throw new Error('no bank card');
@@ -12625,10 +12640,10 @@ function useRetL2(idx,card){
           picks.forEach(c=>{moveKnown(p,c,step.to||'hand');ctx.deckPicks.push(c);});
         }
         else if(step.type==='mill'){
-          for(let i=0;i<(step.count||1);i++){if(!p.deck.length)break;const c=p.deck.shift();ruDrop(p,c);ctx.milledCards.push(c);}
+          ruTakeDeckCards(p,step.count||1,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);ctx.milledCards.push(c);});
         }
         else if(step.type==='deck_bottom'){
-          for(let i=0;i<(step.count||1);i++){if(!p.deck.length)break;const c=p.deck.pop();if((step.to||'discard')==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);ctx.milledCards.push(c);}
+          ruTakeDeckCards(p,step.count||1,true,(deckCard,i)=>{const c=deckCard;if((step.to||'discard')==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);ctx.milledCards.push(c);});
         }
         else if(step.type==='auto_random_bank'){
           const rb=p.bank.filter(c=>!c.noRemove);if(!rb.length)throw new Error('no bank card');
@@ -12790,7 +12805,7 @@ function useRetL2(idx,card){
     else if(to==='deadzone'){window.dzAdd(p,card);}
     else ruDrop(p,card);
   }
-  function dropTop(who,n,to){const p=pside(who);for(let i=0;p&&i<(n||1);i++){if(!p.deck.length)break;const c=p.deck.shift();if(to==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);}}
+  function dropTop(who,n,to){const p=pside(who);ruTakeDeckCards(p,n||1,false,(deckCard,i)=>{const c=deckCard;if(to==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);});}
 
   function waitClear(cb){
     if(ruIsOnline()&&window.ruWhenSettled){window.ruWhenSettled(window.ruTableClear,cb);return;}   // same point on every screen
@@ -12915,7 +12930,7 @@ function useRetL2(idx,card){
     else if(to==='deck_bottom'||to==='deck')p.deck.push(card);
     else ruDrop(p,card);
   }
-  function ruDropTop(who,n,to){const p=ruP(who),arr=[];for(let i=0;i<n;i++){if(!p.deck.length)break;const c=p.deck.shift();arr.push(c);if(to==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);}return arr;}
+  function ruDropTop(who,n,to){const p=ruP(who),arr=[];ruTakeDeckCards(p,n,false,(deckCard,i)=>{const c=deckCard;arr.push(c);if(to==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);});return arr;}
   function ruDropOppHand(who,count,filter){const o=ruP(ruOther(who));const pool=o.hand.filter(filter||(()=>true));const picks=pool.slice(0,count);picks.forEach(c=>{const i=o.hand.indexOf(c);if(i!==-1){o.hand.splice(i,1);ruDrop(o,c);}});return picks;}
   function ruMDisp(card){
     if(!card)return '+0';
@@ -12985,7 +13000,7 @@ function useRetL2(idx,card){
       if(p.deadzone.length){const d=p.deadzone.pop();p.cas=Math.max(-7,(p.cas||0)-1);if(d&&d.type==='numeral'&&(d.rank||0)>=3){window.RUr3DeadToDiscard(p,d);}else{ruDrop(p,d);}log(`Ascendant copied Purify: dropped ${d.name} from Deadzone.`,'info');}
       ruNoAttack(w,'Ascendant copied Purify: cannot attack this turn.');
     }else if(tag==='Surge'){
-      ruField(p).forEach(c=>c.currentNP=(c.currentNP||c.numeral||0)+7);logAs(w,'Ascendant copied Surge: all {your} Battlefield Numerals gain +7 NP until end of turn.','heal');
+      ruField(p).forEach(c=>c.currentNP=((c.currentNP ?? c.numeral)||0)+7);logAs(w,'Ascendant copied Surge: all {your} Battlefield Numerals gain +7 NP until end of turn.','heal');
     }else if(tag==='Expose'){
       const picks=ruDropOppHand(w,99,c=>c.type==='numeral'&&(c.numeral||0)>=7);p.mp+=picks.length;log(`Ascendant copied Expose: dropped ${picks.length} opponent Numeral(s) 7+; +${picks.length} MP.`,'dmg');
     }else if(tag==='Heaven'){
@@ -13121,15 +13136,15 @@ function useRetL2(idx,card){
       ]},
       'Halcyon Star':{steps:[
         {type:'move_self',to:'discard'},
-        {type:'effect',fn(w,p,o){let n=0;for(const c of [...p.deadzone]){if(n>=3)break;if(c.class==='restorative'&&c.type==='numeral'){moveCard(p,c,'discard');n++;}}if(p.rankZone){const gain=Math.floor((p.mp||0)/2);p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+gain;}G._halcyonDraw=w;logAs(w,`Halcyon Star: dropped ${n} Restorative Numeral(s) from Deadzone; {your} Rank Zone gains half {your} Morale as NP. All players draw 1 at end of turn.`,'heal');}}
+        {type:'effect',fn(w,p,o){let n=0;for(const c of [...p.deadzone]){if(n>=3)break;if(c.class==='restorative'&&c.type==='numeral'){moveCard(p,c,'discard');n++;}}if(p.rankZone){const gain=Math.floor((p.mp||0)/2);p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+gain;}G._halcyonDraw=w;logAs(w,`Halcyon Star: dropped ${n} Restorative Numeral(s) from Deadzone; {your} Rank Zone gains half {your} Morale as NP. All players draw 1 at end of turn.`,'heal');}}
       ]},
       'Track Star':{steps:[
         {type:'move_self',to:'discard'},
-        {type:'effect',fn(w,p,o){const h=p.deadzone.find(c=>c.class==='haste'&&c.type==='numeral');if(h)moveCard(p,h,'discard');if(p.rankZone){p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+4;p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}log(`Track Star: ${h?`dropped ${h.name}`:'no Haste Numeral in Deadzone'}; Rank Zone +4 NP and an extra attack window is enabled if damage condition is met.`,'heal');}}
+        {type:'effect',fn(w,p,o){const h=p.deadzone.find(c=>c.class==='haste'&&c.type==='numeral');if(h)moveCard(p,h,'discard');if(p.rankZone){p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+4;p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}log(`Track Star: ${h?`dropped ${h.name}`:'no Haste Numeral in Deadzone'}; Rank Zone +4 NP and an extra attack window is enabled if damage condition is met.`,'heal');}}
       ]},
       'Seventh Star':{steps:[
         {type:'move_self',to:'discard'},
-        {type:'effect',fn(w,p){const has7=[...p.hand,...fieldNumerals(p)].some(c=>c.type==='numeral'&&c.numeral===7);if(has7){fieldNumerals(p).forEach(c=>{c._rankBeforeSeventh=c.currentRP||c.rank||0;c.currentRP=7;});logAs(w,'Seventh Star: all {your} Battlefield Numerals are treated as Rank 7 until end of turn.','heal');}else log('Seventh Star: no Numeral 7 in hand or Battlefield; no Rank change.','info');}}
+        {type:'effect',fn(w,p){const has7=[...p.hand,...fieldNumerals(p)].some(c=>c.type==='numeral'&&c.numeral===7);if(has7){fieldNumerals(p).forEach(c=>{c._rankBeforeSeventh=(c.currentRP ?? c.rank)||0;c.currentRP=7;});logAs(w,'Seventh Star: all {your} Battlefield Numerals are treated as Rank 7 until end of turn.','heal');}else log('Seventh Star: no Numeral 7 in hand or Battlefield; no Rank change.','info');}}
       ]}
     });
   }
@@ -13498,9 +13513,9 @@ function useRetL2(idx,card){
           const need=st.min||st.count||1;if(pool.length<need){if(st.optional)continue;throw new Error('search target');}
           const picks=chooseHighest(pool,st.max||st.count||need);picks.forEach(x=>{moveTo(p,x,st.to||'hand');ctx.deckPicks.push(x);});
         }else if(st.type==='mill'){
-          for(let i=0;i<(st.count||1);i++){if(!p.deck.length)break;const x=p.deck.shift();ruDrop(p,x);ctx.milledCards.push(x);}
+          ruTakeDeckCards(p,st.count||1,false,(deckCard,i)=>{const x=deckCard;ruDrop(p,x);ctx.milledCards.push(x);});
         }else if(st.type==='deck_bottom'){
-          for(let i=0;i<(st.count||1);i++){if(!p.deck.length)break;const x=p.deck.pop();if((st.to||'discard')==='deadzone'){window.dzAdd(p,x);}else ruDrop(p,x);ctx.milledCards.push(x);}
+          ruTakeDeckCards(p,st.count||1,true,(deckCard,i)=>{const x=deckCard;if((st.to||'discard')==='deadzone'){window.dzAdd(p,x);}else ruDrop(p,x);ctx.milledCards.push(x);});
         }else if(st.type==='auto_random_bank'){
           const rb=p.bank.filter(c=>!c.noRemove);if(!rb.length)throw new Error('no bank');const x=chooseLowest(rb,1)[0];moveTo(p,x,st.to||'deadzone');ctx.randomBankCard=x;
         }else if(st.type==='pick_opp_zone'){
@@ -13544,6 +13559,7 @@ function useRetL2(idx,card){
   function withSimulatedState(fn){
     const clone=cloneG();
     if(!clone)return fn();
+    clone._simulating=true;
     const realG=G;
     const realRenderAll=window.renderAll, realCheckWin=window.checkWin, realLog=window.log;
     window.renderAll=function(){}; window.checkWin=function(){}; window.log=function(){};
@@ -13707,7 +13723,7 @@ function useRetL2(idx,card){
   function tryV12Promotion(){
     if(!G||G.gameOver||G.turn!=='ai'||G.phase!=='promotion')return false;
     const ai=P('ai');if(!ai||!ai.rankZone)return false;
-    const cNP=(ai.rankZone.numeral!=null?ai.rankZone.numeral:ai.rankZone.currentNP),cRP=(ai.rankZone.rank!=null?ai.rankZone.rank:(ai.rankZone.currentRP||0));
+    const cNP=(ai.rankZone.numeral!=null?ai.rankZone.numeral:ai.rankZone.currentNP),cRP=(ai.rankZone.rank!=null?ai.rankZone.rank:((ai.rankZone.currentRP ?? 0)));
     let cands=ai.hand.filter(c=>isNum(c)&&((c.numeral-cNP)>=1&&(c.numeral-cNP)<=3&&((c.rank||0)-cRP)>=0&&((c.rank||0)-cRP)<=1 || (c.numeral===cNP&&((c.rank||0)===cRP||(c.rank||0)-cRP===1))));
     if(!cands.length)return false;
     cands=cands.map(c=>({card:c,score:promotionScore(c,cNP,cRP)})).sort((a,b)=>b.score-a.score);
@@ -13782,8 +13798,8 @@ function useRetL2(idx,card){
     else if(to==='discard'&&_wd&&c.type==='numeral'&&(c.rank||0)>=3){window.RUr3DeadToDiscard(p,c);}
     else ruDrop(p,c);
   }
-  function dropTop(w,n){const p=P(w),out=[];if(!p)return out;for(let i=0;i<n&&p.deck.length;i++){const c=p.deck.shift();ruDrop(p,c);out.push(c);}return out;}
-  function dropBottom(w,n){const p=P(w),out=[];if(!p)return out;for(let i=0;i<n&&p.deck.length;i++){const c=p.deck.pop();ruDrop(p,c);out.push(c);}return out;}
+  function dropTop(w,n){const p=P(w),out=[];if(!p)return out;ruTakeDeckCards(p,n,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);out.push(c);});return out;}
+  function dropBottom(w,n){const p=P(w),out=[];if(!p)return out;ruTakeDeckCards(p,n,true,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);out.push(c);});return out;}
   function noAttack(w,msg){G._noAttack=G._noAttack||{};G._noAttack[w]=true;if(msg)log(ruPOV(w,msg),'info');}
   function chooseNP(pool,min){
     const arr=pool.slice();
@@ -14023,7 +14039,7 @@ function useRetL2(idx,card){
   window.drawNRBP13=drawN;
   function dropTop(w,n,to){
     const p=pside(w),out=[];if(!p)return out;
-    for(let i=0;i<n&&p.deck.length;i++){const c=p.deck.shift();out.push(c);if(to==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);}
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{const c=deckCard;out.push(c);if(to==='deadzone'){window.dzAdd(p,c);}else ruDrop(p,c);});
     return out;
   }
   window.dropTopRBP13=dropTop;
@@ -14084,7 +14100,7 @@ function useRetL2(idx,card){
       {type:'pick_deadzone',count:3,min:3,to:'discard',filter:c=>c.class==='restorative'&&c.type==='numeral',label:'Drop 3 Restorative Numerals from Deadzone.'},
       {type:'effect',fn(w,p){
         const gain=Math.floor(Math.max(0,p.mp||0)/2);
-        if(p.rankZone)p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+gain;
+        if(p.rankZone)p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+gain;
         G._halcyonStarDrawQueue=(G._halcyonStarDrawQueue||0)+1;
         logSafe('Halcyon Star: Rank Zone +'+gain+' NP. All players draw 1 at the End Phase.','heal');
       }}
@@ -14093,7 +14109,7 @@ function useRetL2(idx,card){
       {type:'move_self',to:'discard'},
       {type:'pick_deadzone',count:1,min:1,to:'discard',filter:c=>c.class==='haste'&&c.type==='numeral',label:'Drop 1 Haste Numeral from Deadzone.'},
       {type:'effect',fn(w,p){
-        if(p.rankZone)p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+4;
+        if(p.rankZone)p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+4;
         p._trackStarReady=true;
         logSafe('Track Star: Rank Zone +4 NP. If the opponent loses 6+ MP this turn, Rank Zone gets another attack.','heal');
       }}
@@ -14117,7 +14133,7 @@ function useRetL2(idx,card){
     ADEFS['Fast Track']={passive:'During your opponent turn, your Haste Numerals gain 1 NP.',effects:[
       {label:'Negate Safeguard activation',cost:'Send 1 card from hand and top Deck to Drop. Once per turn.',check(w){const p=pside(w);return p&&p.hand.length>0&&p.deck.length>0&&canUseTurn(w,'Fast Track Safe',1);},fn(w,p){dropHandCost(w,'Fast Track - Drop 1 card from hand.',1,()=>{dropTop(w,1,'discard');markTurn(w,'Fast Track Safe');G._fastTrackNoSafeguard=other(w);G._haste8NoSafeguards=other(w);logSafe('Fast Track: the opponent cannot activate Safeguards this turn.','info');renderSafe();});}},
       {label:'Rank Up burst',cost:'Pay 8 MP after Ranking Up to Haste.',check(w){const p=pside(w);return p&&p.mp>=8&&p._rankedToHasteThisTurn&&!p._fastTrackRankUpUsed&&p.rankZone&&p.rankZone.class==='haste';},fn(w,p){p.mp-=8;p._fastTrackRankUpUsed=true;p.rankZone.attacksLeft=Math.max(p.rankZone.attacksLeft||1,3);logSafe('Fast Track: Haste Rank Zone can attack up to 3 times this turn.','imp');renderSafe();}},
-      {label:'Opponent-turn follow-up',cost:'Once per exchange after a successful attack on opponent turn.',check(w){const p=pside(w);return p&&p._attackedOnOpponentTurn&&canUseExchange(w,'Fast Track Follow',1);},fn(w,p){markExchange(w,'Fast Track Follow');if(p.rankZone){p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+2;p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}p._attackedOnOpponentTurn=false;logSafe('Fast Track: Rank Zone +2 NP and can attack again.','heal');renderSafe();}}
+      {label:'Opponent-turn follow-up',cost:'Once per exchange after a successful attack on opponent turn.',check(w){const p=pside(w);return p&&p._attackedOnOpponentTurn&&canUseExchange(w,'Fast Track Follow',1);},fn(w,p){markExchange(w,'Fast Track Follow');if(p.rankZone){p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+2;p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}p._attackedOnOpponentTurn=false;logSafe('Fast Track: Rank Zone +2 NP and can attack again.','heal');renderSafe();}}
     ]};
     ADEFS['Seven Heaven']={passive:'While in Deadzone, Numeral 7s do not need to Relieve a Rank 2 Numeral 4+ to be used as Flanks.',effects:[
       {label:'Gain 2 MP per Numeral 7',cost:'Once per turn.',check(w){return canUseTurn(w,'Seven Heaven Choice',1);},fn(w,p){markTurn(w,'Seven Heaven Choice');const g=allSevens()*2;p.mp+=g;logSafe('Seven Heaven: gain '+g+' MP from Numeral 7s on all Battlefields.','heal');renderSafe();}},
@@ -14192,7 +14208,7 @@ function useRetL2(idx,card){
       if(!p||p.hand.length<1){failCost(nm);return true;}
       addM(w,card);
       dropHandCost(w,'Counterattack E2 - choose 1 card from hand to drop as cost.',1,function(){
-        if(p.rankZone){p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}logSafe('Counterattack (E2): Rank Zone can attack this turn.','heal');if(p.rankZone)window.offerCounterAttackRA(w,p.rankZone);renderSafe();
+        if(p.rankZone&&G.turn===w){p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}logSafe('Counterattack (E2): Rank Zone can attack this turn.','heal');if(p.rankZone)window.offerCounterAttackRA(w,p.rankZone);renderSafe();
       });
       return true;
     }
@@ -14815,8 +14831,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     safeLog('Haste opponent-turn attack: '+c.name+' attacks '+tgt.card.name+'.','imp');
     const before={mp:dp.mp,cas:dp.cas,dead:dp.deadzone.length};
     ruDeclareAttack(rw,attEntry.zone,targetSide,tgt.zone,0,function(){
-      const live=zcard(rw,attEntry.zone)||c;
-      if(live){if(window.ruOppTurnAtkLeft(live)>0)live._oppTurnAtk-=1;live.attacksLeft=Math.max(0,atkLeft135(live)-1);if(live.attacksLeft<=0)G[rw].attacksUsed[live.id]=true;}
+      const occupant=zcard(rw,attEntry.zone),live=occupant&&occupant.id===c.id?occupant:c;
+      if(live&&window.ruOppTurnAtkLeft(live)>0)live._oppTurnAtk-=1;
       if(c._sendToDZAfterAttack){moveCard(G[rw],c,'deadzone');safeLog(c.name+' goes to Deadzone after its Haste attack.','dmg');}
       const success=dp.mp<before.mp||dp.cas>before.cas||dp.deadzone.length>before.dead;
       if(success)G[rw]._attackedOnOpponentTurn=true;
@@ -16102,9 +16118,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function grantAttack(w,target,label){
     var p=side(w), c=typeof target==='string'?zoneCard(p,target):target;
     if(!p||!c)return;
-    c.attacksLeft=Math.max(1,Number(c.attacksLeft||0)+1);
-    if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];
-    if(c.canAttack===false)c.canAttack=true;
+    if(G.turn===w){
+      c.attacksLeft=Math.max(0,Number(c.attacksLeft)||0)+1;
+      if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];
+      c.canAttack=true;
+    }
     safeLog((label||c.name)+': '+c.name+' is uncommitted and can use its granted attack.','heal');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,c);
   }
@@ -16144,8 +16162,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     while(q.length){
       job=q.shift(); who=job.who; p=G[who];
       if(!p||(G.eliminated&&G.eliminated[who])||G.turn===who){ job=null; continue; }
-      atk=p.rankZone; var left=atk?(atk.attacksLeft==null?1:atk.attacksLeft):0;
-      if(!atk||atk.canAttack===false||left<=0||(p.attacksUsed&&p.attacksUsed[atk.id])){ job=null; continue; }
+      atk=p.rankZone;
+      if(!atk||atk.id!==job.id||atk.frozen){ job=null; continue; }
       break;
     }
     if(!job) return;
@@ -16166,9 +16184,6 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       if(!t){ if(q.length) resumeCounterAtkRA(); return; }
       var pp=G[who], a=pp&&pp.rankZone; if(!a){ if(q.length) resumeCounterAtkRA(); return; }
       var live=G[t.side]&&zoneCard(G[t.side],t.zone); if(!live){ if(q.length) resumeCounterAtkRA(); return; } // target left the board
-      var leftNow=(a.attacksLeft==null?1:a.attacksLeft);
-      a.attacksLeft=Math.max(0,leftNow-1);
-      if(a.attacksLeft<=0){ pp.attacksUsed=pp.attacksUsed||{}; pp.attacksUsed[a.id]=true; }
       try{ logAs(who,'{You} {counter-attack|counter-attacks} with '+a.name+' during '+sidePossLower(G.turn)+' turn!','imp'); }catch(e){}
       // The same declared-attack pipeline as every other attack: a human defender answers Safeguard, reactive and
       // Retaliatory windows in their own prompts; a bot defender reacts for itself.
@@ -16361,7 +16376,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         chooseOne(w,'Haste 8 Skill 2 - choose Bank card to send to Deadzone.',p.bank,false,function(c){
           if(!c)return;
           moveKnown(p,c,'deadzone');
-          if(c.type==='action')p.mp+=4;else if(c.type==='area')draw(w,2);else if(isNum(c)){if(p.rankZone)p.rankZone.currentNP=(p.rankZone.currentNP||p.rankZone.numeral||0)+(c.numeral||0);}
+          if(c.type==='action')p.mp+=4;else if(c.type==='area')draw(w,2);else if(isNum(c)){if(p.rankZone)p.rankZone.currentNP=((p.rankZone.currentNP ?? p.rankZone.numeral)||0)+(c.numeral||0);}
           safeLog('Haste 8 Skill 2: chosen Bank card '+c.name+' resolved manually.','heal');
           renderSafe();checkSafe();
         });
@@ -16408,7 +16423,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     window.e2AddMRAE11=e2AddM;
     function settleE2Self(w,card){var p=side(w);if(card){moveKnown(p,card,'discard');}}
     window.settleE2SelfRAE11=settleE2Self;
-    function dropTopTo(w,n,to){var p=side(w),out=[];for(var i=0;i<n;i++){if(!p.deck.length)break;var c=p.deck.shift();out.push(c);putCard(p,c,to);}if(out.length)safeLog((sideSubjectLabel(w))+' '+(to==='deadzone'?'flip':'drop')+' '+out.length+' from Deck: '+out.map(function(c){return c.name;}).join(', ')+'.',to==='deadzone'?'dmg':'info');return out;}
+    function dropTopTo(w,n,to){var p=side(w),out=[];ruTakeDeckCards(p,n,false,(deckCard,i)=>{var c=deckCard;out.push(c);putCard(p,c,to);});if(out.length)safeLog((sideSubjectLabel(w))+' '+(to==='deadzone'?'flip':'drop')+' '+out.length+' from Deck: '+out.map(function(c){return c.name;}).join(', ')+'.',to==='deadzone'?'dmg':'info');return out;}
     window.dropTopToRAE11=dropTopTo;
   }
 
@@ -17028,7 +17043,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function millTop(w,n){
     const p=side(w), moved=[];
-    for(let i=0;i<(n||1)&&p&&p.deck&&p.deck.length;i++){const c=p.deck.shift();ruDrop(p,c);moved.push(c);}
+    ruTakeDeckCards(p,n||1,false,(deckCard,i)=>{const c=deckCard;ruDrop(p,c);moved.push(c);});
     return moved;
   }
   function cedeHandToDeadzone(w,min){
@@ -17275,11 +17290,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function dropTop(w,n,dest){
     const p=side(w),out=[];
-    for(let i=0;i<n&&p&&p.deck.length;i++){
-      const c=p.deck.shift();out.push(c);
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      const c=deckCard;out.push(c);
       if(dest==='deadzone'){window.dzAdd(p,c);}
       else ruDrop(p,c);
-    }
+    });
     return out;
   }
   window.dropTopRAE13=dropTop;
@@ -17964,10 +17979,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function addM(w,card){const p=side(w),m=Number(card&&card.M||0);if(p&&m){p.mp+=m;safeLog(card.name+' (E2): '+sidePossessiveLabel(w)+' MP '+(m>0?'+':'')+m+'.',m>0?'heal':'dmg');}}
   window.addMRAE16=addM;
   function topDeck(w,n,dest){
-    const p=side(w),out=[];
-    for(let i=0;i<n&&p&&p.deck.length;i++){
-      const c=p.deck.shift();out.push(c);put(p,c,dest||'discard');
-    }
+    const p=side(w),out=ruTakeDeckCards(p,n,false,c=>put(p,c,dest||'discard'));
     if(out.length)safeLog((sideSubjectLabel(w))+' '+(dest==='deadzone'?'send to Deadzone':'drop')+' top '+out.length+' Deck card(s): '+out.map(function(c){return c.name;}).join(', ')+'.',dest==='deadzone'?'dmg':'info');
     return out;
   }
@@ -18227,8 +18239,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var card=(p.hand||[]).find(function(c){return c&&c.name==='Zero 4';});
     if(!card||!o.rankZone)return false;
     moveTo(p,card,'discard');
-    var milled=null;
-    if(p.deck&&p.deck.length){milled=p.deck.shift();ruDrop(p,milled);}
+    var milled=ruTakeDeckCards(p,1,false,c=>ruDrop(p,c))[0];
+    if(G.gameOver)return true;
     markA0(o.rankZone,'_ru152Zero4',other(w),'Zero 4');
     safeLog('Zero 4: discarded from hand during attack declaration'+(milled?' and milled '+milled.name:'')+'. Opponent Rank Zone stays A: 0 until the end of their next turn.','heal');
     renderSafe();checkSafe();
@@ -18836,23 +18848,23 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function deckDropTop(w,n,toDeadzone){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;
       out.push(c);
       if(toDeadzone){window.dzAdd(p,c);}
       else ruDrop(p,c);
-    }
+    });
     return out;
   }
   window.deckDropTopRAtk15=deckDropTop;
   function deckDropBottom(w,n){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.pop();
+    ruTakeDeckCards(p,n,true,(deckCard,i)=>{
+      var c=deckCard;
       out.push(c);
       ruDrop(p,c);
-    }
+    });
     return out;
   }
   window.deckDropBottomRA12=deckDropBottom;
@@ -18913,9 +18925,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function grantRankAttack(w,label){
     var p=side(w),rz=p&&p.rankZone;
     if(!rz)return;
-    rz.attacksLeft=Math.max(1,Number(rz.attacksLeft||0)+1);
-    if(p.attacksUsed&&rz.id)delete p.attacksUsed[rz.id];
-    rz.canAttack=true;
+    if(G.turn===w){rz.attacksLeft=Math.max(0,Number(rz.attacksLeft)||0)+1;if(p.attacksUsed&&rz.id)delete p.attacksUsed[rz.id];rz.canAttack=true;}
     safeLog(label||'Rank Zone gets another attack.','info');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,rz);
   }
@@ -19200,11 +19210,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function dropTop(w,n,dest){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;
       out.push(c);
       putTo(p,c,dest==='deadzone'?'deadzone':'discard');
-    }
+    });
     return out;
   }
   window.dropTopRAE19=dropTop;
@@ -19229,9 +19239,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function grantRankAttack(w,label){
     var p=side(w),rz=p&&p.rankZone;
     if(!rz)return;
-    rz.attacksLeft=Math.max(1,Number(rz.attacksLeft||0)+1);
-    if(p.attacksUsed&&rz.id)delete p.attacksUsed[rz.id];
-    rz.canAttack=true;
+    if(G.turn===w){rz.attacksLeft=Math.max(0,Number(rz.attacksLeft)||0)+1;if(p.attacksUsed&&rz.id)delete p.attacksUsed[rz.id];rz.canAttack=true;}
     safeLog(label||'Rank Zone gets another attack.','info');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,rz);
   }
@@ -19523,10 +19531,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function topDeck(w,n,dest){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();out.push(c);
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;out.push(c);
       putTo(p,c,dest==='deadzone'?'deadzone':'discard');
-    }
+    });
     return out;
   }
   window.topDeckRAE20=topDeck;
@@ -19538,10 +19546,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function grantRankAttack(w,label){
     var p=side(w),c=p&&p.rankZone;
     if(!c)return;
-    c.attacksLeft=Math.max(1,Number(c.attacksLeft||0)+1);
-    c.canAttack=true;
-    c.committed=false;
-    if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];
+    if(G.turn===w){c.attacksLeft=Math.max(0,Number(c.attacksLeft)||0)+1;c.canAttack=true;c.committed=false;if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];}
     safeLog(label||('Rank Zone gets another attack: '+c.name+' is uncommitted.'),'heal');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,c);
   }
@@ -19818,9 +19823,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function topDeck(w,n,dest){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();out.push(c);putTo(p,c,dest==='deadzone'?'deadzone':'discard');
-    }
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;out.push(c);putTo(p,c,dest==='deadzone'?'deadzone':'discard');
+    });
     return out;
   }
   window.topDeckRBP31=topDeck;
@@ -19858,9 +19863,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function grantRankAttack(w,label){
     var p=side(w),c=p&&p.rankZone;
     if(!c)return;
-    c.attacksLeft=Math.max(1,Number(c.attacksLeft||0)+1);
-    c.canAttack=true;c.committed=false;
-    if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];
+    if(G.turn===w){c.attacksLeft=Math.max(0,Number(c.attacksLeft)||0)+1;c.canAttack=true;c.committed=false;if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];}
     safeLog(label||'Rank Zone can attack this turn.','heal');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,c);
   }
@@ -20150,9 +20153,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function topDeck(w,n,dest){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();out.push(c);putTo(p,c,dest==='deadzone'?'deadzone':'discard');
-    }
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;out.push(c);putTo(p,c,dest==='deadzone'?'deadzone':'discard');
+    });
     return out;
   }
   window.topDeckRAE22=topDeck;
@@ -20204,9 +20207,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function grantRankAttack(w,label){
     var p=side(w),c=p&&p.rankZone;
     if(!c)return;
-    c.attacksLeft=Math.max(1,Number(c.attacksLeft||0)+1);
-    c.canAttack=true;c.committed=false;c.frozen=false;
-    if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];
+    c.frozen=false;
+    if(G.turn===w){c.attacksLeft=Math.max(0,Number(c.attacksLeft)||0)+1;c.canAttack=true;c.committed=false;if(p.attacksUsed&&c.id)delete p.attacksUsed[c.id];}
     safeLog(label||'Rank Zone gets another attack and is uncommitted.','heal');
     if(typeof window.offerCounterAttackRA==='function')window.offerCounterAttackRA(w,c);
   }
@@ -20425,15 +20427,15 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function topDeck(w,n,dest){
     var p=side(w),out=[];
     if(!p)return out;
-    for(var i=0;i<n&&p.deck&&p.deck.length;i++){
-      var c=p.deck.shift();out.push(c);putTo(p,c,dest==='deadzone'?'deadzone':'discard');
-    }
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c=deckCard;out.push(c);putTo(p,c,dest==='deadzone'?'deadzone':'discard');
+    });
     return out;
   }
   window.topDeckRD7=topDeck;
   function lastDeckToDeadzone(w){
-    var p=side(w);if(!p||!p.deck.length)return null;
-    var c=p.deck.pop();putTo(p,c,'deadzone');return c;
+    var p=side(w);
+    return ruTakeDeckCards(p,1,true,c=>putTo(p,c,'deadzone'))[0]||null;
   }
   function deadPool(w,exclude){
     var p=side(w);
@@ -20747,10 +20749,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     return p.deck.splice(0, Math.min(n, p.deck.length));
   }
   function bottomRemove(w,n){
-    var p = side(w), out = [];
-    if(!p) return out;
-    for(var i=0;i<n && p.deck.length;i++) out.push(p.deck.pop());
-    return out;
+    return ruTakeDeckCards(side(w),n,true);
   }
   window.bottomRemovePA9=bottomRemove;
   function putTop(w,cards){
@@ -21308,20 +21307,20 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function topDeckToDrop(p,count){
     var moved = [];
-    for(var i=0;i<count && p && p.deck.length;i++){
-      var c = p.deck.shift();
+    ruTakeDeckCards(p,count,false,(deckCard,i)=>{
+      var c = deckCard;
       ruDrop(p,c);
       moved.push(c);
-    }
+    });
     return moved;
   }
   function bottomDeckToDrop(p,count){
     var moved = [];
-    for(var i=0;i<count && p && p.deck.length;i++){
-      var c = p.deck.pop();
+    ruTakeDeckCards(p,count,true,(deckCard,i)=>{
+      var c = deckCard;
       ruDrop(p,c);
       moved.push(c);
-    }
+    });
     return moved;
   }
   function openFlankZones(p,includeRear){
@@ -21716,7 +21715,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var fl = [p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).length;
     var ext = fieldEntries(w).filter(function(e){ return isExtNum(e.card); }).length;
     var boost = 3 * fl + (ext >= 2 ? 5 : 0);
-    if(p.rankZone){ p.rankZone.currentNP = (p.rankZone.currentNP || p.rankZone.numeral || 0) + boost; p.rankZone.currentRP = (p.rankZone.currentRP || p.rankZone.rank || 0) + fl; }
+    if(p.rankZone){ p.rankZone.currentNP = ((p.rankZone.currentNP ?? p.rankZone.numeral) || 0) + boost; p.rankZone.currentRP = ((p.rankZone.currentRP ?? p.rankZone.rank) || 0) + fl; }
     G._ru161SuppDamage = G._ru161SuppDamage || {};
     G._ru161SuppDamage[w] = 0;
     safeLog('Supplementary Star: Rank Zone +' + boost + ' NP and +' + fl + ' RP; Drop return will count MP damage dealt this turn.','heal');
@@ -21732,8 +21731,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!commitAction(w,idx,card,'discard')) return true;
     p.mp -= flanks.length;
     if(window.ruActEffect)window.ruActEffect();   // its MP cost is paid; the effect starts
-    if(p.rankZone) p.rankZone.currentNP = (p.rankZone.currentNP || p.rankZone.numeral || 0) + 1;
-    flanks.forEach(function(c){ c.currentNP = (c.currentNP || c.numeral || 0) + 3; });
+    if(p.rankZone) p.rankZone.currentNP = ((p.rankZone.currentNP ?? p.rankZone.numeral) || 0) + 1;
+    flanks.forEach(function(c){ c.currentNP = ((c.currentNP ?? c.numeral) || 0) + 3; });
     safeLog('Flank Star: paid ' + flanks.length + ' MP; Rank +1 NP and Flanks +3 NP.','heal');
     renderSafe();
     return true;
@@ -21756,8 +21755,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         chooseOne(w,'Neo Flank Star - choose Rank 1 or lower Numeral from Deadzone to add to hand.',pool,false,function(add){
           if(add) moveTo(p,add,'hand');
           [p.leftFlank,p.rightFlank,p.rearFlank].filter(Boolean).forEach(function(c){
-            c.currentNP = (c.currentNP || c.numeral || 0) + 2;
-            c.currentRP = (c.currentRP || c.rank || 0) + 1;
+            c.currentNP = ((c.currentNP ?? c.numeral) || 0) + 2;
+            c.currentRP = ((c.currentRP ?? c.rank) || 0) + 1;
           });
           finish('Neo Flank Star: recovered ' + (add ? add.name : 'no card') + ' and buffed Flanks.','heal');
         });
@@ -21961,11 +21960,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function chooseMany(owner,label,pool,count,cb){ chooseCards(owner,label,pool,count,count,false,function(p){ cb && cb(p && p.length === count ? p : null); }); }
   function topDeckToDrop(p,count){
     var moved = [];
-    for(var i=0;i<count && p && p.deck.length;i++){
-      var c = p.deck.shift();
+    ruTakeDeckCards(p,count,false,(deckCard,i)=>{
+      var c = deckCard;
       ruDrop(p,c);
       moved.push(c);
-    }
+    });
     return moved;
   }
   function sourceBankToDead(p,card){
@@ -21981,7 +21980,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!c) return;
     c.attacksLeft = Math.max(1, Number(c.attacksLeft||0) + (n || 1));
     c.committed = false;
-    if(boostNP) c.currentNP = (c.currentNP || c.numeral || 0) + boostNP;
+    if(boostNP) c.currentNP = ((c.currentNP ?? c.numeral) || 0) + boostNP;
   }
   function noAttack(w,msg){
     G._noAttack = G._noAttack || {};
@@ -22374,11 +22373,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function topDeckToDrop(p,count){
     var out = [];
-    for(var i=0;i<count && p && p.deck.length;i++){
-      var c = p.deck.shift();
+    ruTakeDeckCards(p,count,false,(deckCard,i)=>{
+      var c = deckCard;
       ruDrop(p,c);
       out.push(c);
-    }
+    });
     return out;
   }
   window.topDeckToDropRD10=topDeckToDrop;
@@ -22444,7 +22443,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           var hiR = allDropped.length ? Math.max.apply(null, allDropped.map(rp)) : 0;
           card.attacksLeft = Math.max(card.attacksLeft || 0, hiN);
           card.committed = false;
-          card.currentNP = (card.currentNP || card.numeral || 0) + hiR;
+          card.currentNP = ((card.currentNP ?? card.numeral) || 0) + hiR;
           finish('Restorative 8: uncommitted for up to ' + hiN + ' attack(s) and gained +' + hiR + ' NP from the highest Rank dropped by this skill.','heal');
         }}
       ];
@@ -22589,20 +22588,20 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function moveTo(p,c,to){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeEverywhere(p,c);ruLeaveOtherSides(p,c); if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,to); } return c; }
   function topDeckTo(p,n,to){
     var out = [];
-    for(var i=0; p && i<n && p.deck.length; i++){
-      var c = p.deck.shift();
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c = deckCard;
       out.push(c);
       putTo(p,c,to || 'discard');
-    }
+    });
     return out;
   }
   function bottomDeckTo(p,n,to){
     var out = [];
-    for(var i=0; p && i<n && p.deck.length; i++){
-      var c = p.deck.pop();
+    ruTakeDeckCards(p,n,true,(deckCard,i)=>{
+      var c = deckCard;
       out.push(c);
       putTo(p,c,to || 'discard');
-    }
+    });
     return out;
   }
   function chooseCards(w,label,pool,max,min,optional,cb){
@@ -22681,7 +22680,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function markOpponentTurnAttack(w,card,opts){
     opts = opts || {};
     if(!card) return;
-    addAttack(w,card,opts.count || 1);
+    if(!G || G.turn===w) addAttack(w,card,opts.count || 1);
     if(opts.direct) card._directThisTurn = true;
     if(opts.toDeadzoneAfter) card._sendToDZAfterAttack = true;
     if(opts.haste6Reward){ card._haste6RewardReady = true; card._ru164Haste6Reward = true; }
@@ -22691,6 +22690,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       var tno = G._turnNo || 0;
       if(card._oppTurnAtkTurn !== tno){ card._oppTurnAtkTurn = tno; card._oppTurnAtk = 0; }
       card._oppTurnAtk += (opts.count || 1);
+      G._ruHasteAtkPassKey = null;
       G._ru164PendingHasteAttack = true;
       G._ru135HasteAttackReady = true;
       if(opts.allowAdvantageous){
@@ -23050,9 +23050,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var p = side(rw);
     return fieldEntries(rw).filter(function(e){
       var c = e.card;
-      var left = c ? Number(c.attacksLeft == null ? 1 : c.attacksLeft) : 0;
       // only a card granted an opponent-turn attack this turn (Haste 2 / 4 / 6, Fast Track) may make one
-      return c && c.canAttack !== false && !c.frozen && left > 0 && !(p.attacksUsed && p.attacksUsed[c.id]) && (window.ruOppTurnAtkLeft(c) > 0 || c._haste8GainAfterAttack);
+      return c && !c.frozen && window.ruOppTurnAtkLeft(c) > 0;
     });
   }
   window.eligibleHasteAttackers164=eligibleHasteAttackers;
@@ -23108,11 +23107,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     ruDeclareAttack(rw,entry.zone,targetSide,target.zone,0,function(){ hasteAttackResolved(rw,p,ai,entry,card,ph,beforeMP,beforeCas,beforeDead); });
   }
   function hasteAttackResolved(rw,p,ai,entry,card,ph,beforeMP,beforeCas,beforeDead){
-    var live = zoneCard(p,entry.zone) || card;
+    var occupant=zoneCard(p,entry.zone),live=occupant&&occupant.id===card.id?occupant:card;
     if(live){
       if(window.ruOppTurnAtkLeft(live) > 0) live._oppTurnAtk -= 1;   // one granted opponent-turn attack spent
-      live.attacksLeft = Math.max(0, Number(live.attacksLeft == null ? 1 : live.attacksLeft) - 1);
-      if(live.attacksLeft <= 0 && p.attacksUsed) p.attacksUsed[live.id] = true;
     }
     if(card._sendToDZAfterAttack && fieldEntries(rw).some(function(e){ return e.card === card; })){
       moveTo(p,card,'deadzone');
@@ -23291,11 +23288,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function moveTo(p,c,to){ const _wd=!!(p&&p.deadzone&&p.deadzone.indexOf(c)!==-1); removeEverywhere(p,c);ruLeaveOtherSides(p,c); if(to==='discard'&&_wd&&c&&c.type==='numeral'&&(c.rank||0)>=3){ window.RUr3DeadToDiscard(p,c); } else { putTo(p,c,to); } return c; }
   function topDeckTo(p,n,to){
     var out = [];
-    for(var i=0; p && i<n && p.deck.length; i++){
-      var c = p.deck.shift();
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{
+      var c = deckCard;
       out.push(c);
       putTo(p,c,to || 'discard');
-    }
+    });
     return out;
   }
   function chooseCards(w,label,pool,max,min,optional,cb){
@@ -25106,7 +25103,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function millN(w,n){
     var p=side(w),out=[];
-    for(var i=0;i<n&&p.deck.length;i++){ var c=p.deck.shift(); ruDrop(p,c); out.push(c); }
+    ruTakeDeckCards(p,n,false,(deckCard,i)=>{ var c=deckCard; ruDrop(p,c); out.push(c); });
     if(out.length)say(sideVerbLabel(w,'mill')+' '+out.map(function(c){ return c.name; }).join(', ')+'.','info');
     return out;
   }
@@ -25204,7 +25201,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // a card goes into its owner's Deck at a random place
   function intoDeck(p,c){ p.deck.splice(window.ruRandInt(p.deck.length+1),0,c); }
   // the top n cards of a Deck are ceded (sent to the Deadzone)
-  function cedeTop(w,n){ var p=side(w),out=[]; for(var i=0;i<n&&p.deck.length;i++){ var c=p.deck.shift(); dzAdd(p,c); out.push(c); } return out; }
+  function cedeTop(w,n){ var p=side(w),out=[]; ruTakeDeckCards(p,n,false,(deckCard,i)=>{ var c=deckCard; dzAdd(p,c); out.push(c); }); return out; }
   // seat t loses n MP to an effect (morale: it is Morale Damage — the last Morale Damage taken)
   function damage(t,n,label,morale){ if(!(n>0)||!G[t])return; const source=window.RUFullmetal?window.RUFullmetal.source():'rule';ruLoseMP(G[t],n,source==='rule'?(morale?'numeral':'effect'):source,loss=>{if(morale)ruSetLastMoraleTo(t,loss);say(label+': '+sideVerbLabel(t,'lose','loses')+' '+loss+' MP.','dmg');}); }
   window.ruFx={side:side,say:say,refresh:refresh,tn:tn,np:np,rp:rp,isNum:isNum,living:living,SLOTS:SLOTS,ZONES:ZONES,realRank:realRank,
@@ -26143,7 +26140,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       {label:'All players draw 2 (W-stats drop)',cost:'Once per Exchange: mill 1 card and discard an Ochre-class card from your hand.',
         check:function(w){ return canyonReady(w); },
         fn:function(w){ canyonCost(w,function(){
-          var drew=living().filter(function(s){ return side(s).deck.length>0; });
+          var drew=living();
           drew.forEach(function(s){ draw(s,2); });
           var k=drew.filter(function(s){ var r=realRank(side(s)); return !(r&&isOchreNum(r)); }).length;
           if(k)living().forEach(function(s){ fieldCards(side(s)).filter(isNum).forEach(function(c){ c._wField=(c._wField||0)-k; }); });
@@ -26504,9 +26501,9 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     ]};
   // Kismet 8 — once per turn, discard all Action Cards in your hand: it may attack up to that many times this turn (S1 +?:
   // that many MP, once). After each attack, drawn Actions are dropped; S2 settles only new all-player Action drops.
-  SDEFS['Kismet 8']={source:'field',phases:['main','standby','battle'],opponentTurn:true,
+  SDEFS['Kismet 8']={source:'field',phases:['main','standby','battle'],
     check:function(w,card){
-      return !(card._k8&&card._k8.turn===tn())&&side(w).hand.some(isAction);
+      return G.turn===w&&!(card._k8&&card._k8.turn===tn())&&side(w).hand.some(isAction);
     },
     steps:[
       {type:'async',activation:true,fn:function(w,card,next){ card._k8={turn:tn(),n:0,settledDrops:0}; next(true); }},
@@ -26519,7 +26516,6 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       }},
       {type:'effect',fn:function(w,p,o,zone,card,ctx){
         var n=ctx.n||0,made=(card._kAtk&&card._kAtk.turn===tn())?card._kAtk.n:0;
-        if(G.turn!==w&&n>made)window.markOpponentTurnAttackRAtk25(w,card,{count:n-made});
         card.attacksLeft=Math.max(0,n-made); if(card.attacksLeft>0)card.canAttack=true;
         say('Kismet 8: it may attack up to '+n+' time(s) this turn, and after each attack all players draw 1 and reveal it.','imp');
         refresh();
@@ -26533,7 +26529,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!c._k8||c._k8.turn!==tn()||G.gameOver)return;
     var drawn=[];
     living().forEach(function(w){
-      var p=side(w); if(!p.deck.length)return;
+      var p=side(w); if(G.gameOver||(G.eliminated&&G.eliminated[w]))return;
       var before=p.hand.slice(); draw(w,1);
       var got=p.hand.find(function(x){ return before.indexOf(x)===-1; }); if(got)drawn.push({w:w,c:got});
     });
@@ -27335,7 +27331,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   ruHook('beforeAttack',function(aw,aZone,dw,dZone,resume){
     var p=side(aw),c=window.zCard(p,aZone);
     if(!c||c.name!=='Temporal 9'||!c._t9||c._t9.turn!==tn()||!c._t9.bonus||c._t9atk)return false;   // (the declaration goes on through here once more)
-    var last=p.deck.pop(); if(last)dzAdd(p,last);
+    var last=ruTakeDeckCards(p,1,true,c=>dzAdd(p,c))[0];
+    if(G.gameOver)return true;
     var delayed=isNumeral(last);
     c._t9atk={bonus:c._t9.bonus,delayed:delayed}; c.currentNP=np(c)-c._t9.bonus;
     say('Temporal 9: '+sideVerbLabel(aw,'cede')+' '+(last?last.name:'nothing (empty Deck)')+' — the damage its +'+c._t9.bonus+' NP adds comes '+(delayed?'at the start of '+sidePossLower(aw)+' next Battle Phase':'as if in '+sidePossLower(aw)+' last Battle Phase (now)')+'.','imp');
@@ -27654,7 +27651,6 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function counterattack(w,label){
     var p=side(w),rz=realRank(p); if(!rz||G.turn===w)return;
-    rz.attacksLeft=atkLeft(rz)+1; if(p.attacksUsed)delete p.attacksUsed[rz.id]; rz.canAttack=true;
     say(label+': '+sideSubjectLabel(w)+' may counterattack.','imp');
     window.offerCounterAttackRA(w,rz);
   }
@@ -27722,7 +27718,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(!p.hand.length){ say('Transmute (E2): no card in hand to drop — no effect.','info'); refresh(); return; }
     pick(w,'Transmute (E2) — drop one card from your hand.',p.hand.slice(),1,1,function(pk){
       var h=pk&&pk[0]; if(!h){ refresh(); return; }
-      fromHand(p,h,'discard'); for(var i=0;i<3&&p.deck.length;i++)ruDrop(p,p.deck.pop()); act();
+      fromHand(p,h,'discard'); ruTakeDeckCards(p,3,true,(deckCard,i)=>{ruDrop(p,deckCard);}); act();
       flankFromDeadzone(w,'Transmute (E2)',function(c){ if(c){ window.ruAasW(c,{always:true},{id:card.id,seat:w,pile:'deadzone'}); say('Transmute (E2): '+c.name+'’s A value becomes its W value while Transmute stays in '+sidePossLower(w)+' Deadzone.','imp'); } refresh(); });
     });
   };
@@ -27904,7 +27900,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 function _ruVal(c){
   if(!c)return 0;
   if(c.type==='action') return 7 + Math.abs(c.M||0);            // action cards are valuable utility
-  var np=(c.currentNP||c.numeral||0), rp=(c.rank||0);
+  var np=((c.currentNP ?? c.numeral)||0), rp=(c.rank||0);
   var v = np + rp*3;
   if(c.skillType && c.skillType!=='Basic') v += 6;              // a usable skill is worth keeping
   if(rp>=3) v += 8;                                             // high-Rank Numerals are precious
@@ -28113,21 +28109,6 @@ window.cPickHand = function(who, count, label, cb){
   window.RUfinalizeWin = function(){
     if(!ready() || G.gameOver) return;
     var EG = window.endGame || endGame;
-    // Deck-out, deferred to this phase boundary (like Morale/Casualty). A side that tried to draw from
-    // an empty Deck is only finalized here, and only if its Deck is STILL empty now (an in-phase refill
-    // cleared the pending loss). Reuses finalizeDeckOut so the elimination/2-player classification is
-    // identical to before — just no longer instant.
-    if(G._deckOutPending){
-      var _pend=Object.keys(G._deckOutPending);
-      for(var _i=0;_i<_pend.length;_i++){
-        var _dw=_pend[_i];
-        delete G._deckOutPending[_dw];
-        if(!G[_dw] || (G[_dw].deck && G[_dw].deck.length>0)) continue;      // recovered — no loss
-        if(G.eliminated && G.eliminated[_dw]) continue;                      // already out
-        (window.finalizeDeckOut||function(w){EG((window.oppOf||oppOf)(w),'deck-out');})(_dw);
-        if(G.gameOver) return;
-      }
-    }
     // 3+-way match: settle through the N-player system, NOT the 2-player conclusionReasons classifier
     // below (which only ever looks at player vs ai and cannot see the 3rd seat — using it here is
     // exactly what made the match end the instant one opponent fell while another was still alive).
@@ -28162,7 +28143,7 @@ window.cPickHand = function(who, count, label, cb){
 /* ===== MAX FLANK (#2) + DIRECT ATTACK (#3) buttons  Claude ===== */
 (function(){
   function el(id){return document.getElementById(id);}
-  function npv(c){return c?(c.currentNP||c.numeral||0):0;}
+  function npv(c){return c?((c.currentNP ?? c.numeral)||0):0;}
   function rkv(c){return c?(c.rank||0):0;}
   function L(m,t){try{(window.log)(m,t||'info');}catch(e){}}
 
@@ -29038,7 +29019,7 @@ window.ruSpecPace=function(base){
   function aiBestCounterTarget(a,atkNP){
     var legal=aiCounterTargetList(a);
     if(typeof atkNP!=='number')return legal.length?legal[0]:null;
-    var np=function(c){return c.currentNP||c.numeral||0;};
+    var np=function(c){return (c.currentNP ?? c.numeral)||0;};
     var win=legal.filter(function(t){return atkNP>np(t.card);});
     if(!win.length)return null;
     return win.reduce(function(m,t){return np(t.card)>np(m.card)?t:m;},win[0]);
@@ -29052,8 +29033,8 @@ window.ruSpecPace=function(base){
     var ai=G[dWho],p=G[aWho];
     var att=zc172(p,aZone),def=zc172(ai,dZone);
     if(!att||!def)return false;
-    var aNP=(att.currentNP||att.numeral||0)+(addonNP||0);
-    var dNP=def.currentNP||def.numeral||0;
+    var aNP=((att.currentNP ?? att.numeral)||0)+(addonNP||0);
+    var dNP=(def.currentNP ?? def.numeral)||0;
     if(aNP<dNP)return false; // a clean win needs no Safeguard -- but a TIE still destroys a
                              // non-rank defender, so Protect below still needs to see it.
     var margin=aNP-dNP;
@@ -29070,7 +29051,7 @@ window.ruSpecPace=function(base){
       if(f){
         var mg=aiSpendActionCard(dWho,f.idx,f.card);
         if(f.card.name==='Freezing Star'){
-          var fNP=att.currentNP||att.numeral||0;ai.mp+=fNP;p.mp+=fNP;
+          var fNP=(att.currentNP ?? att.numeral)||0;ai.mp+=fNP;p.mp+=fNP;
           log(nm172(dWho)+' uses Freezing Star: the attack is negated. Both sides gain '+fNP+' MP.','heal');
         }else if(f.card.name==='Naught Star'){
           var zi=ai.hand.indexOf(zeroCompanion);if(zi!==-1){ai.hand.splice(zi,1);ruDrop(ai,zeroCompanion);}
@@ -29165,7 +29146,7 @@ window.ruSpecPace=function(base){
       if(costCard){var ci=ai.hand.indexOf(costCard);ai.hand.splice(ci,1);ruDrop(ai,costCard);}
     }
     aiSpendActionCard(d,pick.idx,pick.card);
-    if(!isStar&&ai.deck&&ai.deck.length)ruDrop(ai,ai.deck.pop());
+    if(!isStar)ruTakeDeckCards(ai,1,true,c=>ruDrop(ai,c));
     var moraleRefund=Math.floor(moraleLoss/2);
     if(moraleRefund>0)ai.mp+=moraleRefund;
     var msg=nm172(d)+' uses '+pick.card.name+': Morale Damage from this attack is halved'+(moraleRefund?(' (+'+moraleRefund+' MP refunded)'):'')+'.';
@@ -29184,7 +29165,7 @@ window.ruSpecPace=function(base){
     var ai=G[dWho],p=G[aWho],an=nm172(aWho);
     var ret=(ai.hand||[]).filter(function(c){return c&&c.type==='action'&&c.sub==='Retaliatory';});
     if(!ret.length)return;
-    var rz=ai.rankZone,rzNP=rz?(rz.currentNP||rz.numeral||0):0;
+    var rz=ai.rankZone,rzNP=rz?((rz.currentNP ?? rz.numeral)||0):0;
     function use(name,fn){
       var f=aiFindHandCard(dWho,name);if(!f)return false;
       var mg=aiSpendActionCard(dWho,f.idx,f.card);
@@ -29197,7 +29178,7 @@ window.ruSpecPace=function(base){
     // winnability WITH its own NP buff and aims at the STRONGEST target the buffed Rank beats -- not just
     // the first Flank on the board, which is why the AI used to stand there when that Flank outsized it.
     if(rz){
-      var bsHi=[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).reduce(function(m,c){return Math.max(m,c.currentNP||c.numeral||0);},0);
+      var bsHi=[p.rankZone,p.leftFlank,p.rightFlank].filter(Boolean).reduce(function(m,c){return Math.max(m,(c.currentNP ?? c.numeral)||0);},0);
       var bsTgt=aiBestCounterTarget(aWho,rzNP+bsHi);
       if(bsTgt&&use('Burning Star',function(){
         ruLoseMP(p,bsHi);buffNP(rz,bsHi);
@@ -29648,7 +29629,7 @@ window.ruSpecPace=function(base){
   //    human menu (a direct closure call we can't wrap) and every AI path. ──
   function anRankUpBonus(w,evo){
     var G=G_(),s=G&&G[w]; if(!s||!evo)return;
-    var rank=Number(evo.rank!=null?evo.rank:(evo.currentRP||0))||0;
+    var rank=Number(evo.rank!=null?evo.rank:((evo.currentRP ?? 0)))||0;
     if(rank>0){ s.mp+=rank; }
     safeLog('Amalgamation Nation: '+(window.sideVerbLabel?sideVerbLabel(w,'gain','gains'):sideName(w)+' gains')+' '+rank+' MP (Rank of '+evo.name+') and '+(isLocalHumanSeat(w)?'draw':'draws')+' 1 for the Amalgamation Rank Up.','heal');
     var before=s.hand.length;
@@ -29656,7 +29637,7 @@ window.ruSpecPace=function(base){
     if(s.hand.length>before){
       var drawn=s.hand[s.hand.length-1];
       var fieldAmalgs=fieldOf(s).filter(isAmalg);
-      var ok=fieldAmalgs.some(function(c){return Number(c.rank!=null?c.rank:(c.currentRP||0))===Number(drawn.rank!=null?drawn.rank:-99);});
+      var ok=fieldAmalgs.some(function(c){return Number(c.rank!=null?c.rank:((c.currentRP ?? 0)))===Number(drawn.rank!=null?drawn.rank:-99);});
       if(!ok){
         drawn._anLocked=true; drawn._anLockOwner=w; drawn._anLockPhase=phaseTok();
         safeLog(ruPOV(w,'Amalgamation Nation: '+drawn.name+' matches no Amalgamation Rank on {your} Battlefield — it is locked and will be dropped at the start of {your} next phase.'),'dmg');

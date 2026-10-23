@@ -390,7 +390,7 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .nc-fullmetal{background-color:#c5cbd0;background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.12) 0,rgba(255,255,255,.12) 1px,rgba(45,55,65,.06) 1px,transparent 3px),linear-gradient(118deg,#7e8992 0%,#c5cbd0 17%,#e4e8eb 29%,#959fa8 42%,#c5cbd0 55%,#e4e8eb 66%,#919ca5 80%,#c5cbd0 100%);background-size:auto,220% 100%;background-position:center,45% 50%;border:1px solid #d7dfe4;color:#20272d;box-shadow:inset 0 1px 2px #eef1f3,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #8f9aa3;transition:background-position .35s ease,box-shadow .35s ease;}
 .nc-fullmetal:hover{background-position:center,60% 50%;box-shadow:inset 0 1px 3px #fff,inset 0 -2px 4px rgba(40,50,60,.3),0 0 0 1px #bcc6ce;}
 .nc-fullmetal .ctag{color:#34414b;}
-.nc-fullmetal>.cemblem{transform:translateY(5%);}
+.nc-fullmetal>.cemblem,.nc-amalgamation>.cemblem{transform:translateY(5%);}
 .nc-fullmetal .csb{line-height:1.16;}
 .cdet.nc-fullmetal .cds,.cdet.nc-fullmetal .cdt strong{color:#26343e;}
 .delta-summon{animation:deltaSummon 1.05s ease-out;}
