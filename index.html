@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rank Up! — Classic Mode v14.0.0</title>
-<link rel="stylesheet" href="styles.css?v=20261010">
+<link rel="stylesheet" href="styles.css?v=20261027">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
 </style>
@@ -1037,6 +1037,9 @@ function layoutFourWay(force){
 window.layoutFourWay=layoutFourWay;
 // ── 2v2 LAYOUT FITTER ── two boards per row (partners side by side), the stat panel between the rows. Largest scale
 // that fits both rows across the width and down the height; the bots' face-down hands sit behind their boards.
+// Team: the two boards of a row sit symmetrically about the centre line. Tag: the team's one Deadzone (drawn at the
+// inner end of A's and of C's board) sits ON the centre line, with the partner's Δ Zone the same distance away on the
+// other side — so each row is symmetric about its shared Deadzone. Widths are the boards' own (measured, unscaled).
 function layoutTwoVTwo(force){
   const bf=el('battlefield');
   if(!bf||!bf.classList.contains('two-v-two'))return;
@@ -1045,18 +1048,31 @@ function layoutTwoVTwo(force){
   if(!force&&layoutTwoVTwo._w===W&&layoutTwoVTwo._h===H)return;
   layoutTwoVTwo._w=W;layoutTwoVTwo._h=H;
   const hud=bf.querySelector('.hud-center');
-  const BW=712,BH=180,gapX=18,vM=12,hM=10;                  // board footprint (as Royale), the partner gap, edge margins
+  const BH=180,gapX=18,vM=12,hM=10;                         // board height allowance (as Royale), the Team partner gap, edge margins
   const hudH=Math.max(84,(hud&&hud.offsetHeight||0)+12);    // the centre stat panel's band between the rows
-  let scale=Math.min((W-2*hM-gapX)/(2*BW),(H-2*vM-hudH)/(2*BH),0.9);
+  const wOf=function(id){const e=el(id);return (e&&e.offsetWidth)||712;};
+  const wA=wOf('pl-field'),wB=wOf('ai3-field'),wC=wOf('ai-field'),wD=wOf('ai2-field');
+  const tag=bf.classList.contains('tag-2v2');
+  let deadW=0,g=0,rowW;
+  if(tag){
+    const dz=el(sideZoneId('player','dead')),ds=el(sideZoneId('player','delta-stack'));
+    deadW=(dz&&dz.offsetWidth)||66;
+    g=(dz&&ds)?Math.max(0,dz.offsetLeft-(ds.offsetLeft+ds.offsetWidth)):8;   // the Δ Zone → Deadzone gap inside A's board
+    rowW=Math.max(wA+g+wB,wC+g+wD);
+  } else rowW=Math.max(wA+wB,wC+wD)+gapX;
+  let scale=Math.min((W-2*hM)/rowW,(H-2*vM-hudH)/(2*BH),0.9);
   scale=Math.max(scale,0.2);
-  const dx=(BW*scale+gapX)/2,dy=hudH/2+(BH*scale)/2;
+  // horizontal centres (unscaled) — bottom row A | B, top row D | C (the top boards are turned 180°)
+  const x=tag?{a:deadW/2-wA/2,b:deadW/2+g+wB/2,c:-deadW/2+wC/2,d:-deadW/2-g-wD/2}
+             :{a:-(wA/2+gapX/2),b:wB/2+gapX/2,c:wC/2+gapX/2,d:-(wD/2+gapX/2)};
+  const dy=hudH/2+(BH*scale)/2;
   bf.style.setProperty('--s22',scale.toFixed(3));
-  bf.style.setProperty('--t2-dx',Math.round(dx)+'px');
+  ['a','b','c','d'].forEach(function(k){bf.style.setProperty('--t2-'+k+'x',Math.round(x[k]*scale)+'px');});   // --t2-ax … --t2-dx
   bf.style.setProperty('--t2-dy',Math.round(dy)+'px');
   function setHand(id,x,y,deg){const h=el(id);if(h)h.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px) rotate('+deg+'deg) scale('+scale.toFixed(3)+') translateY(128px)';}
-  setHand('ai2-hand3',-Math.round(dx),-Math.round(dy),180);   // D, top-left
-  setHand('ai-hand3',Math.round(dx),-Math.round(dy),180);     // C, top-right
-  setHand('ai3-hand3',Math.round(dx),Math.round(dy),0);       // your partner B, bottom-right
+  setHand('ai2-hand3',Math.round(x.d*scale),-Math.round(dy),180);   // D, top-left
+  setHand('ai-hand3',Math.round(x.c*scale),-Math.round(dy),180);     // C, top-right
+  setHand('ai3-hand3',Math.round(x.b*scale),Math.round(dy),0);       // your partner B, bottom-right
 }
 window.layoutTwoVTwo=layoutTwoVTwo;
 function ruFitRadial(force){ var bf=el('battlefield'); if(!bf)return; if(bf.classList.contains('two-v-two'))layoutTwoVTwo(force); else if(bf.classList.contains('four-way'))layoutFourWay(force); else if(bf.classList.contains('three-way'))layoutThreeWay(force); }
