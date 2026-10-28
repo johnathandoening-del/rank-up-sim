@@ -1036,8 +1036,8 @@ function layoutFourWay(force){
 }
 window.layoutFourWay=layoutFourWay;
 // ── 2v2 LAYOUT FITTER ── two boards per row (partners side by side), the stat panel between the rows. Largest scale
-// that fits both rows across the width and down the height; the bots' face-down hands sit behind their boards.
-// Team: the two boards of a row sit symmetrically about the centre line. Tag: the team's one Deadzone (drawn at the
+// that fits both rows across the width and down the height; the bots' face-down hands sit behind their boards, each
+// centred on its owner's Rank Zone. Team: the two boards of a row sit symmetrically about the centre line. Tag: the team's one Deadzone (drawn at the
 // inner end of A's and of C's board) sits ON the centre line, with the partner's Δ Zone the same distance away on the
 // other side — so each row is symmetric about its shared Deadzone. Widths are the boards' own (measured, unscaled).
 function layoutTwoVTwo(force){
@@ -1069,10 +1069,15 @@ function layoutTwoVTwo(force){
   bf.style.setProperty('--s22',scale.toFixed(3));
   ['a','b','c','d'].forEach(function(k){bf.style.setProperty('--t2-'+k+'x',Math.round(x[k]*scale)+'px');});   // --t2-ax … --t2-dx
   bf.style.setProperty('--t2-dy',Math.round(dy)+'px');
+  // Each face-down hand sits over its owner's Rank Zone. That is the board's middle only on a full board: in Tag,
+  // B's and D's boards draw no Deadzone, so their Rank Zone is off-centre. rzOff = the Rank Zone's centre minus the
+  // board's centre along the board's own x axis (layout px, so the board's rotation and scale don't enter).
+  const rzOff=function(fid,w){const f=el(fid),z=el(sideZoneId(w,'rz'));if(!f||!z)return 0;let o=z.offsetWidth/2,n=z;
+    while(n&&n!==f){o+=n.offsetLeft;n=n.offsetParent;}return n===f?o+f.clientLeft-f.offsetWidth/2:0;};
   function setHand(id,x,y,deg){const h=el(id);if(h)h.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px) rotate('+deg+'deg) scale('+scale.toFixed(3)+') translateY(128px)';}
-  setHand('ai2-hand3',Math.round(x.d*scale),-Math.round(dy),180);   // D, top-left
-  setHand('ai-hand3',Math.round(x.c*scale),-Math.round(dy),180);     // C, top-right
-  setHand('ai3-hand3',Math.round(x.b*scale),Math.round(dy),0);       // your partner B, bottom-right
+  setHand('ai2-hand3',Math.round((x.d-rzOff('ai2-field','ai2'))*scale),-Math.round(dy),180);   // D, top-left (turned 180°: its own x runs right-to-left)
+  setHand('ai-hand3',Math.round((x.c-rzOff('ai-field','ai'))*scale),-Math.round(dy),180);      // C, top-right
+  setHand('ai3-hand3',Math.round((x.b+rzOff('ai3-field','ai3'))*scale),Math.round(dy),0);       // your partner B, bottom-right
 }
 window.layoutTwoVTwo=layoutTwoVTwo;
 function ruFitRadial(force){ var bf=el('battlefield'); if(!bf)return; if(bf.classList.contains('two-v-two'))layoutTwoVTwo(force); else if(bf.classList.contains('four-way'))layoutFourWay(force); else if(bf.classList.contains('three-way'))layoutThreeWay(force); }
