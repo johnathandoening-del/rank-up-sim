@@ -15,7 +15,7 @@ var MOVES_CODE = `
   var ZKEY = { 'rank':'rankZone', 'left-flank':'leftFlank', 'right-flank':'rightFlank', 'rear-flank':'rearFlank' };
   function opp(w){ return w === 'player' ? 'ai' : 'player'; }
   // every other living seat (one in a 1v1; two or three in 1v1v1 / Royale)
-  function opps(w){ return (G.sideOrder || ['player','ai']).filter(function(s){ return s !== w && G[s] && !(G.eliminated && G.eliminated[s]); }); }
+  function opps(w){ return (G.sideOrder || ['player','ai']).filter(function(s){ return s !== w && G[s] && !(G.eliminated && G.eliminated[s]) && !(window.ruSameTeam && ruSameTeam(s, w)); }); }
   function modal(){ return document.getElementById('modal'); }
   function picker(){ return document.getElementById('picker-modal'); }
   function openShared(e){ return !!(e && e.classList.contains('open') && !e._ruViewOnly); }
@@ -85,7 +85,10 @@ var MOVES_CODE = `
     if (mode && mode !== 'normal') {
       out.push({ t:'cancel', s:seat });
       ZONES.forEach(function(z){ if (zoneCard(p, z)) out.push({ t:'zone', o:seat, z:z, s:seat }); });
-      opps(seat).forEach(function(os){ var oo = G[os]; ZONES.forEach(function(z){ if (zoneCard(oo, z)) out.push({ t:'zone', o:os, z:z, s:seat }); }); });
+      // every other living seat's zones — in 2v2 the partner's too (an Addon, an "any player" pick); the legality
+      // filter keeps only what the engine accepts
+      (G.sideOrder || ['player','ai']).filter(function(os){ return os !== seat && G[os] && !(G.eliminated && G.eliminated[os]); })
+        .forEach(function(os){ var oo = G[os]; ZONES.forEach(function(z){ if (zoneCard(oo, z)) out.push({ t:'zone', o:os, z:z, s:seat }); }); });
       if (mode === 'atk') out.push({ t:'direct', s:seat });
       return out;
     }
@@ -102,6 +105,9 @@ var MOVES_CODE = `
       if (c.skillCost || (typeof SDEFS !== 'undefined' && SDEFS[c.name])) out.push({ t:'startSkill', source:'hand', id:c.id, s:seat });
     });
     ['rank','left-flank','right-flank','rear-flank','delta'].forEach(function(z){ var c = zoneCard(p, z); if (c && typeof SDEFS !== 'undefined' && SDEFS[c.name]) out.push({ t:'startSkill', source:z, id:c.id, s:seat }); });
+    // Tag (2v2): the partner's Battlefield skills are usable by its teammate
+    var mate = (G.twoVtwo === 'tag' && window.ruPartnerOf) ? ruPartnerOf(seat) : null;
+    if (mate && G[mate]) ['rank','left-flank','right-flank','rear-flank','delta'].forEach(function(z){ var c = zoneCard(G[mate], z); if (c && typeof SDEFS !== 'undefined' && SDEFS[c.name] && window.ruCanUsePartnerSkill && ruCanUsePartnerSkill(seat, mate, z)) out.push({ t:'startSkill', source:z, id:c.id, s:seat }); });
     (p.bank||[]).forEach(function(c){ if (typeof SDEFS !== 'undefined' && SDEFS[c.name]) out.push({ t:'startSkill', source:'bank', id:c.id, s:seat }); });
     (p.discard||[]).forEach(function(c){ if (typeof SDEFS !== 'undefined' && SDEFS[c.name]) out.push({ t:'startSkill', source:'discard', id:c.id, s:seat }); if (c.type === 'area') out.push({ t:'areaDrop', id:c.id, s:seat }); if (c.name === 'Restorative 3') out.push({ t:'rest3', id:c.id, s:seat }); });
     (p.deadzone||[]).forEach(function(c){

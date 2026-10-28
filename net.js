@@ -38,9 +38,11 @@
   function setStatus(text, cls){ try { var e = document.getElementById('online-status'); if (e) { e.textContent = text; e.className = 'online-status' + (cls ? ' ' + cls : ''); } } catch(_){} }
   function showLeave(on){ try { var b = document.getElementById('online-leave-btn'); if (b) b.style.display = on ? '' : 'none'; var j = document.getElementById('online-join-btn'); if (j) j.disabled = !!on; } catch(_){} }
 
-  // Room seat <-> engine seat.
-  function engineSeat(roomSeat){ return roomSeat === 'player2' ? 'ai' : (roomSeat === 'player1' ? 'player' : null); }
-  function roomSeat(engineSeatId){ return engineSeatId === 'ai' ? 'player2' : (engineSeatId === 'player' ? 'player1' : null); }
+  // Room seat <-> engine seat, by index: 'player1'..'player4' are 'player', 'ai', 'ai2', 'ai3'. (In a 2v2 room seat
+  // indexes 0..3 are A, C, D, B — the engine's A = 'player', C = 'ai', D = 'ai2', B = 'ai3'.)
+  var ROOM_SEATS = ['player1', 'player2', 'player3', 'player4'], ENGINE_SEATS = ['player', 'ai', 'ai2', 'ai3'];
+  function engineSeat(roomSeat){ var i = ROOM_SEATS.indexOf(roomSeat); return i === -1 ? null : ENGINE_SEATS[i]; }
+  function roomSeat(engineSeatId){ var i = ENGINE_SEATS.indexOf(engineSeatId); return i === -1 ? null : ROOM_SEATS[i]; }
 
   function oppName(){
     // The OTHER seat's player name (for rematch prompts).
@@ -129,10 +131,19 @@
       areaSupports: { player: cfg.seat0AreaSupport || null, ai: cfg.seat1AreaSupport || null },
       actionSupports: { player: cfg.seat0ActionSupport || null, ai: cfg.seat1ActionSupport || null }
     };
+    // A 2v2 room (Tag / Team): four seats; the turn order is A → D → B → C from the seat the room drew to start.
+    if (cfg.size === 4 && cfg.mode) {
+      var byEngine = function(arr, dflt){ var o = {}; ENGINE_SEATS.forEach(function(w, i){ o[w] = (arr && arr[i] != null) ? arr[i] : dflt; }); return o; };
+      var cyc = ['player', 'ai2', 'ai3', 'ai'], k = cyc.indexOf(ENGINE_SEATS[(cfg.firstSeat || 0) % 4]);
+      Object.assign(window.RU_NET_CONFIG, { mode: cfg.mode, order: cyc.slice(k).concat(cyc.slice(0, k)),
+        classes: byEngine(cfg.classes, 'light'), names: byEngine(cfg.names, null), deltaDecks: byEngine(cfg.deltaDecks, []),
+        areaSupports: byEngine(cfg.areaSupports, null), actionSupports: byEngine(cfg.actionSupports, null) });
+    }
     try { if (typeof startGame === 'function') startGame(); }
     finally { window.RU_NET_CONFIG = null; }
     if(window.RUTime&&cfg.clock)RUTime.receive(cfg.clock,cfg.serverNow);
     if (cfg.spectator) setStatus('Spectating room "' + (state.room || '') + '" — read-only.', 'ok');
+    else if (cfg.size === 4) log2('2v2 game started — seed ' + cfg.seed + ', you are ' + ((cfg.names || [])[cfg.mySeat] || 'a player') + ' (Player ' + 'ACDB'[cfg.mySeat] + ').');
     else log2('game started — seed ' + cfg.seed + ', you are ' + (cfg.mySeat === 1 ? (cfg.name1 || 'Player 2') : (cfg.name0 || 'Player 1')) + ' (Player ' + (cfg.mySeat + 1) + ').');
   }
 
@@ -290,7 +301,9 @@
         // `evo` is this player's Allow-Evolutions choice (the room uses the host's — Player 1's — for the match).
         var lo = currentLoadout(o.cls);
         // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
-        ws.send(JSON.stringify({ type:'join', room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, timeControl:lo.timeControl, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
+        var roomMode = (window.modeState && window.ruIs2v2Mode && ruIs2v2Mode(window.modeState.mode)) ? window.modeState.mode : null;
+        var roleEl = document.getElementById('online-role');
+        ws.send(JSON.stringify({ type:'join', mode: roomMode, role: (o.role || (roleEl && roleEl.value) || null), room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, timeControl:lo.timeControl, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
       ws.onmessage = function(ev){ if (thisWs !== ws) return; try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
         state.connected = false; log2('disconnected');

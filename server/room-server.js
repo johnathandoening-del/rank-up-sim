@@ -5,13 +5,16 @@
  * never touches this file (online-plan invariant #2). Rules live only in the client engine.
  *
  * Protocol (JSON over WebSocket):
- *   client -> server: {type:'join', room, name, cls, deltaDeck, areaSupport, evo, build, clientId, spectator}
+ *   client -> server: {type:'join', room, name, cls, deltaDeck, areaSupport, evo, build, clientId, spectator,
+ *                      mode?, role?}   // mode: the room's kind, set by its creator ('tag2v2' | 'team2v2' = 4 seats);
+ *                                      // role: 'partner' | 'opponent' when joining a 2v2 room
  *                     {type:'action', action}         // opaque payload from the client
  *                     {type:'rematch', vote}
  *                     {type:'loadout', cls, deltaDeck, areaSupport, evo}   // answer to loadout-request
  *                     {type:'ping'}
  *   server -> client: {type:'joined', room, seat, seatIdx, players}
- *                     {type:'start'|'resume', seed, seat0Class, seat1Class, name0, name1,
+ *                     {type:'start'|'resume', seed, mode, size, classes[], names[], deltaDecks[], areaSupports[],
+ *                                    actionSupports[] (one per seat index), seat0Class, seat1Class, name0, name1,
  *                                    seat0DeltaDeck, seat1DeltaDeck, seat0AreaSupport, seat1AreaSupport,
  *                                    allowEvolutions, firstSeat, mySeat, spectator?, log?}
  *                     {type:'peer', event:'join'|'leave'|'disconnect'|'resume', seat, name, players, graceMs?}
@@ -31,7 +34,13 @@ const MatchClock = require('../match-clock');
 const PORT = process.env.PORT || 8833;
 const CLIENT_ROOT = path.join(__dirname, '..');        // this server also serves the game files (single deploy)
 const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.json':'application/json', '.ttf':'font/ttf', '.png':'image/png', '.jpg':'image/jpeg', '.svg':'image/svg+xml', '.ico':'image/x-icon', '.md':'text/markdown; charset=utf-8' };
-const SEATS = ['player1', 'player2'];            // room seats (both human); the client maps them to engine seats 'player' / 'ai'
+const SEATS = ['player1', 'player2', 'player3', 'player4'];   // room seats (all human); the client maps seat i to engine seat ENGINE_SEATS[i]
+const ENGINE_SEATS = ['player', 'ai', 'ai2', 'ai3'];
+// A 2v2 room (Tag / Team) has four seats: 0 = A (the creator), 1 = C (first opponent to join), 2 = D (the next opponent),
+// 3 = B (A's partner). Any other room has two.
+const TEAM_MODES = ['tag2v2', 'team2v2'];
+function seatCount(room) { return room.size || 2; }
+function seatIdxs(room) { const out = []; for (let i = 0; i < seatCount(room); i++) out.push(i); return out; }
 const GRACE_MS = 90 * 1000;                      // how long a seat is held for a dropped player to reconnect
 const rooms = new Map();                          // code -> room
 
@@ -127,10 +136,11 @@ function newRoom() {
   return {
     seed: newSeed(), seq: 0, started: false,
     log: [],                                   // ordered {from, action} for reconnect catch-up
+    mode: null, size: 2,                       // a 2v2 room (mode 'tag2v2' | 'team2v2') has 4 seats
     timeControl:null, clock:null, clockReady:[false,false],
-    seatSocket: [null, null],                  // live ws per seat index (null = empty or disconnected)
-    seatMeta:   [null, null],                  // {clientId,name,cls,dd,as} per seat index (persists across a drop)
-    seatGrace:  [null, null],                  // reconnect grace timer per seat index
+    seatSocket: [null, null, null, null],      // live ws per seat index (null = empty or disconnected)
+    seatMeta:   [null, null, null, null],      // {clientId,name,cls,dd,as} per seat index (persists across a drop)
+    seatGrace:  [null, null, null, null],      // reconnect grace timer per seat index
     rematchVotes: new Set(),                   // seat indexes that voted yes
     spectators: new Set()                      // read-only watchers (no seat) — get the setup + live action stream
   };
@@ -139,7 +149,7 @@ function newRoom() {
 // the ratings would credit the wrong one) — the second gets a numbered suffix.
 function uniqueName(room, name, exceptIdx){
   const taken = new Set();
-  for (let i = 0; i < 2; i++) { if (i !== exceptIdx && room.seatMeta[i]) taken.add(String(room.seatMeta[i].name).toLowerCase()); }
+  for (let i = 0; i < seatCount(room); i++) { if (i !== exceptIdx && room.seatMeta[i]) taken.add(String(room.seatMeta[i].name).toLowerCase()); }
   if (!taken.has(String(name).toLowerCase())) return name;
   for (let n = 2; n < 100; n++) { const cand = String(name).slice(0, 20) + ' (' + n + ')'; if (!taken.has(cand.toLowerCase())) return cand; }
   return name + ' (' + Date.now() % 1000 + ')';
@@ -151,11 +161,11 @@ function broadcast(room, obj, exceptWs){
 }
 function roomPlayers(room){
   var out = [];
-  for (var i=0;i<2;i++){ if (room.seatMeta[i]) out.push({ seat: SEATS[i], name: room.seatMeta[i].name, connected: !!(room.seatSocket[i] && room.seatSocket[i].readyState===1) }); }
+  for (var i=0;i<seatCount(room);i++){ if (room.seatMeta[i]) out.push({ seat: SEATS[i], letter: room.size === 4 ? 'ACDB'[i] : null, name: room.seatMeta[i].name, connected: !!(room.seatSocket[i] && room.seatSocket[i].readyState===1) }); }
   return out;
 }
-// Everyone needed to start present (both seats hold a live socket)?
-function bothConnected(room){ return !!(room.seatSocket[0] && room.seatSocket[0].readyState===1 && room.seatSocket[1] && room.seatSocket[1].readyState===1); }
+// Everyone needed to start present (every seat holds a live socket)?
+function bothConnected(room){ return seatIdxs(room).every(function(i){ return !!(room.seatSocket[i] && room.seatSocket[i].readyState===1); }); }
 // A display name is shown inside the game's dialogs on the OTHER player's screen (built as HTML), so it carries no
 // markup: < > and control characters are dropped; ' ` " & become the look-alike ’ ” + (so "O'Neil" stays readable);
 // whitespace is collapsed. Empty → 'guest'. (The client applies the same cleaning.)
@@ -180,7 +190,7 @@ function readLoadout(msg){
 // (an older build) is started with its last known loadout.
 function confirmLoadoutsThen(room, go){
   if (room.loadout) clearTimeout(room.loadout.timer);
-  const pending = new Set([0, 1].filter(i => room.seatSocket[i] && room.seatSocket[i].readyState === 1));
+  const pending = new Set(seatIdxs(room).filter(i => room.seatSocket[i] && room.seatSocket[i].readyState === 1));
   const lo = { pending, go, timer: null };
   lo.finish = function(){ if (room.loadout !== lo) return; clearTimeout(lo.timer); room.loadout = null; if (bothConnected(room)) go(); };
   lo.timer = setTimeout(lo.finish, 5000);
@@ -190,9 +200,16 @@ function confirmLoadoutsThen(room, go){
 
 function buildSetup(room, type, includeLog){
   var m0 = room.seatMeta[0] || {}, m1 = room.seatMeta[1] || {};
+  var metas = seatIdxs(room).map(function(i){ return room.seatMeta[i] || {}; });
   var payload = {
     type: type,
     seed: room.seed,
+    mode: room.mode, size: seatCount(room),
+    classes: metas.map(function(m){ return m.cls || 'light'; }),
+    names: metas.map(function(m, i){ return m.name || ('Player ' + (i + 1)); }),
+    deltaDecks: metas.map(function(m){ return m.dd || []; }),
+    areaSupports: metas.map(function(m){ return m.as || null; }),
+    actionSupports: metas.map(function(m){ return m.actionSupport || null; }),
     seat0Class: m0.cls || 'light', seat1Class: m1.cls || 'light',
     name0: m0.name || 'Player 1', name1: m1.name || 'Player 2',
     seat0DeltaDeck: m0.dd || [], seat1DeltaDeck: m1.dd || [],
@@ -203,7 +220,7 @@ function buildSetup(room, type, includeLog){
     allowEvolutions: m0.evo !== false,
     timeControl:room.timeControl||MatchClock.config(null),
     clock:room.clock,serverNow:Date.now(),
-    firstSeat: room.seed % 2,
+    firstSeat: room.seed % seatCount(room),
     seq: room.seq || 0
   };
   if (includeLog) payload.log = room.log.map(function(e){ return { seq: e.seq || 0, from: e.from, action: e.action }; });
@@ -214,12 +231,13 @@ function startMatch(room, code){
   resetClock(room);
   room.seatSocket.forEach(function(s, idx){ if (s) send(s, Object.assign(buildSetup(room, 'start', false), { mySeat: idx })); });
   if (room.spectators) room.spectators.forEach(function(s){ send(s, Object.assign(buildSetup(room, 'resume', true), { mySeat: 0, spectator: true })); });
-  console.log(`[start] room=${code} seed=${room.seed} classes=[${(room.seatMeta[0]||{}).cls},${(room.seatMeta[1]||{}).cls}] firstSeat=${room.seed%2}`);
+  console.log(`[start] room=${code} mode=${room.mode||'1v1'} seed=${room.seed} classes=[${seatIdxs(room).map(i=>(room.seatMeta[i]||{}).cls).join(',')}] firstSeat=${room.seed%seatCount(room)}`);
 }
 
 function resetClock(room){
-  room.clock=MatchClock.create(room.timeControl,['player','ai'],room.seed%2?'ai':'player',Date.now());
-  room.clockReady=[false,false];MatchClock.pause(room.clock,true,Date.now());
+  const n=seatCount(room);
+  room.clock=MatchClock.create(room.timeControl,ENGINE_SEATS.slice(0,n),ENGINE_SEATS[room.seed%n],Date.now());
+  room.clockReady=seatIdxs(room).map(()=>false);MatchClock.pause(room.clock,true,Date.now());
 }
 function clockMessage(room){return {type:'clock',clock:room.clock,serverNow:Date.now()};}
 function tickClock(room){
@@ -290,6 +308,11 @@ wss.on('connection', (ws) => {
       const clientId = String(msg.clientId || ('anon-' + Math.random().toString(36).slice(2))).slice(0, 64);
       let room = rooms.get(code);
       if (!room) { room = newRoom(); rooms.set(code, room); }
+      // The room's kind is its creator's: the first seated player's mode (a 2v2 room has four seats).
+      if (!msg.spectator && !room.started && !seatIdxs(room).some(i => room.seatMeta[i])) {
+        room.mode = TEAM_MODES.indexOf(msg.mode) !== -1 ? msg.mode : null;
+        room.size = room.mode ? 4 : 2;
+      }
 
       // ── SPECTATOR: no seat, read-only. Gets the current setup + full action log to build the live state, and
       // then the live action stream. Never counts toward seats / start / rematch. ──
@@ -306,7 +329,7 @@ wss.on('connection', (ws) => {
 
       // ── RECONNECT: this clientId already owns a seat here (held open during grace, or a live reload) ──
       let seatIdx = -1;
-      for (let i = 0; i < 2; i++) { if (room.seatMeta[i] && room.seatMeta[i].clientId === clientId) { seatIdx = i; break; } }
+      for (let i = 0; i < seatCount(room); i++) { if (room.seatMeta[i] && room.seatMeta[i].clientId === clientId) { seatIdx = i; break; } }
       if (seatIdx !== -1) {
         if (room.seatGrace[seatIdx]) { clearTimeout(room.seatGrace[seatIdx]); room.seatGrace[seatIdx] = null; }
         try { const old = room.seatSocket[seatIdx]; if (old && old !== ws) old.close(); } catch(_){}
@@ -329,10 +352,14 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // ── NEW seat: take the lowest index that is empty (no meta) ──
+      // ── NEW seat: the lowest empty index; in a 2v2 room the joiner's role decides — an opponent takes C then D
+      // (seats 1, 2), a partner takes B (seat 3) or A's seat if it is free ──
       seatIdx = -1;
-      for (let i = 0; i < 2; i++) { if (!room.seatMeta[i]) { seatIdx = i; break; } }
-      if (seatIdx === -1) { send(ws, { type: 'error', msg: 'Room full.' }); return; }   // 2-player for v1
+      const cand = room.size === 4 && room.seatMeta[0]
+        ? (msg.role === 'partner' ? [3, 0] : msg.role === 'opponent' ? [1, 2] : [1, 2, 3])
+        : seatIdxs(room);
+      for (const i of cand) { if (!room.seatMeta[i]) { seatIdx = i; break; } }
+      if (seatIdx === -1) { send(ws, { type: 'error', msg: room.size === 4 && msg.role ? ('No ' + (msg.role === 'partner' ? 'partner' : 'opponent') + ' seat is free in this room.') : 'Room full.' }); return; }
 
       meta.name = uniqueName(room, meta.name, seatIdx);
       room.seatMeta[seatIdx] = meta;
@@ -353,7 +380,7 @@ wss.on('connection', (ws) => {
     if(msg.type==='clock-progress'){
       if(ws._spectator||ws._seatIdx==null||room.seatSocket[ws._seatIdx]!==ws||!room.started||!room.clock||!room.clock.rules.enabled)return;
       const p=msg.progress||{},c=room.clock;
-      if(!['player','ai'].includes(p.turn)||!Number.isInteger(p.turnNo)||p.turnNo<c.turnNo||p.turnNo>c.turnNo+1)return;
+      if(!ENGINE_SEATS.slice(0,seatCount(room)).includes(p.turn)||!Number.isInteger(p.turnNo)||p.turnNo<c.turnNo||p.turnNo>c.turnNo+1)return;
       tickClock(room);MatchClock.progress(c,p,Date.now());
       if(p.ended&&c.rules.type==='game'&&c.left===0)room.resultRecorded=true; // No Result: rematch allowed, no ratings awarded.
       room.clockReady[ws._seatIdx]=true;
@@ -395,7 +422,7 @@ wss.on('connection', (ws) => {
       if (ws._seatIdx == null || (room.started && !room.resultRecorded)) return;
       room.rematchVotes.add(ws._seatIdx);
       broadcast(room, { type: 'rematch-vote', seat, name }, ws);
-      if (room.rematchVotes.size >= 2 && bothConnected(room)) {
+      if (room.rematchVotes.size >= seatCount(room) && bothConnected(room)) {
         room.rematchVotes.clear();
         const code = ws._room;
         confirmLoadoutsThen(room, function(){
@@ -412,7 +439,14 @@ wss.on('connection', (ws) => {
     // ONCE per match (reset on each start/rematch) so Elo isn't double-counted. Spectators can't report.
     if (msg.type === 'result') {
       if (ws._spectator || !room.started || room.resultRecorded) return;
-      const w = msg.winner;                               // room seat: 'player1' | 'player2' | 'draw'
+      const w = msg.winner;                               // room seat: 'player1' | 'player2' | … | 'draw'
+      if (room.size === 4) {                              // 2v2: the match is over (rematch allowed); the 1v1 ratings are not touched
+        if (SEATS.indexOf(w) === -1 && w !== 'draw') return;
+        room.resultRecorded = true;
+        if(room.clock)MatchClock.progress(room.clock,{ended:true},Date.now());
+        console.log(`[result] room=${ws._room} 2v2 winner seat=${w}`);
+        return;
+      }
       if (w !== 'player1' && w !== 'player2' && w !== 'draw') return;
       const n0 = (room.seatMeta[0] || {}).name, n1 = (room.seatMeta[1] || {}).name;
       if (!n0 || !n1) return;
@@ -453,7 +487,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     const code = ws._room; const room = code && rooms.get(code);
     if (!room) return;
-    if (ws._spectator) { room.spectators.delete(ws); if (!liveSockets(room).length && !room.spectators.size && !room.seatMeta[0] && !room.seatMeta[1]) { rooms.delete(code); } return; }
+    if (ws._spectator) { room.spectators.delete(ws); if (!liveSockets(room).length && !room.spectators.size && !seatIdxs(room).some(i => room.seatMeta[i])) { rooms.delete(code); } return; }
     const idx = ws._seatIdx;
     if (idx == null || ws._left || room.seatSocket[idx] !== ws) return;   // already replaced by a reconnect, or left deliberately
     room.seatSocket[idx] = null;
@@ -483,18 +517,25 @@ function freeSeat(room, code, idx) {
   if (room.seatGrace[idx]) { clearTimeout(room.seatGrace[idx]); room.seatGrace[idx] = null; }
   const leaver = room.seatMeta[idx], leaverSeat = SEATS[idx];
   room.seatMeta[idx] = null; room.seatSocket[idx] = null;
-  const anyLeft = room.seatMeta[0] || room.seatMeta[1] || liveSockets(room).length;
+  const anyLeft = seatIdxs(room).some(i => room.seatMeta[i]) || liveSockets(room).length;
   if (!anyLeft) { rooms.delete(code); console.log(`[gc] room ${code} emptied`); return; }
   // Reset for a clean new match and compact the remaining player down to seat 0.
   if (room.loadout) { clearTimeout(room.loadout.timer); room.loadout = null; }
   room.started = false; room.seed = newSeed(); room.seq = 0; room.log = []; room.rematchVotes.clear();
-  room.clock=null;room.clockReady=[false,false];
+  room.clock=null;room.clockReady=seatIdxs(room).map(()=>false);
+  if (room.size === 4) {   // 2v2: the others keep their seats; the free seat waits for a new partner / opponent
+    room.timeControl = room.timeControl || ((room.seatMeta.find(Boolean) || {}).timeControl || null);
+    broadcast(room, { type: 'peer', event: 'leave', seat: leaverSeat, name: leaver ? leaver.name : null, players: roomPlayers(room) });
+    broadcast(room, { type: 'reset', reason: 'opponent-left' });
+    console.log(`[leave] room=${code} (2v2) → waiting for a player in seat ${leaverSeat}`);
+    return;
+  }
   const survivorSocket = room.seatSocket[0] || room.seatSocket[1];
   const survivorMeta = room.seatMeta[0] || room.seatMeta[1];
-  room.seatSocket = [survivorSocket || null, null];
-  room.seatMeta = [survivorMeta || null, null];
+  room.seatSocket = [survivorSocket || null, null, null, null];
+  room.seatMeta = [survivorMeta || null, null, null, null];
   room.timeControl=survivorMeta?survivorMeta.timeControl:null;
-  room.seatGrace = [null, null];
+  room.seatGrace = [null, null, null, null];
   if (survivorSocket) { survivorSocket._seatIdx = 0; }
   broadcast(room, { type: 'peer', event: 'leave', seat: leaverSeat, name: leaver ? leaver.name : null, players: roomPlayers(room) });
   broadcast(room, { type: 'reset', reason: 'opponent-left' });

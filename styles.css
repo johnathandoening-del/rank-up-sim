@@ -190,6 +190,21 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .bf.four-way #ai2-field{transform:translate(-50%,-50%) translate(0,calc(-1*var(--r4-dy))) rotate(180deg) scale(var(--s4));z-index:2;}
 .bf.four-way #ai3-field{transform:translate(-50%,-50%) translate(var(--r4-dx),0) rotate(270deg) scale(var(--s4));z-index:2;}
 .bf.radial .divider{display:none;}
+/* 2v2 (Tag / Team): partners side by side — A bottom-left, B bottom-right, D top-left, C top-right; the top row faces
+   in, turned 180°. The centre stat panel sits between the rows. Scale and offsets come from layoutTwoVTwo(). */
+.bf.two-v-two{--s22:.5;--t2-dx:330px;--t2-dy:150px;}
+.bf.two-v-two #pl-field{transform:translate(-50%,-50%) translate(calc(-1*var(--t2-dx)),var(--t2-dy)) rotate(0deg) scale(var(--s22));z-index:3;}
+.bf.two-v-two #ai3-field{transform:translate(-50%,-50%) translate(var(--t2-dx),var(--t2-dy)) rotate(0deg) scale(var(--s22));z-index:2;}
+.bf.two-v-two #ai2-field{transform:translate(-50%,-50%) translate(calc(-1*var(--t2-dx)),calc(-1*var(--t2-dy))) rotate(180deg) scale(var(--s22));z-index:2;}
+.bf.two-v-two #ai-field{transform:translate(-50%,-50%) translate(var(--t2-dx),calc(-1*var(--t2-dy))) rotate(180deg) scale(var(--s22));z-index:2;}
+.bf.two-v-two .hud-center{width:min(620px,64vw);}
+/* Tag: one Deadzone per team, between the partners. B and D are mirrored — Δ Zone on the inner side, Discard and Deck
+   on the outer — and only A's and C's Deadzone show (the partners' Deadzone is one shared pile). */
+.bf.tag-2v2 #ai3-field .deltastack,.bf.tag-2v2 #ai2-field .deltastack{order:-1;}
+.bf.tag-2v2 #ai3-field .zone.disc,.bf.tag-2v2 #ai2-field .zone.disc{order:8;}
+.bf.tag-2v2 #ai3-field .zstack,.bf.tag-2v2 #ai2-field .zstack{order:9;}
+.bf.tag-2v2 #ai3-field .zone.dead,.bf.tag-2v2 #ai2-field .zone.dead{display:none;}
+.bf.tag-2v2 #pl-field .zone.dead,.bf.tag-2v2 #ai-field .zone.dead{box-shadow:0 0 0 2px rgba(240,200,74,.55);}
 /* ── Radial: per-seat hands behind boards + a single centre stat panel (hidden entirely in 1v1) ── */
 .pf-hand3,.hud-center{display:none;}
 .bf.radial #hud-strip{display:none;}                 /* the 2-seat top strip is replaced by #hud-center */

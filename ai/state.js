@@ -73,6 +73,7 @@ var STATE_CODE = `
       if (window.ruSettleReset) window.ruSettleReset();
       window._RUcq = s.cq.slice(); window._RUcbusy = false;
       G = fastClone(s.G);
+      if (window.ruLinkTeamPools) window.ruLinkTeamPools(G);   // Tag (2v2): a copy turns the shared pools into plain data
       window.ruRngRestore(s.rng);
     }
   };

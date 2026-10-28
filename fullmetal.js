@@ -195,7 +195,7 @@
       const drawn=p.deck[0];draw(w,1);
       if(safeguard(drawn))F.ask(w,c.name,'Negate one Casualty Draw this turn?','Take 1 less Casualty',()=>{s.lessCas++;done();},done);else done();
     }else if(n===2){
-      F.choosePlayer(w,c.name,all().filter(t=>t!==w),sideSubjectLabel,t=>{s.noAddonFrom=t;done();});
+      F.choosePlayer(w,c.name,all().filter(t=>!(window.ruSameTeam?ruSameTeam(t,w):t===w)),sideSubjectLabel,t=>{s.noAddonFrom=t;done();});   // "target opponent": another team
     }else if(n===3){s.noEffectAdditionalCas=true;done();}
     else if(n===4){s.noSkillMorale=true;done();}
     else if(n===5){G._defState=G._defState||{};G._defState.negate=true;G._defState.negateLabel=c.name;done();}

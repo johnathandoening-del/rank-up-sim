@@ -29,7 +29,9 @@ var BRAIN_CODE = `
   // Seats: two in a 1v1, three or four in 1v1v1 / Royale (turn order = G.sideOrder). An eliminated seat is out.
   function seats(){ return (G && G.sideOrder ? G.sideOrder : ['player', 'ai']).filter(function(s){ return G && G[s]; }); }
   function out(s){ return !!(G && G.eliminated && G.eliminated[s]); }
-  function opps(w){ return seats().filter(function(s){ return s !== w && !out(s); }); }
+  // Same side: in 2v2 (Tag / Team) the partner; in every other mode only the seat itself.
+  function mate(s, w){ return s === w || !!(window.ruSameTeam && ruSameTeam(s, w)); }
+  function opps(w){ return seats().filter(function(s){ return !mate(s, w) && !out(s); }); }
   function opp(w){ var o = opps(w); return o.length ? o[0] : (w === 'player' ? 'ai' : 'player'); }
   function npOf(c){ return c ? (c.currentNP != null ? c.currentNP : (c.numeral || 0)) : 0; }
   function rpOf(c){ return c ? (c.currentRP != null ? c.currentRP : (c.rank || 0)) : 0; }
@@ -156,16 +158,23 @@ var BRAIN_CODE = `
   }
   // What the position is worth to w, exactly (no misjudgment).
   function worth(w){
-    if (G.gameOver) { var win = G.__winner; return win === w ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
-    if (out(w)) return -1e6;
-    var wt = (W && W.w) || W0, all = seats().filter(function(s){ return s !== w; }), sum = 0;
+    if (G.gameOver) { var win = G.__winner; return (win === w || (win && win !== 'draw' && window.ruSameTeam && ruSameTeam(win, w))) ? 1e6 : (win && win !== 'draw' ? -1e6 : 0); }
+    // w's side (2v2: w and the partner) against every opposing seat. A free-for-all is the single-seat case of it.
+    var us = seats().filter(function(s){ return mate(s, w) && !out(s); });
+    if (!us.length) return -1e6;
+    var wt = (W && W.w) || W0, all = seats().filter(function(s){ return !mate(s, w); }), sum = 0, n = 0;
     all.forEach(function(o){
-      if (out(o)) { sum += PAIR_WON; return; }
-      var t = terms(features(w, o)), v = 0;
-      for (var k in t) v += (wt[k] || 0) * t[k];
-      sum += v;
+      if (out(o)) { sum += PAIR_WON; n++; return; }
+      us.forEach(function(m){
+        var t = terms(features(m, o)), v = 0;
+        for (var k in t) v += (wt[k] || 0) * t[k];
+        sum += v; n++;
+      });
     });
-    return all.length ? sum / all.length : 0;
+    var val = n ? sum / n : 0;
+    // 2v2 Team: a fallen partner is half the team gone (they may still come back)
+    if (G.teamOf) val -= PAIR_WON * seats().filter(function(s){ return s !== w && mate(s, w) && out(s); }).length;
+    return val;
   }
 
 

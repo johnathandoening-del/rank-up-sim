@@ -5,7 +5,7 @@
  * rebuilt position must equal the page's, and every bot input must be applied. A regression test for ai/host.js +
  * ai/worker.js without a browser.
  *   node tools/headless/hostsim.js [games=4] [tierA=basic-1] [tierB=basic-1]
- *   env: CLS0 / CLS1 classes, SEED, FIRST, MODE=1v1v1|royale4, WATCH=1 (AI vs AI watch mode) */
+ *   env: CLS0 / CLS1 classes, SEED, FIRST, MODE=1v1v1|royale4|tag2v2|team2v2, WATCH=1 (AI vs AI watch mode) */
 const { createEngine } = require('./engine');
 const { newMatch } = require('./match');
 const nopaint = require('./nopaint');
@@ -17,10 +17,13 @@ function game(g, tierA, tierB) {
   const seed = process.env.SEED ? Number(process.env.SEED) : 31000 + g * 17, c0 = process.env.CLS0 || CLASSES[(g * 4 + 1) % CLASSES.length], c1 = process.env.CLS1 || CLASSES[(g * 9 + 6) % CLASSES.length];
   const page = createEngine({ seed }); nopaint.install(page);
   // MODE=1v1v1 / royale4: three or four bot seats in a turn order drawn from the game number
-  const mode = process.env.MODE || null, seatList = mode === 'royale4' ? ['player', 'ai', 'ai2', 'ai3'] : mode === '1v1v1' ? ['player', 'ai', 'ai2'] : null;
+  const mode = process.env.MODE || null, is2v2 = mode === 'tag2v2' || mode === 'team2v2';
+  const seatList = (mode === 'royale4' || is2v2) ? ['player', 'ai', 'ai2', 'ai3'] : mode === '1v1v1' ? ['player', 'ai', 'ai2'] : null;
   const classes = seatList ? Object.fromEntries(seatList.map((w, i) => [w, CLASSES[(g * 4 + 1 + i * 5) % CLASSES.length]])) : null;
-  const order = seatList ? seatList.slice().sort((a, b) => ((a.charCodeAt(a.length - 1) * (g + 3)) % 7) - ((b.charCodeAt(b.length - 1) * (g + 3)) % 7)) : null;
-  const bots = seatList ? Object.fromEntries(seatList.map((w) => [w, w === 'player' ? tierA : tierB])) : { player: tierA, ai: tierB };
+  // 2v2: A → D → B → C from a starter drawn from the game number; team A+B plays tierA, C+D tierB
+  const order = is2v2 ? (() => { const c = ['player', 'ai2', 'ai3', 'ai'], i = g % 4; return c.slice(i).concat(c.slice(0, i)); })()
+    : seatList ? seatList.slice().sort((a, b) => ((a.charCodeAt(a.length - 1) * (g + 3)) % 7) - ((b.charCodeAt(b.length - 1) * (g + 3)) % 7)) : null;
+  const bots = seatList ? Object.fromEntries(seatList.map((w) => [w, (w === 'player' || (is2v2 && w === 'ai3')) ? tierA : tierB])) : { player: tierA, ai: tierB };
   newMatch({ engine: page, seed, cls0: classes ? classes.player : c0, cls1: classes ? classes.ai : c1, firstSeat: process.env.FIRST != null ? Number(process.env.FIRST) : g % 2,
     solo: { bots }, mode: mode || undefined, order: order || undefined, classes: classes || undefined });
   if (seatList) console.log(`  ${mode}: order ${order.join(' > ')}, classes ${seatList.map((w) => classes[w]).join('/')}`);
