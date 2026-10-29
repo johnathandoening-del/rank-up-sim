@@ -53,7 +53,7 @@ var STATE_CODE = `
   window.__S = {
     clone: function(v){ return deepClone(v, new Map()); },
     quiet: function(){
-      return !!(G && !openEl(modal()) && !openEl(picker()) && !(typeof SF !== 'undefined' && SF)
+      return !!(G && !G._counterFrame && !openEl(modal()) && !openEl(picker()) && !(typeof SF !== 'undefined' && SF)
         && !((window._RUcq && window._RUcq.length) || window._RUcbusy)
         && !(typeof _modalQueue !== 'undefined' && _modalQueue.length)
         && !(window.ruSettlePending && window.ruSettlePending()));

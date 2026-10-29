@@ -112,7 +112,7 @@ var MOVES_CODE = `
     (p.discard||[]).forEach(function(c){ if (typeof SDEFS !== 'undefined' && SDEFS[c.name]) out.push({ t:'startSkill', source:'discard', id:c.id, s:seat }); if (c.type === 'area') out.push({ t:'areaDrop', id:c.id, s:seat }); if (c.name === 'Restorative 3') out.push({ t:'rest3', id:c.id, s:seat }); });
     (p.deadzone||[]).forEach(function(c){
       if (typeof SDEFS !== 'undefined' && SDEFS[c.name]) out.push({ t:'startSkill', source:'deadzone', id:c.id, s:seat });
-      if (c.type === 'area' && typeof ADEFS !== 'undefined' && ADEFS[c.name]) (ADEFS[c.name].effects||[]).forEach(function(e, i){ out.push({ t:'areaFx', id:c.id, i:i, s:seat }); });
+      if (c.type === 'area' && typeof ADEFS !== 'undefined' && ADEFS[c.name] && window.ruCanUseArea(seat,c)) (ADEFS[c.name].effects||[]).forEach(function(e, i){ out.push({ t:'areaFx', id:c.id, i:i, s:seat }); });
     });
     if (p.delta && p.delta[0]) out.push({ t:'amalgSkill', id:p.delta[0].id, s:seat });
     if ((p.evolutions||[]).length) out.push({ t:'delta', w:seat, s:seat });

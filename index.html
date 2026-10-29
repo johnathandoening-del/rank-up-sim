@@ -491,8 +491,8 @@ function ruSoloBotConfig(mode){
   if(!window.RUBots||!window.RUBots.available())return null;
   if(['standard','tournament','gauntlet','ai-vs-ai','1v1v1','royale4','tag2v2','team2v2'].indexOf(mode)===-1)return null;
   const aivai=mode==='ai-vs-ai', evo=evolutionsAllowed();
-  const tierOf=function(w){return window.ru14KeyFor?window.ru14KeyFor(w):'basic-1';};
-  const botDelta=function(cls,w){return (evo&&window.ruBotDeltaDeckFor)?window.ruBotDeltaDeckFor(cls,w):[];};
+  const tierOf=function(w){return window.ru14KeyFor?window.ru14KeyFor(w,mode):'basic-1';};
+  const botDelta=function(cls,w){return (evo&&window.ruBotDeltaDeckFor)?window.ruBotDeltaDeckFor(cls,w,mode):[];};
   // a bot running a Δ Deck sometimes fields Amalgamation Nation (more often at higher tiers)
   const botArea=function(w,deck){
     if(typeof window.RU_AI_AREA_SUPPORT!=='undefined')return window.RU_AI_AREA_SUPPORT||null;
@@ -693,7 +693,8 @@ function oppOf(w){
   // actor points at the pick -- including effect fns that call other()/oppOf() directly rather than
   // reading runStep's opp param. Tied to SF's lifecycle, so it clears automatically when the effect
   // ends (SF=null); it never leaks into turn-order logic. try/catch guards SF being in its TDZ.
-  try{ if(typeof SF!=='undefined'&&SF&&SF.who===w&&SF.ctx&&SF.ctx._targetOppSide&&G&&G[SF.ctx._targetOppSide]&&!(G.eliminated&&G.eliminated[SF.ctx._targetOppSide]))return SF.ctx._targetOppSide; }catch(e){}
+  const enemies=oppList(w);
+  try{ if(typeof SF!=='undefined'&&SF&&SF.who===w&&SF.ctx&&enemies.includes(SF.ctx._targetOppSide))return SF.ctx._targetOppSide; }catch(e){}
   if(!G||!G.sideOrder)return w==='player'?'ai':'player';
   const order=G.sideOrder;
   const idx=order.indexOf(w);
@@ -723,6 +724,7 @@ function makeStart(pfx){
 function ruEmptyRank(pfx){const c=makeStart(pfx);c._empty=true;return c;}
 function mkSide(pfx,cls,seat){
   const deck=buildDeck(cls);
+  deck.forEach(function(c){if(c.type==='area')c._ownerSeat=seat;});
   const cfg=window.RU_NET_CONFIG;
   const supports=cfg?(cfg.actionSupports||{})[seat]:(seat==='player'?window.RU_PLAYER_ACTION_SUPPORT:null);
   if((cfg?cfg.allowEvolutions!==false:evolutionsAllowed())&&window.ruApplyDeltaActionSupport)window.ruApplyDeltaActionSupport(deck,supports);
@@ -1564,7 +1566,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
   // (Tag: the team is one player — a "Casualty Draws against you" stop either partner set covers both)
   function isNeg(who){ return !!(R() && ((G._casDrawPrevented&&ruPlayerSeats(who).some(function(s){ return G._casDrawPrevented[s]; })) || G._casDrawsNegated)); }
   function uiBusy(){ try{ return window.ruUiBusy(); }catch(e){ return false; } }
-  function waitIdle(cb){ if(uiBusy()){ setTimeout(function(){ waitIdle(cb); },40); return; } cb(); }
+  function waitIdle(cb,frame){ if(uiBusy()||G.mode==='oppzonepick'||(G._counterFrame||null)!==frame||(G._counterAtkQ&&G._counterAtkQ.length)){ setTimeout(function(){ waitIdle(cb,frame); },40); return; } cb(); }
   function track(who,card){ G._casCardsThisTurn=G._casCardsThisTurn||{player:[],ai:[]}; (G._casCardsThisTurn[who]=G._casCardsThisTurn[who]||[]).push(card); }
   // A field zone (Rank / Flanks / Δ) may ONLY ever hold a Numeral-like card — never an Action or Area
   // card. A Dead-Draw (E2) resolving during the Damage Step must not be able to leave one there, so
@@ -1580,7 +1582,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
     if(p.delta && bad(p.delta[0])){ var dc=p.delta[0]; p.delta=[]; ruDrop(p,dc);
       try{ log(poss()+" "+(dc.name||'card')+" cannot occupy the Δ Zone and is sent to the Drop.",'dmg'); }catch(e){} }
   };
-  function doE2(who,card,after){ var mark=window.ruActMark?ruActMark():0; try{ window.applyE2(who,card); }catch(e){} waitIdle(function(){ win2(); render2(); if(window.ruActFlush)ruActFlush(mark,after); else after(); }); }
+  function doE2(who,card,after){ var mark=window.ruActMark?ruActMark():0,frame=G._counterFrame||null; try{ window.applyE2(who,card); }catch(e){} waitIdle(function(){ win2(); render2(); if(window.ruActFlush)ruActFlush(mark,after); else after(); },frame); }
   // Tag: the partners share one Deadzone and play as one player, so a Dead Draw its owner left unused may be activated
   // by the partner instead (who pays its costs and gets its effect) — still before the next Casualty Draw is pulled.
   function partnerDeadDraw(owner,card,next){
@@ -1602,7 +1604,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
     // Never open the Casualty Draw confirmation on top of another open modal/picker (e.g. a
     // Fission skill's hand-cost or Deck-search prompt) — that silently orphans this draw's
     // E2 prompt and permanently stalls the whole queue. Wait for the UI to go idle first.
-    if(uiBusy()){ setTimeout(step,40); return; }
+    if(uiBusy()||G.mode==='oppzonepick'){ setTimeout(step,40); return; }
     var entry=window._RUcq[0],who=typeof entry==='string'?entry:entry.who;
     // REDIRECT (Reverse E2): Casualty Draws "after this" go to the player who gave the casualty.
     // G._casRedirect holds the side that played Reverse; their incoming casualties go to the opponent.
@@ -4558,6 +4560,16 @@ function ruEachOpp(w,fn){
   ruOncePerTeam(livingOpponentsOf(w)).forEach(function(s){if(G[s])fn(s,G[s]);});   // (Tag: the opposing team is one opponent)
 }
 window.ruEachOpp=ruEachOpp;
+// Tag shares CC, but the selected opponent supplies the actual Casualty Draw cards.
+function ruResolveCasualtyTargets(w,title,targets,done){
+  targets=targets.filter(s=>G[s]&&livingOpponentsOf(w).includes(s));
+  if(!ruIsTag()||targets.length<2){done(targets);return;}
+  ruOwnPrompt(w);
+  openModal(title+' — Casualty Recipient','Choose which opponent takes the Casualty Draws.',targets.map(s=>({
+    label:sideSubjectLabel(s),cls:'mb-skill',fn:function(){closeModal();done([s]);}
+  })));
+}
+window.ruResolveCasualtyTargets=ruResolveCasualtyTargets;
 // Does this card's effect hit ONE opponent that its user picks? Read from the printed text — never a card-name list:
 // "target opponent" always does; a plain "opponent" in a proactive effect (a Numeral skill used on purpose, an
 // Advantageous card) does too — unless that sentence is about an attack under way (the attacked / attacking seat IS
@@ -7204,37 +7216,9 @@ function useRetL3(idx,card){
 // Perform one immediate avenging Rank Zone attack (the acting seat's) against the seat that attacked it.
 function doCounterAttack(npBonus,opts){
   opts=opts||{};const me=ruActor(),p=G[me];
-  const targetSide=(G._lastAtkInfo&&G._lastAtkInfo.aWho&&G._lastAtkInfo.aWho!==me&&G[G._lastAtkInfo.aWho])
-    ? G._lastAtkInfo.aWho
-    : ((G.turn&&G.turn!==me&&G[G.turn])?G.turn:oppOf(me));
-  const ai=G[targetSide],targetLabel=sidePossessiveLabel(targetSide);
-  if(!ai){log('Counterattack: no opponent target available.','info');return;}
   if(!p.rankZone){log('No Rank Zone card able to counterattack.','info');return;}
   if(npBonus)buffNP(p.rankZone,npBonus);
-  // Valid targets follow the same click-highlight path as a normal player attack.
-  // Digit flanks are immune and cannot be targeted.
-  const targets=[];
-  const addTarget=(zone,card)=>{if(card&&(zone==='rank'||!card.isDigit))targets.push({zone,card});};
-  if(opts.direct){addTarget('rank',ai.rankZone);}
-  else {addTarget('rank',ai.rankZone);addTarget('left-flank',ai.leftFlank);addTarget('right-flank',ai.rightFlank);addTarget('rear-flank',ai.rearFlank);addTarget('delta',ai.delta&&ai.delta[0]);}
-  if(!targets.length){log('Counterattack: no target available.','info');renderAll();return;}
-  const doResolve=(tz)=>{
-    const defCard=tz==='rank'?ai.rankZone:(tz==='left-flank'?ai.leftFlank:(tz==='right-flank'?ai.rightFlank:(tz==='rear-flank'?ai.rearFlank:(ai.delta&&ai.delta[0]))));
-    if(!defCard){log('Counterattack: no target available.','info');return;}
-    ruDeclareAttack(me,'rank',targetSide,tz,0,()=>{
-      const result=G._lastAttackDeclaration;
-      if(opts.millOnHit&&result&&result.aWho===me&&result.resolved&&result.winner==='attacker'){
-        mill(targetSide,opts.millOnHit);log(`Counterattack hit \u2014 ${targetLabel} mills ${opts.millOnHit}.`,'dmg');
-      }
-      renderAll();
-    });
-  };
-  if(targets.length===1){ doResolve(targets[0].zone); return; }
-  ruOwnPrompt(me);
-  openModal('Counterattack \u2014 choose your target',
-    '<p style="font-size:.82rem;">Select which of '+sidePossLower(targetSide)+' cards '+sidePossLower(me)+' Rank Zone attacks.</p>',
-    targets.map(t=>({label:`${targetLabel} ${t.card.name} (NP ${(t.card.currentNP ?? t.card.numeral)})`,cls:'mb-skill',fn:()=>{closeModal();doResolve(t.zone);}}))
-  );
+  window.offerCounterAttackRA(me,p.rankZone,Object.assign({},opts,{immediate:true}));
 }
 
 // ═══════════════════════════════════════════
@@ -7456,6 +7440,12 @@ function ruControlsAreMine(){return !ruIsOnline()||!G._actor||isLocalHumanSeat(G
 function setHint(t){if(!ruControlsAreMine())return;const e=el('hint');if(e)e.textContent=t;}
 function ruSyncTurnControls(){
   if(!ruIsOnline()||!G||!G.turn)return;
+  if(G._counterFrame&&G.mode==='oppzonepick'){
+    const mine=isLocalHumanSeat(ruModeOwner());
+    ['btn-adv','btn-end','btn-atk','btn-sd','btn-rv','btn-can'].forEach(function(id){const e=el(id);if(e)e.style.display=mine&&id==='btn-can'?'':'none';});
+    const hint=el('hint');if(hint)hint.textContent=mine?(G._counterFrame.stage==='attacker'?'Select your counterattacker.':'Select a counterattack target.'):(sideNameLabel(ruModeOwner())+' is selecting a counterattack.');
+    return;
+  }
   if(ruLocalSeatActive(G.turn)&&!G.gameOver)return;   // this screen's own turn: its handlers manage the controls
   ['btn-adv','btn-end','btn-atk','btn-sd','btn-rv','btn-can'].forEach(function(id){const e=el(id);if(e)e.style.display='none';});
   const h=el('hint');if(!h)return;
@@ -9673,7 +9663,7 @@ const ADEFS = {
 // Clicking your Deadzone: surface any Area card's ongoing effects, plus a contents list.
 function deadzoneClick(who){
   if(!isLocalHumanSeat(who)){viewZone(who,'deadzone');return;}
-  const p=G[who];const areas=p.deadzone.filter(c=>c.type==='area'&&ADEFS[c.name]);
+  const p=G[who];const areas=p.deadzone.filter(c=>c.type==='area'&&ADEFS[c.name]&&ruCanUseArea(who,c));
   if(!areas.length){viewZone(who,'deadzone');return;}
   let body=`<p style="font-size:.78rem;color:var(--text-dim);margin-bottom:.5rem;">${p.deadzone.length} card(s) in your Deadzone. Area cards here keep their passive and may use ongoing effects.</p>`;const btns=[];
   areas.forEach(card=>{const def=ADEFS[card.name];body+=`<div style="border:1px solid rgba(180,100,200,.4);border-radius:6px;padding:.5rem;margin-bottom:.4rem;"><div class="cdn" style="font-size:.82rem;">${card.name}</div><div style="font-size:.7rem;color:var(--text-dim);"><strong>Passive:</strong> ${def.passive||''}</div></div>`;(def.effects||[]).forEach((e,i)=>{const ok=!e.check||e.check(who);
@@ -9683,12 +9673,19 @@ function deadzoneClick(who){
     btns.push({label:`${card.name}: ${e.label}${ok?'':' ✕'+sharedHint}`,cls:'mb-skill',fn:()=>{window.runDeadzoneAreaEffect&&window.runDeadzoneAreaEffect(who,card.id,i);}});});});
   btns.push({label:'View full Deadzone',fn:()=>{closeModal();viewZone(who,'deadzone');}});btns.push({label:'Close',fn:()=>closeModal()});openModal('Your Deadzone — Area Effects',body,btns);ruTagViewModal();
 }
+function ruCanUseArea(who,card){
+  if(!G||!card)return false;
+  if(!G.teamOf)return true;
+  return card._ownerSeat===who;
+}
+window.ruCanUseArea=ruCanUseArea;
 function runDeadzoneAreaEffect(who,cardId,effectIdx){
   const p=G&&G[who];if(!p)return;
   const card=(p.deadzone||[]).find(c=>c&&c.id===cardId);
   const def=card&&ADEFS[card.name];
   const e=def&&def.effects&&def.effects[effectIdx];
   if(!card||!e){log('That Area effect is no longer available.','dmg');return;}
+  if(!ruCanUseArea(who,card)){log('Only the owner of this Area Card may activate its effects.','dmg');return;}
   const ok=!e.check||e.check(who);
   if(!ok){log(`${card.name}: effect conditions are not met.`,'dmg');return;}
   closeModal();
@@ -9698,6 +9695,7 @@ function runDeadzoneAreaEffect(who,cardId,effectIdx){
 }
 window.runDeadzoneAreaEffect=runDeadzoneAreaEffect;
 function activateAreaEffect(who,card,handIdx){
+  if(!ruCanUseArea(who,card)){log('Only the owner of this Area Card may activate its effects.','dmg');return;}
   if(handIdx!==undefined&&G[who].hand.includes(card)){activateAreaToDeadzone(who,handIdx,card);return;}
   const def=ADEFS[card.name];
   if(!def){log(`${card.name}: Area Card effects not yet implemented.`,'info');return;}
@@ -10273,7 +10271,7 @@ ADEFS['Seven Heaven']={
 // V11.4 PATCH — Δ Deck Builder + Amalgamation Rank Up
 // ═══════════════════════════════════════════
 (function(){
-  const AMALGAMATION_LIBRARY=[{"id": "amalg-benevolent-1", "pool": "benevolent", "displayName": "Benevolent Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Benevolent", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “1” cards, including at least 1 Benevolent Numeral “1”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Draw one card. If the card you drew was a Numeral, gain MP equal to that card’s Rank.", "quantity": 2}, {"id": "amalg-benevolent-2", "pool": "benevolent", "displayName": "Benevolent Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Benevolent", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “2” cards, including at least 1 Benevolent Numeral “2”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "The card in your Rank Zone gets another attack. If the attack due to this skill is successful, both players gain 2 MP at the end of the turn.", "quantity": 2}, {"id": "amalg-benevolent-3", "pool": "benevolent", "displayName": "Benevolent Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Benevolent", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “3” cards, including at least 1 Benevolent Numeral “3”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop. Secondary Cost: Drop 2 cards from your hand.", "skillText": "Add one card from your hand to your Bank. When this card has no Amalgamation elements while your opponent has cards in their Bank, it gains this Secondary Skill: take 1 card from your Deadzone. That card becomes this card’s Amalgamation element.", "quantity": 2}, {"id": "amalg-benevolent-4", "pool": "benevolent", "displayName": "Benevolent Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Benevolent", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “4” cards, including at least 1 Benevolent Numeral “4”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone.", "skillText": "The card in your Rank Zone gains 4 NP until the end of the turn. Your opponent gains 2 MP at the start of their next turn.", "quantity": 2}, {"id": "amalg-benevolent-5", "pool": "benevolent", "displayName": "Benevolent Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Benevolent", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “5” cards, including at least 1 Benevolent Numeral “5”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone and send the top card of your Deck to the Drop when this card attacks.", "skillText": "This card and the card in your Rank Zone gain 3 NP until the end of your next turn. If more than 3 Morale Damage was dealt the turn you used this skill, increase your MP by this card’s Numeral.", "quantity": 2}, {"id": "amalg-benevolent-6", "pool": "benevolent", "displayName": "Benevolent Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Benevolent", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “6” cards, including at least 1 Benevolent Numeral “6”.", "skillCost": "Once per turn, when a Numeral on your Battlefield would be destroyed by battle, send an Amalgamation element to the Drop.", "skillText": "Negate the destruction of that Numeral, and if you do, recover 1 card from your Drop at the end of the turn. You cannot use any Action Cards the turn you use this skill.", "quantity": 2}, {"id": "amalg-benevolent-7", "pool": "benevolent", "displayName": "Benevolent Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Benevolent", "rank": 4, "numeral": 7, "A": 3, "M": 4, "S": 5, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “7” cards, including at least 1 Benevolent Numeral “7”.", "skillCost": "Once per turn, after your Draw Phase, send an Amalgamation element to the Drop.", "skillText": "Add three cards from your Drop to your hand, and if you do, your opponent must add one card from their Deadzone and Drop to their hand. You cannot attack the turn you use this skill.", "quantity": 2}, {"id": "amalg-benevolent-8", "pool": "benevolent", "displayName": "Benevolent Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Benevolent", "rank": 4, "numeral": 8, "A": 3, "M": 4, "S": 99, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “8” cards, including at least 1 Benevolent Numeral “8”.", "skillCost": "Once per turn at the start of the Battle Phase, send an Amalgamation element to the Deadzone and drop the top 2 cards of your Deck.", "skillText": "Your Rank Zone card gains NP equal to the Numeral sent to the Drop by this skill until the end of their next turn, and your Rank Zone card gets as many additional attacks as the number of Flanks you control. Gain Morale equal to the number of cards in your Bank at the end of the turn.", "quantity": 2}, {"id": "amalg-benevolent-9", "pool": "benevolent", "displayName": "Benevolent Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Benevolent", "rank": 4, "numeral": 9, "A": 3, "M": 4, "S": 6, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “9” cards, including at least 1 Benevolent Numeral “9”.", "skillCost": "Once every 3 turns, send an Amalgamation element to the Deadzone, then send one card from your hand and the top 2 cards of your Deck to the Drop.", "skillText": "This card gains NP equal to the number of cards in your Bank until the end of the turn. Your opponent must send 1 card from their Deadzone to the Drop after each attack made by this card. This card cannot attack for your next 2 turns after you use this skill.", "quantity": 2}, {"id": "amalg-malevolent-1", "pool": "malevolent", "displayName": "Malevolent Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Malevolent", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “1” cards, including at least 1 Malevolent Numeral “1”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Your opponent must send the top card of their Deck to the Drop.", "quantity": 2}, {"id": "amalg-malevolent-2", "pool": "malevolent", "displayName": "Malevolent Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Malevolent", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “2” cards, including at least 1 Malevolent Numeral “2”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "The card in your Rank Zone gets another attack while the card in your opponent’s Rank Zone loses 2 NP this turn.", "quantity": 2}, {"id": "amalg-malevolent-3", "pool": "malevolent", "displayName": "Malevolent Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Malevolent", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “3” cards, including at least 1 Malevolent Numeral “3”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop. Secondary Cost: Drop 2 cards from your hand.", "skillText": "Add one card from your hand to your Bank. When this card has no Amalgamation elements while your opponent has cards in their Bank, it gains this Secondary Skill: take 1 card from your opponent’s Bank. That card becomes this card’s Amalgamation element.", "quantity": 2}, {"id": "amalg-malevolent-4", "pool": "malevolent", "displayName": "Malevolent Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Malevolent", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “4” cards, including at least 1 Malevolent Numeral “4”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone.", "skillText": "The card in your opponent’s Rank Zone loses 4 NP until the end of the turn.", "quantity": 2}, {"id": "amalg-malevolent-5", "pool": "malevolent", "displayName": "Malevolent Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Malevolent", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “5” cards, including at least 1 Malevolent Numeral “5”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone and send the top card of your Deck to the Drop when this card attacks.", "skillText": "This card and the card in your Rank Zone gain 3 NP until the end of your next turn. If more than 3 Morale Damage was dealt the turn you used this skill, double the Morale Damage your opponent received from any attacks involving this card at the end of the turn.", "quantity": 2}, {"id": "amalg-malevolent-6", "pool": "malevolent", "displayName": "Malevolent Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Malevolent", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “6” cards, including at least 1 Malevolent Numeral “6”.", "skillCost": "Once per turn, when a Numeral on your Battlefield would be destroyed by battle, send an Amalgamation element to the Drop.", "skillText": "Negate the destruction of that Numeral, and if you do, your opponent must send the top card of their Deck to the Drop at the end of the turn. You cannot use any Action Cards the turn you use this skill.", "quantity": 2}, {"id": "amalg-malevolent-7", "pool": "malevolent", "displayName": "Malevolent Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Malevolent", "rank": 4, "numeral": 7, "A": 3, "M": 4, "S": 5, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “7” cards, including at least 1 Malevolent Numeral “7”.", "skillCost": "Once per turn, after your Draw Phase, send an Amalgamation element to the Drop.", "skillText": "Add one card from your Deadzone to your hand, and if you do, your opponent must add one card from their hand to their Deadzone. You cannot attack the turn you use this skill.", "quantity": 2}, {"id": "amalg-malevolent-8", "pool": "malevolent", "displayName": "Malevolent Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Malevolent", "rank": 4, "numeral": 8, "A": 3, "M": 4, "S": 99, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “8” cards, including at least 1 Malevolent Numeral “8”.", "skillCost": "Once per turn at the start of the Battle Phase, send an Amalgamation element to the Deadzone and drop the top 2 cards of your Deck.", "skillText": "Your opponent’s Rank Zone card loses NP equal to the Numeral sent to the Drop by this skill until the end of their next turn, and your Rank Zone card gets as many additional attacks as the Rank of the card dropped from the top of your Deck. Gain Morale equal to the amount of Morale Damage dealt this turn.", "quantity": 2}, {"id": "amalg-malevolent-9", "pool": "malevolent", "displayName": "Malevolent Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Malevolent", "rank": 4, "numeral": 9, "A": 3, "M": 4, "S": 6, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “9” cards, including at least 1 Malevolent Numeral “9”.", "skillCost": "Once every 3 turns, send an Amalgamation element to the Deadzone, then send one card from your hand and the top 2 cards of your Deck to the Drop.", "skillText": "Your opponent loses 9 MP and must either take 4 Dead Draws or drop 9 cards. This card cannot attack for your next 2 turns after you use this skill.", "quantity": 2}, {"id": "amalg-unknown-1", "pool": "unknown", "displayName": "Unknown Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Unknown", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Numeral “1” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Draw one card.", "quantity": 2}, {"id": "amalg-unknown-2", "pool": "unknown", "displayName": "Unknown Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Unknown", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Numeral “2” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "The card in your Rank Zone gets another attack this turn.", "quantity": 2}, {"id": "amalg-unknown-3", "pool": "unknown", "displayName": "Unknown Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Unknown", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Numeral “3” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Add one card from your hand to your Bank.", "quantity": 2}, {"id": "amalg-unknown-4", "pool": "unknown", "displayName": "Unknown Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Unknown", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Numeral “4” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone.", "skillText": "The card in your Rank Zone gains 4 NP until the end of the turn.", "quantity": 2}, {"id": "amalg-unknown-5", "pool": "unknown", "displayName": "Unknown Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Unknown", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Numeral “5” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone when this card attacks.", "skillText": "This card gains 3 NP until the end of the turn. If more than 3 Morale Damage was dealt the turn you used this skill, double the Morale you get from this skill.", "quantity": 2}, {"id": "amalg-unknown-6", "pool": "unknown", "displayName": "Unknown Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Unknown", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Numeral “6” cards.", "skillCost": "Once per turn, when a Numeral on your Battlefield would be destroyed by battle, send an Amalgamation element to the Drop.", "skillText": "Negate the destruction of that Numeral. You cannot use any Action Cards the turn you use this skill.", "quantity": 2}, {"id": "amalg-unknown-7", "pool": "unknown", "displayName": "Unknown Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Unknown", "rank": 4, "numeral": 7, "A": 3, "M": 4, "S": 5, "skillType": "Skilled", "requirements": "3 Numeral “7” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Add one card from your Deadzone to your hand.", "quantity": 2}, {"id": "amalg-unknown-8", "pool": "unknown", "displayName": "Unknown Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Unknown", "rank": 4, "numeral": 8, "A": 3, "M": 4, "S": 99, "skillType": "Skilled", "requirements": "3 Numeral “8” cards.", "skillCost": "Once per turn at the start of the Battle Phase, send an Amalgamation element to the Deadzone and drop the top card of your Deck.", "skillText": "Your Flanks gain 8 NP until the end of the turn, and your Rank Zone card gets as many additional attacks as the Rank of the card dropped from the top of your Deck. Gain Morale equal to the Numeral sent to the Drop by this skill.", "quantity": 2}, {"id": "amalg-unknown-9", "pool": "unknown", "displayName": "Unknown Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Unknown", "rank": 4, "numeral": 9, "A": 3, "M": 4, "S": 6, "skillType": "Skilled", "requirements": "3 Numeral “9” cards.", "skillCost": "Once every 3 turns, send an Amalgamation element to the Deadzone, then send one card from your hand and the top card of your Deck to the Drop.", "skillText": "Your opponent must either take 3 Dead Draws or drop 9 cards. This card cannot attack for your next 2 turns after you use this skill.", "quantity": 2}, {"id": "amalg-skillcopy-1", "pool": "skillcopy", "displayName": "Skill Copy Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Unknown", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “1” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-2", "pool": "skillcopy", "displayName": "Skill Copy Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Unknown", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “2” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-3", "pool": "skillcopy", "displayName": "Skill Copy Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Unknown", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “3” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-4", "pool": "skillcopy", "displayName": "Skill Copy Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Unknown", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Skilled Numeral “4” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-5", "pool": "skillcopy", "displayName": "Skill Copy Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Unknown", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Skilled Numeral “5” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-6", "pool": "skillcopy", "displayName": "Skill Copy Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Unknown", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Skilled Numeral “6” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-7", "pool": "skillcopy", "displayName": "Skill Copy Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Unknown", "rank": 4, "numeral": 7, "A": 3, "M": 5, "S": 5, "skillType": "Skilled", "requirements": "3 Skilled Numeral “7” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-8", "pool": "skillcopy", "displayName": "Skill Copy Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Unknown", "rank": 4, "numeral": 8, "A": 3, "M": 5, "S": 5, "skillType": "Skilled", "requirements": "3 Skilled Numeral “8” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-9", "pool": "skillcopy", "displayName": "Skill Copy Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Unknown", "rank": 4, "numeral": 9, "A": 3, "M": 5, "S": 5, "skillType": "Skilled", "requirements": "3 Skilled Numeral “9” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-unknown-0", "pool": "unknown", "displayName": "Unknown Rank¹ Numeral 0", "name": "Rank¹ Numeral 0", "alignment": "Unknown", "rank": 1, "numeral": 0, "A": 3, "M": 1, "S": 99, "skillType": "Skilled", "requirements": "3 Numerals whose NP are 0, or 3 Numeral “0” cards.", "skillCost": "Send an Amalgamation element to the Deadzone and mill one card. (Not once per turn — usable for each Element sent, up to 3 times per turn.)", "skillText": "Target one Numeral on any player’s Battlefield: its NP becomes 0 until the end of the turn and this card gains that NP. Then you and that Numeral’s controller each gain Morale equal to that Numeral’s Rank. If the Element you sent was a Numeral “0”, that Numeral’s controller must discard their hand, and you and that Numeral’s controller each gain 1 MP for every card discarded this way.", "quantity": 2}, {"id": "amalg-skillcopy-0", "pool": "skillcopy", "displayName": "Skill Copy Rank¹ Numeral 0", "name": "Rank¹ Numeral 0", "alignment": "Unknown", "rank": 1, "numeral": 0, "A": 1, "M": 3, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “0” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-benevolent-10", "pool": "benevolent", "displayName": "Benevolent Rank ULTRA Numeral 10", "name": "Rank ULTRA Numeral 10", "alignment": "Benevolent", "rank": 5, "isRankUltra": true, "numeral": 10, "A": 4, "M": 5, "S": 10, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “10” cards, including at least 1 Benevolent Numeral “10”.", "skillCost": "Send an Amalgamation element to the Deadzone, discard 5 cards from your hand, and mill 10 cards.", "skillText": "All players gain 10 Morale when this card’s skill is activated. Your Rank Zone Numeral’s A value increases by Ⅰ for every Rank³ Numeral in your Bank until the end of the turn.", "quantity": 2}, {"id": "amalg-benevolent-11", "pool": "benevolent", "displayName": "Benevolent Rank ULTRA Numeral 11", "name": "Rank ULTRA Numeral 11", "alignment": "Benevolent", "rank": 5, "isRankUltra": true, "numeral": 11, "A": 4, "M": 5, "S": 99, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “11” cards, including at least 1 Benevolent Numeral “11”.", "skillCost": "Send an Amalgamation element to the Deadzone and discard cards from your hand whose Rank Points total exactly 11.", "skillText": "Return all cards in all Deadzones to their owners’ Decks. Gain 1 MP for every card returned this way across all players. All other players lose 11 MP for every Rank³ or higher card returned to their Deck by this skill this turn. You cannot attack the turn you use this skill.", "quantity": 2}, {"id": "amalg-benevolent-12", "pool": "benevolent", "displayName": "Benevolent Rank ULTRA Numeral 12", "name": "Rank ULTRA Numeral 12", "alignment": "Benevolent", "rank": 5, "isRankUltra": true, "numeral": 12, "A": 4, "M": 8, "S": 99, "SText": "+?&-?", "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “12” cards, including at least 1 Benevolent Numeral “12”.", "skillCost": "Send all Amalgamation Elements to the Deadzone and mill 12 cards.", "skillText": "Skill 1: All players discard their hands and draw 6 cards. The card in your Rank Zone gets an additional attack for every Rank² or higher card drawn by any player due to this skill, and all players gain 2 MP for every Rank² or higher card they drew this way.", "skillCost2": "Return one card from your Discard or hand back into your Deck.", "skillText2": "Skill 2: if you used at least 2 Advantageous Action Cards this turn before activating this card’s Skill 1, you may continuously double the effects of those cards after each attack from your Rank Zone card by paying half your Morale every time. You cannot use this skill if your Morale is below 12.", "quantity": 2}];
+  const AMALGAMATION_LIBRARY=[{"id": "amalg-benevolent-1", "pool": "benevolent", "displayName": "Benevolent Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Benevolent", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “1” cards, including at least 1 Benevolent Numeral “1”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Draw one card. If the card you drew was a Numeral, gain MP equal to that card’s Rank.", "quantity": 2}, {"id": "amalg-benevolent-2", "pool": "benevolent", "displayName": "Benevolent Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Benevolent", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “2” cards, including at least 1 Benevolent Numeral “2”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "The card in your Rank Zone gets another attack. If the attack due to this skill is successful, both players gain 2 MP at the end of the turn.", "quantity": 2}, {"id": "amalg-benevolent-3", "pool": "benevolent", "displayName": "Benevolent Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Benevolent", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “3” cards, including at least 1 Benevolent Numeral “3”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop. Secondary Cost: Drop 2 cards from your hand.", "skillText": "Add one card from your hand to your Bank. When this card has no Amalgamation elements while your opponent has cards in their Bank, it gains this Secondary Skill: take 1 card from your Deadzone. That card becomes this card’s Amalgamation element.", "quantity": 2}, {"id": "amalg-benevolent-4", "pool": "benevolent", "displayName": "Benevolent Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Benevolent", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “4” cards, including at least 1 Benevolent Numeral “4”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone.", "skillText": "The card in your Rank Zone gains 4 NP until the end of the turn. Your opponent gains 2 MP at the start of their next turn.", "quantity": 2}, {"id": "amalg-benevolent-5", "pool": "benevolent", "displayName": "Benevolent Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Benevolent", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “5” cards, including at least 1 Benevolent Numeral “5”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone and send the top card of your Deck to the Drop when this card attacks.", "skillText": "This card and the card in your Rank Zone gain 3 NP until the end of your next turn. If more than 3 Morale Damage was dealt the turn you used this skill, increase your MP by this card’s Numeral.", "quantity": 2}, {"id": "amalg-benevolent-6", "pool": "benevolent", "displayName": "Benevolent Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Benevolent", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “6” cards, including at least 1 Benevolent Numeral “6”.", "skillCost": "Once per turn, when a Numeral on your Battlefield would be destroyed by battle, send an Amalgamation element to the Drop.", "skillText": "Negate the destruction of that Numeral, and if you do, recover 1 card from your Drop at the end of the turn. You cannot use any Action Cards the turn you use this skill.", "quantity": 2}, {"id": "amalg-benevolent-7", "pool": "benevolent", "displayName": "Benevolent Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Benevolent", "rank": 4, "numeral": 7, "A": 3, "M": 4, "S": 5, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “7” cards, including at least 1 Benevolent Numeral “7”.", "skillCost": "Once per turn, after your Draw Phase, send an Amalgamation element to the Drop.", "skillText": "Add three cards from your Drop to your hand, and if you do, your opponent must add one card from their Deadzone and Drop to their hand. You cannot attack the turn you use this skill.", "quantity": 2}, {"id": "amalg-benevolent-8", "pool": "benevolent", "displayName": "Benevolent Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Benevolent", "rank": 4, "numeral": 8, "A": 3, "M": 4, "S": 99, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “8” cards, including at least 1 Benevolent Numeral “8”.", "skillCost": "Once per turn at the start of the Battle Phase, send an Amalgamation element to the Deadzone and drop the top 2 cards of your Deck.", "skillText": "Your Rank Zone card gains NP equal to the Numeral sent to the Drop by this skill until the end of their next turn, and your Rank Zone card gets as many additional attacks as the number of Flanks you control. Gain Morale equal to the number of cards in your Bank at the end of the turn.", "quantity": 2}, {"id": "amalg-benevolent-9", "pool": "benevolent", "displayName": "Benevolent Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Benevolent", "rank": 4, "numeral": 9, "A": 3, "M": 4, "S": 6, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “9” cards, including at least 1 Benevolent Numeral “9”.", "skillCost": "Once every 3 turns, send an Amalgamation element to the Deadzone, then send one card from your hand and the top 2 cards of your Deck to the Drop.", "skillText": "This card gains NP equal to the number of cards in your Bank until the end of the turn. Your opponent must send 1 card from their Deadzone to the Drop after each attack made by this card. This card cannot attack for your next 2 turns after you use this skill.", "quantity": 2}, {"id": "amalg-malevolent-1", "pool": "malevolent", "displayName": "Malevolent Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Malevolent", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “1” cards, including at least 1 Malevolent Numeral “1”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Draw 1 card. Each opponent mills cards equal to the M value of the card drawn. If that M is zero or negative, opponents do not mill.", "quantity": 2}, {"id": "amalg-malevolent-2", "pool": "malevolent", "displayName": "Malevolent Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Malevolent", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “2” cards, including at least 1 Malevolent Numeral “2”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "The card in your Rank Zone gets another attack while the card in your opponent’s Rank Zone loses 2 NP this turn.", "quantity": 2}, {"id": "amalg-malevolent-3", "pool": "malevolent", "displayName": "Malevolent Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Malevolent", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “3” cards, including at least 1 Malevolent Numeral “3”.", "skillCost": "Once per turn, send an Amalgamation element to the Drop. Secondary Cost: Drop 2 cards from your hand.", "skillText": "Add one card from your hand to your Bank. When this card has no Amalgamation elements while your opponent has cards in their Bank, it gains this Secondary Skill: take 1 card from your opponent’s Bank. That card becomes this card’s Amalgamation element.", "quantity": 2}, {"id": "amalg-malevolent-4", "pool": "malevolent", "displayName": "Malevolent Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Malevolent", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “4” cards, including at least 1 Malevolent Numeral “4”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone.", "skillText": "The card in your opponent’s Rank Zone loses 4 NP until the end of the turn.", "quantity": 2}, {"id": "amalg-malevolent-5", "pool": "malevolent", "displayName": "Malevolent Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Malevolent", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “5” cards, including at least 1 Malevolent Numeral “5”.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone and send the top card of your Deck to the Drop when this card attacks.", "skillText": "This card and the card in your Rank Zone gain 3 NP until the end of your next turn. If more than 3 Morale Damage was dealt the turn you used this skill, double the Morale Damage your opponent received from any attacks involving this card at the end of the turn.", "quantity": 2}, {"id": "amalg-malevolent-6", "pool": "malevolent", "displayName": "Malevolent Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Malevolent", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “6” cards, including at least 1 Malevolent Numeral “6”.", "skillCost": "Once per turn, when a Numeral on your Battlefield would be destroyed by battle, send an Amalgamation element to the Drop.", "skillText": "Negate the destruction of that Numeral, and if you do, your opponent must send the top card of their Deck to the Drop at the end of the turn. You cannot use any Action Cards the turn you use this skill.", "quantity": 2}, {"id": "amalg-malevolent-7", "pool": "malevolent", "displayName": "Malevolent Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Malevolent", "rank": 4, "numeral": 7, "A": 3, "M": 4, "S": 5, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “7” cards, including at least 1 Malevolent Numeral “7”.", "skillCost": "Once per turn, after your Draw Phase, send an Amalgamation element to the Drop.", "skillText": "Add one card from your Deadzone to your hand, and if you do, your opponent must add one card from their hand to their Deadzone. You cannot attack the turn you use this skill.", "quantity": 2}, {"id": "amalg-malevolent-8", "pool": "malevolent", "displayName": "Malevolent Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Malevolent", "rank": 4, "numeral": 8, "A": 3, "M": 4, "S": 99, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “8” cards, including at least 1 Malevolent Numeral “8”.", "skillCost": "Once per turn at the start of the Battle Phase, send an Amalgamation element to the Deadzone and drop the top 2 cards of your Deck.", "skillText": "Your opponent’s Rank Zone card loses NP equal to the Numeral sent to the Drop by this skill until the end of their next turn, and your Rank Zone card gets as many additional attacks as the Rank of the card dropped from the top of your Deck. Gain Morale equal to the amount of Morale Damage dealt this turn.", "quantity": 2}, {"id": "amalg-malevolent-9", "pool": "malevolent", "displayName": "Malevolent Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Malevolent", "rank": 4, "numeral": 9, "A": 3, "M": 4, "S": 6, "skillType": "Skilled", "requirements": "3 Malevolent/Neutral Numeral “9” cards, including at least 1 Malevolent Numeral “9”.", "skillCost": "Once every 3 turns, send an Amalgamation element to the Deadzone, then send one card from your hand and the top 2 cards of your Deck to the Drop.", "skillText": "Your opponent loses 9 MP and must either take 4 Dead Draws or drop 9 cards. This card cannot attack for your next 2 turns after you use this skill.", "quantity": 2}, {"id": "amalg-unknown-1", "pool": "unknown", "displayName": "Unknown Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Unknown", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Numeral “1” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Draw one card.", "quantity": 2}, {"id": "amalg-unknown-2", "pool": "unknown", "displayName": "Unknown Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Unknown", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Numeral “2” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "The card in your Rank Zone gets another attack this turn.", "quantity": 2}, {"id": "amalg-unknown-3", "pool": "unknown", "displayName": "Unknown Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Unknown", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Numeral “3” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Add one card from your hand to your Bank.", "quantity": 2}, {"id": "amalg-unknown-4", "pool": "unknown", "displayName": "Unknown Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Unknown", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Numeral “4” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone.", "skillText": "The card in your Rank Zone gains 4 NP until the end of the turn.", "quantity": 2}, {"id": "amalg-unknown-5", "pool": "unknown", "displayName": "Unknown Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Unknown", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Numeral “5” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Deadzone when this card attacks.", "skillText": "This card gains 3 NP until the end of the turn. If more than 3 Morale Damage was dealt the turn you used this skill, double the Morale you get from this skill.", "quantity": 2}, {"id": "amalg-unknown-6", "pool": "unknown", "displayName": "Unknown Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Unknown", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Numeral “6” cards.", "skillCost": "Once per turn, when a Numeral on your Battlefield would be destroyed by battle, send an Amalgamation element to the Drop.", "skillText": "Negate the destruction of that Numeral. You cannot use any Action Cards the turn you use this skill.", "quantity": 2}, {"id": "amalg-unknown-7", "pool": "unknown", "displayName": "Unknown Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Unknown", "rank": 4, "numeral": 7, "A": 3, "M": 4, "S": 5, "skillType": "Skilled", "requirements": "3 Numeral “7” cards.", "skillCost": "Once per turn, send an Amalgamation element to the Drop.", "skillText": "Add one card from your Deadzone to your hand.", "quantity": 2}, {"id": "amalg-unknown-8", "pool": "unknown", "displayName": "Unknown Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Unknown", "rank": 4, "numeral": 8, "A": 3, "M": 4, "S": 99, "skillType": "Skilled", "requirements": "3 Numeral “8” cards.", "skillCost": "Once per turn at the start of the Battle Phase, send an Amalgamation element to the Deadzone and drop the top card of your Deck.", "skillText": "Your Flanks gain 8 NP until the end of the turn, and your Rank Zone card gets as many additional attacks as the Rank of the card dropped from the top of your Deck. Gain Morale equal to the Numeral sent to the Drop by this skill.", "quantity": 2}, {"id": "amalg-unknown-9", "pool": "unknown", "displayName": "Unknown Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Unknown", "rank": 4, "numeral": 9, "A": 3, "M": 4, "S": 6, "skillType": "Skilled", "requirements": "3 Numeral “9” cards.", "skillCost": "Once every 3 turns, send an Amalgamation element to the Deadzone, then send one card from your hand and the top card of your Deck to the Drop.", "skillText": "Your opponent must either take 3 Dead Draws or drop 9 cards. This card cannot attack for your next 2 turns after you use this skill.", "quantity": 2}, {"id": "amalg-skillcopy-1", "pool": "skillcopy", "displayName": "Skill Copy Rank² Numeral 1", "name": "Rank² Numeral 1", "alignment": "Unknown", "rank": 2, "numeral": 1, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “1” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-2", "pool": "skillcopy", "displayName": "Skill Copy Rank² Numeral 2", "name": "Rank² Numeral 2", "alignment": "Unknown", "rank": 2, "numeral": 2, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “2” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-3", "pool": "skillcopy", "displayName": "Skill Copy Rank² Numeral 3", "name": "Rank² Numeral 3", "alignment": "Unknown", "rank": 2, "numeral": 3, "A": 1, "M": 2, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “3” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-4", "pool": "skillcopy", "displayName": "Skill Copy Rank³ Numeral 4", "name": "Rank³ Numeral 4", "alignment": "Unknown", "rank": 3, "numeral": 4, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Skilled Numeral “4” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-5", "pool": "skillcopy", "displayName": "Skill Copy Rank³ Numeral 5", "name": "Rank³ Numeral 5", "alignment": "Unknown", "rank": 3, "numeral": 5, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Skilled Numeral “5” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-6", "pool": "skillcopy", "displayName": "Skill Copy Rank³ Numeral 6", "name": "Rank³ Numeral 6", "alignment": "Unknown", "rank": 3, "numeral": 6, "A": 2, "M": 3, "S": 4, "skillType": "Skilled", "requirements": "3 Skilled Numeral “6” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-7", "pool": "skillcopy", "displayName": "Skill Copy Rank⁴ Numeral 7", "name": "Rank⁴ Numeral 7", "alignment": "Unknown", "rank": 4, "numeral": 7, "A": 3, "M": 5, "S": 5, "skillType": "Skilled", "requirements": "3 Skilled Numeral “7” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-8", "pool": "skillcopy", "displayName": "Skill Copy Rank⁴ Numeral 8", "name": "Rank⁴ Numeral 8", "alignment": "Unknown", "rank": 4, "numeral": 8, "A": 3, "M": 5, "S": 5, "skillType": "Skilled", "requirements": "3 Skilled Numeral “8” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-skillcopy-9", "pool": "skillcopy", "displayName": "Skill Copy Rank⁴ Numeral 9", "name": "Rank⁴ Numeral 9", "alignment": "Unknown", "rank": 4, "numeral": 9, "A": 3, "M": 5, "S": 5, "skillType": "Skilled", "requirements": "3 Skilled Numeral “9” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-unknown-0", "pool": "unknown", "displayName": "Unknown Rank¹ Numeral 0", "name": "Rank¹ Numeral 0", "alignment": "Unknown", "rank": 1, "numeral": 0, "A": 3, "M": 1, "S": 99, "skillType": "Skilled", "requirements": "3 Numerals whose NP are 0, or 3 Numeral “0” cards.", "skillCost": "Send an Amalgamation element to the Deadzone and mill one card. (Not once per turn — usable for each Element sent, up to 3 times per turn.)", "skillText": "Target one Numeral on any player’s Battlefield: its NP becomes 0 until the end of the turn and this card gains that NP. Then you and that Numeral’s controller each gain Morale equal to that Numeral’s Rank. If the Element you sent was a Numeral “0”, that Numeral’s controller must discard their hand, and you and that Numeral’s controller each gain 1 MP for every card discarded this way.", "quantity": 2}, {"id": "amalg-skillcopy-0", "pool": "skillcopy", "displayName": "Skill Copy Rank¹ Numeral 0", "name": "Rank¹ Numeral 0", "alignment": "Unknown", "rank": 1, "numeral": 0, "A": 1, "M": 3, "S": 3, "skillType": "Skilled", "requirements": "3 Skilled Numeral “0” cards.", "skillCost": "Once per turn, instead of paying that skill’s cost, you can send an Amalgamation element to the Deadzone.", "skillText": "Up to twice per turn, use one of the skills of the Numerals used to Amalgamation Rank Up this card. Resolve the chosen Numeral skill. You cannot use this skill when this card has no elements in its Bank.", "quantity": 2}, {"id": "amalg-benevolent-10", "pool": "benevolent", "displayName": "Benevolent Rank ULTRA Numeral 10", "name": "Rank ULTRA Numeral 10", "alignment": "Benevolent", "rank": 5, "isRankUltra": true, "numeral": 10, "A": 4, "M": 5, "S": 10, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “10” cards, including at least 1 Benevolent Numeral “10”.", "skillCost": "Send an Amalgamation element to the Deadzone, discard 5 cards from your hand, and mill 10 cards.", "skillText": "All players gain 10 Morale when this card’s skill is activated. Your Rank Zone Numeral’s A value increases by Ⅰ for every Rank³ Numeral in your Bank until the end of the turn.", "quantity": 2}, {"id": "amalg-benevolent-11", "pool": "benevolent", "displayName": "Benevolent Rank ULTRA Numeral 11", "name": "Rank ULTRA Numeral 11", "alignment": "Benevolent", "rank": 5, "isRankUltra": true, "numeral": 11, "A": 4, "M": 5, "S": 99, "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “11” cards, including at least 1 Benevolent Numeral “11”.", "skillCost": "Send an Amalgamation element to the Deadzone and discard cards from your hand whose Rank Points total exactly 11.", "skillText": "Return all cards in all Deadzones to their owners’ Decks. Gain 1 MP for every card returned this way across all players. All other players lose 11 MP for every Rank³ or higher card returned to their Deck by this skill this turn. You cannot attack the turn you use this skill.", "quantity": 2}, {"id": "amalg-benevolent-12", "pool": "benevolent", "displayName": "Benevolent Rank ULTRA Numeral 12", "name": "Rank ULTRA Numeral 12", "alignment": "Benevolent", "rank": 5, "isRankUltra": true, "numeral": 12, "A": 4, "M": 8, "S": 99, "SText": "+?&-?", "skillType": "Skilled", "requirements": "3 Benevolent/Neutral Numeral “12” cards, including at least 1 Benevolent Numeral “12”.", "skillCost": "Send all Amalgamation Elements to the Deadzone and mill 12 cards.", "skillText": "Skill 1: All players discard their hands and draw 6 cards. The card in your Rank Zone gets an additional attack for every Rank² or higher card drawn by any player due to this skill, and all players gain 2 MP for every Rank² or higher card they drew this way.", "skillCost2": "Return one card from your Discard or hand back into your Deck.", "skillText2": "Skill 2: if you used at least 2 Advantageous Action Cards this turn before activating this card’s Skill 1, you may continuously double the effects of those cards after each attack from your Rank Zone card by paying half your Morale every time. You cannot use this skill if your Morale is below 12.", "quantity": 2}];
   let PLAYER_DELTA_DECK=[]; // Array of Amalgamation IDs. Current installed cap: 3 cards while only Amalgamations are available.
   AMALGAMATION_LIBRARY.forEach(function(c){var t=(c.skillType||c.st||'Skilled');c.displayName='Amalgamation '+c.numeral+' '+t;c.name='Amalgamation '+c.numeral+' '+t;});
   window.RU_AMALGAMATIONS=AMALGAMATION_LIBRARY;
@@ -10390,15 +10388,15 @@ ADEFS['Seven Heaven']={
     deltaOpenModal(`Δ Deck — Amalgamations — ${poolName(pool)}`,body,[{label:'Back to Amalgamations',fn:()=>renderDeltaDeckFamily()},{label:'Close',fn:()=>closeModal()},{label:'Clear Δ Deck',cls:'mb-danger',fn:()=>{PLAYER_DELTA_DECK=[];window.RU_PLAYER_DELTA_DECK=PLAYER_DELTA_DECK;renderDeltaDeckPool(pool);}}]);
   }
 
-  window.ruBotDeltaDeckFor=function(cls,who){return randomValidDeltaDeckFor(cls,who);};
-  function randomValidDeltaDeckFor(cls,who){
+  window.ruBotDeltaDeckFor=function(cls,who,mode){return randomValidDeltaDeckFor(cls,who,mode);};
+  function randomValidDeltaDeckFor(cls,who,mode){
     // The AI's Δ Deck is INDEPENDENT of the player's (no mirroring) and scales with difficulty:
     // stronger tiers run a full Δ Deck, weaker tiers a smaller one. Cards are chosen to SERVE the
     // class — never random filler — using the class alignment pool and only Amalgamations the AI can
     // realistically assemble (its deck holds 3 copies of Numerals 1-6, so those amalgamate cleanly).
     var prof=0.2;
     try{var L=window.RU_AI_LEVELS&&window.RU_AI_LEVELS[window.RU_AI_LEVEL_KEY]; if(L&&typeof L.proficiency==='number')prof=L.proficiency;}catch(e){}
-    const size = (typeof window.ruDeltaSizeForLevelFor==='function') ? window.ruDeltaSizeForLevelFor(who||'ai') : ((typeof window.ruDeltaSizeForLevel==='function') ? window.ruDeltaSizeForLevel() : (prof>=0.42 ? 3 : (prof>=0.20 ? 2 : 1)));
+    const size = (typeof window.ruDeltaSizeForLevelFor==='function') ? window.ruDeltaSizeForLevelFor(who||'ai',mode) : ((typeof window.ruDeltaSizeForLevel==='function') ? window.ruDeltaSizeForLevel() : (prof>=0.42 ? 3 : (prof>=0.20 ? 2 : 1)));
     cls=cls||'classless';
     const align=(CM[cls]&&CM[cls].align)||'Neutral';
     const pool=align==='Benevolent'?'benevolent':align==='Malevolent'?'malevolent':'unknown';
@@ -11044,7 +11042,14 @@ ADEFS['Seven Heaven']={
         if(card.numeral===9)card._cooldownUntil=G.exchange+3;
         if(key==='benevolent-1'){const before=p.hand.length;draw(who,1);const d=p.hand[p.hand.length-1];if(d&&d.type==='numeral'){p.mp+=d.rank||0;log(`${card.name}: drew ${d.name} and gained ${d.rank||0} MP.`, 'heal');}}
         else if(key==='benevolent-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;p.mp+=2;opp.mp+=2;log(`${card.name}: Rank Zone gets another attack. Both players gain 2 MP.`, 'heal');}
-        else if(key==='malevolent-1'){const t=ruTakeDeckCards(opp,1,false,c=>ruDrop(opp,c))[0];if(t)log(`${card.name}: opponent sends ${t.name} (top of Deck) to the Drop.`, 'dmg');}
+        else if(key==='malevolent-1'){
+          const drawn=draw(who,1)[0];
+          if(drawn){
+            const count=Math.max(0,Number(drawn.M)||0);
+            if(count>0)livingOpponentsOf(who).forEach(s=>mill(s,count));
+            log(`${card.name}: draw 1 card; each opponent mills ${count} card(s) based on its M.`, 'info');
+          }
+        }
         else if(key==='malevolent-2'){if(p.rankZone)p.rankZone.attacksLeft=(p.rankZone.attacksLeft==null?1:p.rankZone.attacksLeft)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;if(opp.rankZone)opp.rankZone.currentNP=(((opp.rankZone.currentNP ?? opp.rankZone.numeral)||0)-2);log(`${card.name}: Rank Zone gets another attack; opponent Rank Zone -2 NP this turn.`, 'dmg');}
         // benevolent-3/malevolent-3 (Amalgamation 3) handled entirely by the later,
         // unconditional startAmalgamationSkill override -- afterElement() is never invoked
@@ -11334,7 +11339,7 @@ ADEFS['Seven Heaven']={
     ]},
     'Morbid Cemetery':{passive:'Does not count toward Casualty Count. Phantom/Shadow Numerals gain 1 NP; Restorative/Light Numerals lose 1 NP.',effects:[
       {label:'Return a Phantom sent by Retaliatory/skill',cost:'Once per turn: a Phantom you control was sent to Deadzone by Retaliatory or opposing skill; drop top Deck.',check(w){return G[w]._phantomToDZByEffect&&G[w].deck.length>0&&canUseAreaTurn(w,'Morbid Return',1);},fn(w,p,o){millTop(w,1);markAreaTurn(w,'Morbid Return');const c=G[w]._phantomToDZByEffect;G[w]._phantomToDZByEffect=null;removeFromZoneOrArray(p,c);if(!p.leftFlank)p.leftFlank=c;else if(!p.rightFlank)p.rightFlank=c;else p.hand.push(c);log(`Morbid Cemetery: returned ${c.name} to the Battlefield if space was available.`, 'heal');renderAll();}},
-      {label:'Ultimate: grave burst',cost:'Drop hand and equal top Deck cards.',check(w){return !G[w]._mcUltUsed&&G[w].hand.length>0;},fn(w,p,o){const n=dropHand(w,1);millTop(w,n);G[w]._mcUltUsed=true;const opps=window.allOpponents?window.allOpponents(w):[oppOf(w)];for(let i=0;i<n;i++)opps.forEach(oppId=>{if(G[oppId])casDraw(oppId);});G._areaNoAttack=G._areaNoAttack||{};G._areaNoAttack[w]=Math.max(G._areaNoAttack[w]||0,3);logAs(w,`Morbid Cemetery Ultimate: opponents take ${n} Casualty Draw(s) each. {You} cannot attack this turn or during {your} next 2 turns.`,'dmg');checkWin();renderAll();}}
+      {label:'Ultimate: grave burst',cost:'Drop hand and equal top Deck cards.',check(w){return !G[w]._mcUltUsed&&G[w].hand.length>0;},fn(w,p,o){ruResolveCasualtyTargets(w,'Morbid Cemetery',window.allOpponents?window.allOpponents(w):[oppOf(w)],function(targets){const n=dropHand(w,1);millTop(w,n);G[w]._mcUltUsed=true;for(let i=0;i<n;i++)targets.forEach(oppId=>{if(G[oppId])casDraw(oppId);});G._areaNoAttack=G._areaNoAttack||{};G._areaNoAttack[w]=Math.max(G._areaNoAttack[w]||0,3);logAs(w,`Morbid Cemetery Ultimate: selected opponents take ${n} Casualty Draw(s). {You} cannot attack this turn or during {your} next 2 turns.`,'dmg');checkWin();renderAll();});}}
     ]}
   };
   AREA_NAMES.forEach(n=>{ADEFS[n]=areaDefsFixed[n]||ADEFS[n]||{passive:'Area has no active profile effect loaded.',effects:[]};});
@@ -14691,7 +14696,7 @@ function useRetL2(idx,card){
       if(!p||p.hand.length<1){failCost(nm);return true;}
       addM(w,card);
       dropHandCost(w,'Counterattack E2 - choose 1 card from hand to drop as cost.',1,function(){
-        if(p.rankZone&&G.turn===w){p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}logSafe('Counterattack (E2): Rank Zone can attack this turn.','heal');if(p.rankZone)window.offerCounterAttackRA(w,p.rankZone);renderSafe();
+    if(p.rankZone&&G.turn===w){p.rankZone.attacksLeft=atkLeft(p.rankZone)+1;if(p.attacksUsed)delete p.attacksUsed[p.rankZone.id];p.rankZone.canAttack=true;}logSafe('Counterattack (E2): Rank Zone can attack this turn.','heal');if(p.rankZone)window.offerCounterAttackRA(w,p.rankZone,{immediate:true});renderSafe();
       });
       return true;
     }
@@ -16628,86 +16633,67 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // ---- Off-turn ("in the middle of the opponent's turn") attack — a real CHOICE, never auto ----
   // A card like Counterattack that grants "Rank Zone can attack this turn" during the OPPONENT's turn
   // must let its controller actually DECLARE that swing — but the target is never auto-picked. Once the
-  // current casualty cascade / any open modal settles, the HUMAN gets a modal to choose which opponent
-  // Numeral to hit (or decline); a BOT evaluates its own board and picks the best winning target (or
-  // holds if none is favorable). The swing goes through the declared-attack pipeline like any other attack.
+  // current effect's cost prompt closes, suspend its remaining Casualty Draws and resolve the
+  // attack through board selection. Draws caused by the counterattack run before the suspended queue.
   function retaliationIdle(){
 
-    return !((window._RUcq&&window._RUcq.length)||window._RUcbusy||window.ruUiBusy());
+    return !(window.ruUiBusy()||G.mode==='oppzonepick');
   }
   function resumeCounterAtkRA(){
-    if(ruIsOnline()&&window.ruWhenSettled){ window.ruWhenSettled(retaliationIdle,runCounterAtkRA,{defer:true}); return; }   // same point on every screen
+    if(retaliationIdle()){runCounterAtkRA();return;}
+    if(ruIsOnline()&&window.ruWhenSettled){ window.ruWhenSettled(retaliationIdle,runCounterAtkRA,{defer:true}); return; }
     var settle=function(){ if(!retaliationIdle()){ setTimeout(settle,80); return; } runCounterAtkRA(); };
     setTimeout(settle,80);
   }
-  function caNP(c){ return c?Number(c.currentNP!=null?c.currentNP:(c.numeral!=null?c.numeral:0))||0:0; }
   function runCounterAtkRA(){
     if(!G||G.gameOver){ if(G)G._counterAtkQ=[]; return; }
-    var q=G._counterAtkQ||[]; var job=null,who,p,atk;
+    var q=G._counterAtkQ||[]; var job=null,who,p,atk,sourceZone;
     while(q.length){
       job=q.shift(); who=job.who; p=G[who];
-      if(!p||(G.eliminated&&G.eliminated[who])||G.turn===who){ job=null; continue; }
-      atk=p.rankZone;
-      if(!atk||atk.id!==job.id||atk.frozen){ job=null; continue; }
+      if(!p||(G.eliminated&&G.eliminated[who])){ job=null; continue; }
+      sourceZone=['rank','left-flank','right-flank','rear-flank','delta'].find(z=>{var c=window.zCard(p,z);return c&&c.id===job.id;});
+      atk=sourceZone&&window.zCard(p,sourceZone);
+      if(!atk||atk.frozen){ job=null; continue; }
       break;
     }
     if(!job) return;
-    // Legal targets across EVERY living opponent of `who` (1v1v1 aware), not just "the side whose turn it is".
-    var oppSeats=(typeof window.oppList==='function')?window.oppList(who):[G.turn];
-    var targets=[];
-    oppSeats.forEach(function(os){
-      var o=G[os]; if(!o||(G.eliminated&&G.eliminated[os])) return;
-      [['rank',o.rankZone],['left-flank',o.leftFlank],['right-flank',o.rightFlank],['rear-flank',o.rearFlank]].forEach(function(zc){
-        if(zc[1]) targets.push({side:os,zone:zc[0],card:zc[1]});
-      });
-    });
-    if(!targets.length){
-      try{ logAs(who,'{You} {have|has} no legal target for the off-turn attack.','info'); }catch(e){}
-      if(q.length) resumeCounterAtkRA(); return;
+    var frame={queue:window._RUcq,busy:window._RUcbusy,mode:G.mode,stage:'attacker',previous:G._counterFrame||null};
+    G._counterFrame=frame;window._RUcq=[];window._RUcbusy=false;
+    function finish(){
+      G.mode=frame.mode;G._counterFrame=frame.previous;
+      window._RUcq=frame.queue.concat(window._RUcq||[]);window._RUcbusy=frame.busy;
+      clearHL();renderAll();
+      if(G._counterAtkQ&&G._counterAtkQ.length)resumeCounterAtkRA();
+      if(!frame.busy&&window.ruCasQueueResume)ruCasQueueResume();
     }
-    var doAttack=function(t){
-      if(!t){ if(q.length) resumeCounterAtkRA(); return; }
-      var pp=G[who], a=pp&&pp.rankZone; if(!a){ if(q.length) resumeCounterAtkRA(); return; }
-      var live=G[t.side]&&zoneCard(G[t.side],t.zone); if(!live){ if(q.length) resumeCounterAtkRA(); return; } // target left the board
-      try{ logAs(who,'{You} {counter-attack|counter-attacks} with '+a.name+' during '+sidePossLower(G.turn)+' turn!','imp'); }catch(e){}
-      // The same declared-attack pipeline as every other attack: a human defender answers Safeguard, reactive and
-      // Retaliatory windows in their own prompts; a bot defender reacts for itself.
-      window.ruDeclareAttack(who,'rank',t.side,t.zone,0,function(){
-        try{ renderAll(); }catch(e){}
-        if(G._counterAtkQ&&G._counterAtkQ.length) resumeCounterAtkRA();
-      });
-
-
-
-
-
-
-
-
-
-
-    };
-    var humanChoosing = isHumanSeat(who);
-    if(humanChoosing){
-      var body='<p style="font-size:.82rem;margin-bottom:.5rem;">Your <b>'+atk.name+'</b> (NP '+caNP(atk)+') may attack now, during the opponent’s turn. Choose a target — or decline.</p>';
-      var btns=targets.map(function(t){
-        return {label:'Attack '+sidePossLower(t.side)+' '+t.card.name+' (NP '+caNP(t.card)+')',cls:'mb-skill',fn:function(){ closeModal(); doAttack(t); }};
-      });
-      btns.push({label:'Decline — do not attack',fn:function(){ closeModal(); try{logAs(who,'{You} {decline|declines} the off-turn attack.','info');}catch(e){} if(q.length) resumeCounterAtkRA(); }});
-      ruOwnPrompt(who); openModal('Counterattack — Off-Turn Attack', body, btns);
-    } else {
-      // Bot's own decision: swing only at a target it beats, taking the highest-value winnable one; else hold.
-      var an=caNP(atk);
-      var winning=targets.filter(function(t){ return an>caNP(t.card); });
-      if(winning.length){ winning.sort(function(x,y){ return caNP(y.card)-caNP(x.card); }); doAttack(winning[0]); }
-      else { try{ logAs(who,'{You} {hold|holds} the off-turn attack (no favorable target).','info'); }catch(e){} if(q.length) resumeCounterAtkRA(); }
+    function settled(){
+      return !window._RUcbusy&&!(window._RUcq&&window._RUcq.length)&&!window.ruUiBusy()&&G.mode!=='oppzonepick';
     }
+    function attackDone(){
+      if(window.ruWhenSettled)ruWhenSettled(settled,finish,{defer:true});
+      else (function wait(){if(settled())finish();else setTimeout(wait,40);})();
+    }
+    window.ruFx.boardPick(who,'Select your counterattacker',function(owner,z,c){return owner===who&&z===sourceZone&&c.id===job.id;},function(owner){
+      if(!owner){finish();return;}
+      frame.stage='target';
+      window.ruFx.boardPick(who,'Select a counterattack target',function(target,z,c){
+        return oppList(who).includes(target)&&(!job.direct||z==='rank')&&ruIsLegalAttackTarget(who,target,z);
+      },function(target,z){
+        if(!target){finish();return;}
+        window.ruDeclareAttack(who,sourceZone,target,z,0,function(){
+          var result=G._lastAttackDeclaration;
+          if(job.millOnHit&&result&&result.aWho===who&&result.resolved&&result.winner==='attacker')mill(target,job.millOnHit);
+          attackDone();
+        });
+      });
+    },'hs');
   }
-  function offerCounterAttackRA(who,card){
-    if(!G||G.gameOver||!who||G.turn===who) return;      // only offered during the OPPONENT's turn
+  function offerCounterAttackRA(who,card,options){
+    options=options||{};
+    if(!G||G.gameOver||!who||(G.turn===who&&!options.immediate)) return;
     if(G.eliminated&&G.eliminated[who]) return;
     G._counterAtkQ=G._counterAtkQ||[];
-    G._counterAtkQ.push({who:who,id:(card&&card.id)});
+    G._counterAtkQ.push({who:who,id:(card&&card.id),direct:!!options.direct,millOnHit:options.millOnHit||0});
     resumeCounterAtkRA();
   }
   window.offerCounterAttackRA=offerCounterAttackRA;
@@ -25655,7 +25641,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   // Cancelling the pick (Cancel / End Turn) is the answer "no card": cb(null), so the effect ends through its own
   // no-target path and whatever it is part of (an attack being declared, a Casualty Draw line) goes on. Target before
   // paying, so nothing is lost.
-  function boardPick(w,hint,legal,cb){
+  function boardPick(w,hint,legal,cb,highlight){
     var cands=[];
     living().forEach(function(s2){ ZONES.forEach(function(z){ var c=zc(G[s2],z); if(c&&legal(s2,z,c))cands.push({s:s2,z:z,c:c}); }); });
     if(!cands.length){ cb(null); return; }
@@ -25664,7 +25650,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     G._oppZoneFilter=function(c,owner,zone){ return legal(owner,zone,c); };
     G._oppZoneCb=function(zone,card,owner){ G._oppZoneCb=null; G._oppZoneFilter=null; G._oppZoneAnySide=null; G._oppZoneZones=null; G._oppZoneOwner=null; G._oppZoneNoneOk=null; clearHL(); hide('btn-can'); setHint(''); cb(owner||null,zone,card); };
     G.mode='oppzonepick'; renderAll(); clearHL();
-    cands.forEach(function(e){ var el2=document.getElementById(window.zId(e.s,e.z)); if(el2)el2.classList.add('ht'); });
+    cands.forEach(function(e){ var el2=document.getElementById(window.zId(e.s,e.z)); if(el2)el2.classList.add(highlight||'ht'); });
     setHint(hint+' — click a highlighted card.'); show('btn-can');
   }
   // a card an effect may choose to remove (one that cannot be removed is not a choice)
@@ -28281,8 +28267,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var ced=cedeTop(w,8); act();
     say('Neo Multi Star (E2): every Deadzone is dropped; '+sideVerbLabel(w,'cede')+' '+ced.length+' card(s).','imp');
     window.ruBlockCasualties(w,{turn:tn()},'Neo Multi Star');
-    opps(w).forEach(function(s){ var n=4*before[s]; if(n){ say('Neo Multi Star (E2): '+sideSubjectLabel(s)+' '+(isLocalHumanSeat(s)?'take':'takes')+' '+n+' Casualty Draws.','dmg'); for(var i=0;i<n;i++)casDraw(s); } });
-    refresh();
+    ruResolveCasualtyTargets(w,'Neo Multi Star',opps(w),function(targets){
+      targets.forEach(function(s){ var n=4*before[s]; if(n){ say('Neo Multi Star (E2): '+sideSubjectLabel(s)+' '+(isLocalHumanSeat(s)?'take':'takes')+' '+n+' Casualty Draws.','dmg'); for(var i=0;i<n;i++)casDraw(s); } });
+      refresh();
+    });
   };
   E2['Retroactive Star']=function(w,card,p){            // return 7 Drop cards to your Deck: no Morale or Casualty Damage this turn; this card to your hand; your opponent gets a second Battle Phase
     addE2M(w,card);
@@ -29076,16 +29064,16 @@ window.ruSpecPace=function(base){
   window.ruDeltaSizeForLevel=function(){ var e=window.RU_AI_DEPTH14[ru14Key()]; return e?e.delta:0; };
 
   // Side-aware variants: 'player' reads the "AI A" tier controls (used only when the human seat is
-  // bot-controlled, i.e. AI-vs-AI watch mode), 'ai2' reads the third seat's own slot (1v1v1's
-  // second AI opponent), everything else (incl. 'ai') keeps reading the original single global --
-  // so existing human-vs-AI behavior is untouched.
-  function tierNumFor(who){
+  // bot-controlled, i.e. AI-vs-AI watch mode). Tag/Team bots all read the main selector;
+  // outside those modes, 'ai2' retains the independent second-opponent control.
+  function tierNumFor(who,mode){
+    mode=mode||(G&&G.twoVtwo?G.twoVtwo+'2v2':window.modeState&&window.modeState.mode);
     if(who==='player')return [window.RU_AI_LEVEL_KEY_A,window.RU_AI_LEVEL_NUM_A];
-    if(who==='ai2')return [window.RU_AI_LEVEL_KEY_B,window.RU_AI_LEVEL_NUM_B];
+    if(who==='ai2'&&!ruIs2v2Mode(mode))return [window.RU_AI_LEVEL_KEY_B,window.RU_AI_LEVEL_NUM_B];
     return [window.RU_AI_LEVEL_KEY,window.RU_AI_LEVEL_NUM];
   }
-  function ru14KeyFor(who){
-    var tn=tierNumFor(who);
+  function ru14KeyFor(who,mode){
+    var tn=tierNumFor(who,mode);
     var tier=tn[0]||'basic';
     var num=clampSub(tier,tn[1]||1);
     var key=tier+'-'+num;
@@ -29147,7 +29135,7 @@ window.ruSpecPace=function(base){
     }catch(err){}
     return {depth:e.depth, base:e.depth};
   };
-  window.ruDeltaSizeForLevelFor=function(who){ var e=window.RU_AI_DEPTH14[ru14KeyFor(who)]; return e?e.delta:0; };
+  window.ruDeltaSizeForLevelFor=function(who,mode){ var e=window.RU_AI_DEPTH14[ru14KeyFor(who,mode)]; return e?e.delta:0; };
 
   // -------- recursive depth-N combat/positional planner (negamax with pruning) --------
   window._ruCombatPlan = function(myAtk, oppBoard, oppAtk, st, opt){
@@ -30017,6 +30005,7 @@ window.ruSpecPace=function(base){
   function swapDeckArea(w,id){
     var G=G_(),s=G&&G[w]; if(!s)return false;
     var card=makeAreaSupportCard(id,s.class||s.cls||s.deckClass); if(!card)return false;
+    card._ownerSeat=w;
     var zones=['deck','hand','discard','deadzone','bank'];
     for(var zi=0;zi<zones.length;zi++){
       var arr=s[zones[zi]]; if(!Array.isArray(arr))continue;
