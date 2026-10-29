@@ -94,6 +94,8 @@ function randomInput(e, rnd) {
     starts.forEach((s, i) => { assert.strictEqual(s.size, 4); assert.strictEqual(s.mode, MODE); assert.strictEqual(s.mySeat, [0, 3, 1, 2][i]); });
     assert.deepStrictEqual(starts[0].classes, ['light', 'zero', 'shadow', 'inferno'], 'classes by seat index (A, C, D, B)');
     console.log(`server: seats by role OK; start ${MODE} seed ${starts[0].seed} firstSeat ${starts[0].firstSeat}`);
+    // replay a reported match: SEED=<seed> FIRST=<firstSeat> (the server draws both at random)
+    if (process.env.SEED) { starts.forEach((s) => { s.seed = Number(process.env.SEED) >>> 0; s.firstSeat = Number(process.env.FIRST || 0); }); console.log(`  replaying seed ${starts[0].seed} firstSeat ${starts[0].firstSeat}`); }
 
     // 2. four clients from that start, in lockstep
     const engines = [0, 1, 2, 3].map((mySeat) => {
@@ -110,6 +112,7 @@ function randomInput(e, rnd) {
       const p0 = engines[0].run('__H.pending()');
       if (p0.kind === 'over' || p0.kind === 'none') break;
       const inp = randomInput(engines[0], rnd); if (!inp) break;
+      if (process.env.TRACE) console.log(`  ${steps}: ${JSON.stringify(inp)} | ${JSON.stringify(p0).slice(0, 160)}`);
       engines.forEach((e) => { e.run('__H.apply(' + JSON.stringify(inp) + ')'); e.settle(10000); });
       const sigs = engines.map((e) => e.run('__H.sig()'));
       if (sigs.some((x) => x !== sigs[0])) { splits++; console.log(`  step ${steps}: clients differ (${JSON.stringify(inp)})`); if (splits > 2) break; }

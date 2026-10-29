@@ -93,3 +93,13 @@ replays; `MODE=tag2v2|team2v2 node tools/headless/hostsim.js` — the thinking b
 - [x] Answering for the attacked partner (ruling 2026-10-27): the payer chooses who gets the effect
       (`ruChooseBeneficiary`); the card resolves as that seat while every cost — the card, its Action slot, hand and
       Deck costs, cost pickers — is the payer's (`G._benefit`, `ruCostSeat`, `ruNoActionSlot`).
+- [x] Tag's shared Deadzone (2026-10-28): a Casualty Draw's Dead Draw its owner leaves unused is offered to the partner
+      (`partnerDeadDraw`; the partner pays and gets the effect), and a "Casualty Draws against you" stop covers both
+      partners (`isNeg` over `ruPlayerSeats`). An Area's wash is one band per team over both boards, centred on the shared
+      Deadzone (`.team-area-band`, laid out by `layoutTwoVTwo`); every board's own wash is measured from its Deadzone in
+      the board's layout, so boards turned on the table wash from the right end.
+- [x] Every seat's Δ Zone card is drawn on every screen, and every seat's Extension entries are processed (both used to
+      cover only the first two seats); a Δ Zone with no Evolution shows no Elements label.
+- [x] Cancelling an effect's board pick (`boardPick`) answers it "no card" (`G._oppZoneNoneOk`): the effect ends through
+      its own path and the attack / Casualty line it belongs to goes on. (Before, Cancel dropped the continuation: a
+      defender's Balance / Normalize cancelled mid-attack made the attack vanish.)

@@ -206,6 +206,11 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .bf.tag-2v2 #ai3-field .zstack,.bf.tag-2v2 #ai2-field .zstack{order:9;}
 .bf.tag-2v2 #ai3-field .zone.dead,.bf.tag-2v2 #ai2-field .zone.dead{display:none;}
 .bf.tag-2v2 #pl-field .zone.dead,.bf.tag-2v2 #ai-field .zone.dead{box-shadow:0 0 0 2px rgba(240,200,74,.55);}
+/* Tag: an Area's wash is one band per team over both partners' boards, centred on their shared Deadzone (layoutTwoVTwo
+   lays each band over its row), so the Deadzone reads as the pair's — the boards' own washes are not drawn */
+.team-area-band{display:none;position:absolute;left:50%;top:50%;pointer-events:none;z-index:1;}
+.bf.tag-2v2 .team-area-band{display:block;}
+.bf.tag-2v2 .pfield .field-area-overlay{display:none;}
 /* ── Radial: per-seat hands behind boards + a single centre stat panel (hidden entirely in 1v1) ── */
 .pf-hand3,.hud-center{display:none;}
 .bf.radial #hud-strip{display:none;}                 /* the 2-seat top strip is replaced by #hud-center */
@@ -438,9 +443,9 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
   transition:opacity .4s ease, filter .4s ease;
 }
 /* area origin-x is computed per-field from the Deadzone position in syncAreaVisuals (areaOriginPctForField) */
-.pfield.area-active .field-area-overlay{opacity:1;}
-.pfield.area-enter .field-area-overlay{animation:areaWashIn .95s cubic-bezier(.22,.8,.28,1) both;}
-.pfield.area-exit .field-area-overlay{animation:areaDisintegrate .9s ease-in forwards;}
+.pfield.area-active .field-area-overlay,.team-area-band.area-active .field-area-overlay{opacity:1;}
+.pfield.area-enter .field-area-overlay,.team-area-band.area-enter .field-area-overlay{animation:areaWashIn .95s cubic-bezier(.22,.8,.28,1) both;}
+.pfield.area-exit .field-area-overlay,.team-area-band.area-exit .field-area-overlay{animation:areaDisintegrate .9s ease-in forwards;}
 @keyframes areaWashIn{0%{opacity:0;clip-path:circle(0% at var(--area-origin-x,95%) 50%);filter:saturate(1.3) brightness(1.12);}70%{opacity:1;}100%{opacity:1;clip-path:circle(160% at var(--area-origin-x,95%) 50%);filter:none;}}
 @keyframes areaDisintegrate{0%{opacity:1;transform:scale(1);filter:none;}35%{opacity:.9;filter:brightness(1.15);}100%{opacity:0;transform:scale(1.03);filter:blur(2px) saturate(.7);}}
 .zone.dead.area-dead-active{box-shadow:0 0 16px rgba(var(--area-light-rgb,160,90,110),.62),0 0 30px rgba(var(--area-light-rgb,160,90,110),.24);}
@@ -464,7 +469,8 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .deltastack{position:relative;}
 .deltastack .zone.delta{width:87px;height:117px;cursor:pointer;border-bottom-left-radius:0;border-bottom-right-radius:0;}
 .zone.delements{position:absolute;top:100%;left:50%;transform:translateX(-50%);width:87px;height:25px;min-height:25px;display:flex;align-items:center;justify-content:center;text-align:center;font-family:'Cinzel',serif;font-size:.49rem;letter-spacing:.04em;border:1px solid rgba(var(--evolution-rgb,111,4,23),.65);border-top:0;border-radius:0 0 4px 4px;background:rgba(var(--evolution-rgb,111,4,23),.28);color:var(--evolution-text,#ffb0b8);box-shadow:0 2px 8px rgba(var(--evolution-rgb,111,4,23),.2);}
-.zone.delements.empty{opacity:.35;color:var(--text-dim);background:rgba(30,30,38,.45);border-color:rgba(201,168,76,.18);}
+/* Elements belong to an Evolution: a Δ Zone with no Evolution card shows no Elements label */
+.zone.delements.empty{display:none;}
 /* AI row mirror: Δ Zone's Elements label attaches above instead of below, so it hangs on the
    outward side (away from the divider) instead of overlapping toward the player row beneath it.
    Corners swap to match which edge is now the attached seam vs. the free edge. */

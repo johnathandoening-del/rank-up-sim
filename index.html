@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rank Up! — Classic Mode v14.0.0</title>
-<link rel="stylesheet" href="styles.css?v=20261027">
+<link rel="stylesheet" href="styles.css?v=20261028">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
 </style>
@@ -52,6 +52,9 @@
   <!-- HUD moved to the middle strip between the two board rows (see #hud-strip). Old top bar removed. -->
   <div class="opp-hand" id="opp-hand-cards"></div>
   <div class="bf" id="battlefield">
+    <!-- Tag (2v2): each team's Area wash spans both partners' boards, spreading from their one shared Deadzone -->
+    <div class="team-area-band" id="tag-band-AB"><div class="field-area-overlay"></div></div>
+    <div class="team-area-band" id="tag-band-CD"><div class="field-area-overlay"></div></div>
     <div class="pfield ai-side" id="ai2-field" style="display:none"><div class="field-area-overlay" id="ai2-area-overlay"></div>
       <div class="zstack zdepth-back">
         <div class="zone dz" onclick="viewZone('ai2','deck')"><span id="ai2-dk-n">0</span><span>DECK</span></div>
@@ -1035,6 +1038,10 @@ function layoutFourWay(force){
   setHand('ai3-hand3', Math.round(dx), 0, 270);     // right seat
 }
 window.layoutFourWay=layoutFourWay;
+// The left edge of element e inside ancestor a's own layout (px, unaffected by a's rotation / scale), or null when a is
+// not one of e's offset parents. A walk that meets an element twice stops (the bots' stand-in DOM makes its body its
+// own offset parent — an unguarded walk there never ends).
+function ruOffsetLeftIn(e,a){let o=0,n=e;const seen=[];while(n&&n!==a){if(seen.indexOf(n)!==-1)return null;seen.push(n);o+=n.offsetLeft||0;n=n.offsetParent;}return n===a?o:null;}
 // ── 2v2 LAYOUT FITTER ── two boards per row (partners side by side), the stat panel between the rows. Largest scale
 // that fits both rows across the width and down the height; the bots' face-down hands sit behind their boards, each
 // centred on its owner's Rank Zone. Team: the two boards of a row sit symmetrically about the centre line. Tag: the team's one Deadzone (drawn at the
@@ -1069,11 +1076,23 @@ function layoutTwoVTwo(force){
   bf.style.setProperty('--s22',scale.toFixed(3));
   ['a','b','c','d'].forEach(function(k){bf.style.setProperty('--t2-'+k+'x',Math.round(x[k]*scale)+'px');});   // --t2-ax … --t2-dx
   bf.style.setProperty('--t2-dy',Math.round(dy)+'px');
+  // Tag: each team's Area band covers its row, from the outer end of one partner's board to the other's (unscaled, like
+  // the boards). originX: where the shared Deadzone (on the centre line, x=0) falls inside the band, in its own
+  // coordinates — the top band is turned 180° like its boards — so the wash spreads from it.
+  const hOf=function(id){const e=el(id);return (e&&e.offsetHeight)||BH;};
+  const band=function(id,l,r,y,deg,h){const b=el(id);if(!b)return;
+    const w=r-l,c=(l+r)/2;b.style.width=Math.round(w)+'px';b.style.height=Math.round(h)+'px';
+    b.style.transform='translate(-50%,-50%) translate('+Math.round(c*scale)+'px,'+y+'px) rotate('+deg+'deg) scale('+scale.toFixed(3)+')';
+    b.dataset.originX=((deg?w/2+c:w/2-c)/w*100).toFixed(1);};
+  if(tag){
+    band('tag-band-AB',x.a-wA/2,x.b+wB/2,Math.round(dy),0,Math.max(hOf('pl-field'),hOf('ai3-field')));
+    band('tag-band-CD',x.d-wD/2,x.c+wC/2,-Math.round(dy),180,Math.max(hOf('ai-field'),hOf('ai2-field')));
+  }
   // Each face-down hand sits over its owner's Rank Zone. That is the board's middle only on a full board: in Tag,
   // B's and D's boards draw no Deadzone, so their Rank Zone is off-centre. rzOff = the Rank Zone's centre minus the
   // board's centre along the board's own x axis (layout px, so the board's rotation and scale don't enter).
-  const rzOff=function(fid,w){const f=el(fid),z=el(sideZoneId(w,'rz'));if(!f||!z)return 0;let o=z.offsetWidth/2,n=z;
-    while(n&&n!==f){o+=n.offsetLeft;n=n.offsetParent;}return n===f?o+f.clientLeft-f.offsetWidth/2:0;};
+  const rzOff=function(fid,w){const f=el(fid),z=el(sideZoneId(w,'rz'));if(!f||!z)return 0;const l=ruOffsetLeftIn(z,f);
+    return l==null?0:l+z.offsetWidth/2+f.clientLeft-f.offsetWidth/2;};
   function setHand(id,x,y,deg){const h=el(id);if(h)h.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px) rotate('+deg+'deg) scale('+scale.toFixed(3)+') translateY(128px)';}
   setHand('ai2-hand3',Math.round((x.d-rzOff('ai2-field','ai2'))*scale),-Math.round(dy),180);   // D, top-left (turned 180°: its own x runs right-to-left)
   setHand('ai-hand3',Math.round((x.c-rzOff('ai-field','ai'))*scale),-Math.round(dy),180);      // C, top-right
@@ -1542,7 +1561,8 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
   function log2(m,t){ try{ (window.safeLog||window.log)(m,t||'info'); }catch(e){} }
   function render2(){ try{ window.renderAll&&window.renderAll(); }catch(e){} }
   function win2(){ try{ window.checkWin&&window.checkWin(); }catch(e){} }
-  function isNeg(who){ return !!(R() && ((G._casDrawPrevented&&G._casDrawPrevented[who]) || G._casDrawsNegated)); }
+  // (Tag: the team is one player — a "Casualty Draws against you" stop either partner set covers both)
+  function isNeg(who){ return !!(R() && ((G._casDrawPrevented&&ruPlayerSeats(who).some(function(s){ return G._casDrawPrevented[s]; })) || G._casDrawsNegated)); }
   function uiBusy(){ try{ return window.ruUiBusy(); }catch(e){ return false; } }
   function waitIdle(cb){ if(uiBusy()){ setTimeout(function(){ waitIdle(cb); },40); return; } cb(); }
   function track(who,card){ G._casCardsThisTurn=G._casCardsThisTurn||{player:[],ai:[]}; (G._casCardsThisTurn[who]=G._casCardsThisTurn[who]||[]).push(card); }
@@ -1561,6 +1581,18 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
       try{ log(poss()+" "+(dc.name||'card')+" cannot occupy the Δ Zone and is sent to the Drop.",'dmg'); }catch(e){} }
   };
   function doE2(who,card,after){ var mark=window.ruActMark?ruActMark():0; try{ window.applyE2(who,card); }catch(e){} waitIdle(function(){ win2(); render2(); if(window.ruActFlush)ruActFlush(mark,after); else after(); }); }
+  // Tag: the partners share one Deadzone and play as one player, so a Dead Draw its owner left unused may be activated
+  // by the partner instead (who pays its costs and gets its effect) — still before the next Casualty Draw is pulled.
+  function partnerDeadDraw(owner,card,next){
+    var mate=G.twoVtwo==='tag'&&ruPartnerOf(owner);
+    if(!mate||!G[mate]||G.gameOver||(G.eliminated&&G.eliminated[mate])||!isHumanSeat(mate)||G[mate].deadzone.indexOf(card)===-1){ next(); return; }
+    ruOwnPrompt(mate);
+    var _clr=function(){ ruClearPrompt(mate); };
+    window.openModal('Casualty Draw: '+card.name,
+      '<div style="padding:.6rem;border:1px solid rgba(255,255,255,.1);border-radius:6px;"><div style="font-weight:600;">'+card.name+' entered your team’s Deadzone from '+sidePossLower(owner)+' Deck; '+sideSubjectLabel(owner)+' did not activate it.</div><div style="font-size:.78rem;color:var(--text-dim);margin-top:.35rem;">E2: '+(card.e2||'no effect')+'</div></div><p style="font-size:.78rem;color:var(--text-dim);margin-top:.4rem;">Activate its E2 effect yourself? You pay its costs and get its effect. It resolves fully before the next Casualty Draw is pulled.</p>',
+      [{label:'Activate E2 Effect',cls:'mb-skill',fn:function(){ _clr(); window.closeModal(); setTimeout(function(){ doE2(mate,card,next); },0); }},
+       {label:'Skip Effect',fn:function(){ _clr(); window.closeModal(); setTimeout(next,0); }}]);
+  }
 
   window._RUcq = window._RUcq || [];
   window._RUcbusy = false;
@@ -1652,7 +1684,7 @@ try{window.bankSortKey=bankSortKey;window.bankInsert=bankInsert;}catch(e){}
         window.openModal('Casualty Draw: '+card.name,
           '<div style="padding:.6rem;border:1px solid rgba(255,255,255,.1);border-radius:6px;"><div style="font-weight:600;">'+card.name+' entered '+_poss+' Deadzone.</div><div style="font-size:.78rem;color:var(--text-dim);margin-top:.35rem;">E2: '+(card.e2||'no effect')+'</div></div><p style="font-size:.78rem;color:var(--text-dim);margin-top:.4rem;">Activate its E2 effect now? It resolves fully before the next Casualty Draw is pulled.</p>',
           [{label:'Activate E2 Effect',cls:'mb-skill',fn:function(){ _clr(); window.closeModal(); setTimeout(function(){ doE2(who,card,cont); },0); }},
-           {label:'Skip Effect',fn:function(){ _clr(); window.closeModal(); setTimeout(cont,0); }}]);
+           {label:'Skip Effect',fn:function(){ _clr(); window.closeModal(); setTimeout(function(){ partnerDeadDraw(who,card,cont); },0); }}]);
         return;
       }
       window.openModal('Casualty Draw: '+card.name,
@@ -4568,9 +4600,13 @@ function ruResolveSkillOpponent(who,card,cb){
 }
 window.ruResolveSkillOpponent=ruResolveSkillOpponent;
 function cancelAll(){
+  // An effect's board pick (boardPick) is a question, and Cancel answers it "no card": the effect ends through its own
+  // no-target path and whatever it is part of — another seat's attack being declared, a Casualty Draw line — goes on.
+  // Nothing else is reset by it (dropping the pick's continuation used to wipe the attack it was answering).
+  if(G.mode==='oppzonepick'&&G._oppZoneNoneOk&&typeof G._oppZoneCb==='function'){G.mode='normal';G._oppZoneCb(null,null,null);renderAll();refreshV10Buttons();return;}
   G.mode='normal';G.selAttacker=null;G.selAddon=null;G._addons=[];G.selRelieveTarget=null;G._chiefFlankPick=null;
   if(SF){if(window.ruActCancel)window.ruActCancel();SF=null;}   // an Action Card not paid for yet is not used
-  G._oppZoneCb=null;G._oppZoneFilter=null;G._oppZoneAnySide=null;G._oppZoneZones=null;G._oppZoneOwner=null;
+  G._oppZoneCb=null;G._oppZoneFilter=null;G._oppZoneAnySide=null;G._oppZoneZones=null;G._oppZoneOwner=null;G._oppZoneNoneOk=null;
   clearHL();hide('btn-can');setHint('');
   clearHandHL();renderAll();
   refreshV10Buttons();
@@ -6305,7 +6341,7 @@ function renderAllL1(){renderAllBase();window.refreshV10Buttons();}
 function renderAllL2(){
   renderAllL1();
   if(G&&G.player){
-    window.renderDeltaZoneRA2('player');window.renderDeltaZoneRA2('ai');
+    (G.sideOrder||['player','ai']).forEach(function(w){window.renderDeltaZoneRA2(w);});   // every seat's Δ Zone card, seen by all
     const me=ruLocalSeatId(),mp=me&&G[me];
     const sk=el('btn-skill');if(sk&&mp&&G.turn===me&&mp.delta&&mp.delta[0]&&['main','standby','battle'].includes(G.phase))show('btn-skill');
   }
@@ -6396,7 +6432,7 @@ function renderAllL12(){
 }
 function renderAllL13(){if(ruEngineRender())window.applyNeg3MarksRA13();return renderAllL12();}
 function renderAllL14(){
-  if(ruEngineRender())try{ window.processExtensionEntriesRA14('player'); window.processExtensionEntriesRA14('ai'); }catch(e){}
+  if(ruEngineRender())try{ (G.sideOrder||['player','ai']).forEach(function(w){ window.processExtensionEntriesRA14(w); }); }catch(e){}   // every seat's Extension entries
   return renderAllL13();
 }
 function renderAllL15(){
@@ -11615,7 +11651,9 @@ function showAreaBanner(txt,color){
 function spawnAreaParticles(field, owner, cfg){
   if(!field||!cfg) return;
   const count=18;
-  const startX=(owner===ruViewSeat())?90:10;
+  // from the element's Deadzone (its wash origin) into the board: toward the far end, or both ways from a Tag band's middle
+  const startX=parseFloat(areaOriginPctForField(field))||((owner===ruViewSeat())?90:10);
+  const dir=()=>startX>60?-1:startX<40?1:(Math.random()<.5?-1:1);
   const baseY=50;
   const light=`rgb(${cfg.lightRgb.r}, ${cfg.lightRgb.g}, ${cfg.lightRgb.b})`;
   for(let i=0;i<count;i++){
@@ -11623,7 +11661,7 @@ function spawnAreaParticles(field, owner, cfg){
     pt.className='area-particle';
     const x=startX + (Math.random()*8-4);
     const y=baseY + (Math.random()*70-35);
-    const dx=(owner===ruViewSeat()?-1:1)*(40+Math.random()*200)+'px';
+    const dx=dir()*(40+Math.random()*200)+'px';
     const dy=(Math.random()*160-80)+'px';
     pt.style.left=x+'%'; pt.style.top=y+'%'; pt.style.color=light;
     pt.style.setProperty('--dx',dx); pt.style.setProperty('--dy',dy); pt.style.setProperty('--dur',(0.7+Math.random()*0.55)+'s');
@@ -11632,17 +11670,32 @@ function spawnAreaParticles(field, owner, cfg){
   }
 }
 // Origin-x % for a field's area-tint radial = the field's own Deadzone center (so the wash flows FROM the Deadzone,
-// not the field edge/screen end). Works for player (deadzone right) and ai-side (deadzone left) alike.
+// not the field edge/screen end). Measured in the board's own layout (px from its left edge), so a board turned on the
+// table (2v2's top row, the 1v1v1 / Royale seats) still washes from its own Deadzone. A Tag team band carries its
+// shared Deadzone's place (originX, set by layoutTwoVTwo).
 function areaOriginPctForField(field){
   try{
-    if(!field||!field.id)return '95%';
+    if(!field)return '95%';
+    if(field.dataset&&field.dataset.originX)return field.dataset.originX+'%';
+    if(!field.id)return '95%';
     var dead=document.getElementById(field.id.replace('-field','-dead'));
-    if(!dead)return '95%';
-    var fr=field.getBoundingClientRect(), dr=dead.getBoundingClientRect();
-    if(!fr.width||!dr.width)return '95%';
-    var pct=((dr.left+dr.right)/2 - fr.left)/fr.width*100;
+    if(!dead||!field.offsetWidth||!dead.offsetWidth)return '95%';
+    var l=ruOffsetLeftIn(dead,field);
+    if(l==null)return '95%';
+    var pct=(l+dead.offsetWidth/2+field.clientLeft)/field.offsetWidth*100;
     return Math.max(3,Math.min(97,pct)).toFixed(1)+'%';
   }catch(e){return '95%';}
+}
+// The elements an Area's wash covers: every board — in Tag, each team's one band over both partners' boards.
+function ruAreaWashEls(sides){
+  if(G&&G.twoVtwo==='tag'){const b=['tag-band-AB','tag-band-CD'].map(el).filter(Boolean);if(b.length)return b;}
+  return sides.map(s=>el(sideZoneId(s,'field'))).filter(Boolean);
+}
+// The Deadzone drawn for seat w: in Tag a partner without one of its own (B, D) shows the pair's shared one.
+function ruShownDeadEl(w){
+  const d=el(sideZoneId(w,'dead'));
+  if(G&&G.twoVtwo==='tag'&&d&&getComputedStyle(d).display==='none'){const m=ruPartnerOf(w),md=m&&el(sideZoneId(m,'dead'));if(md)return md;}
+  return d;
 }
 function syncAreaVisuals(){
   const active=globalActiveArea();
@@ -11650,25 +11703,25 @@ function syncAreaVisuals(){
   const prev=GLOBAL_AREA_VIS.key||'';
   const prevOwner=GLOBAL_AREA_VIS.owner||'';
   const sides=G.sideOrder||['player','ai'];
-  const fields=sides.map(s=>el(sideZoneId(s,'field'))).filter(Boolean);
+  const fields=ruAreaWashEls(sides);
   const deads=sides.map(s=>el(sideZoneId(s,'dead'))).filter(Boolean);
   if(active){
     const cfg=areaCfgFromCard(active.card);
     fields.forEach(f=>{if(!f)return;f.style.setProperty('--area-rgb',`${cfg.baseRgb.r}, ${cfg.baseRgb.g}, ${cfg.baseRgb.b}`);f.style.setProperty('--area-dark-rgb',`${cfg.darkRgb.r}, ${cfg.darkRgb.g}, ${cfg.darkRgb.b}`);f.style.setProperty('--area-origin-x',areaOriginPctForField(f));f.classList.add('area-active');});
     deads.forEach(d=>{if(!d)return;d.style.removeProperty('--area-light-rgb');d.classList.remove('area-dead-active','area-dead-enter','area-dead-exit');});
-    const sourceDead=el(sideZoneId(active.who,'dead'));
+    const sourceDead=ruShownDeadEl(active.who);
     if(sourceDead){sourceDead.style.setProperty('--area-light-rgb',`${cfg.lightRgb.r}, ${cfg.lightRgb.g}, ${cfg.lightRgb.b}`);sourceDead.classList.add('area-dead-active');}
   }
   if(key!==prev){
     if(active){
       fields.forEach(f=>{if(!f)return;f.classList.remove('area-exit');void f.offsetWidth;f.classList.add('area-enter');setTimeout(()=>f.classList.remove('area-enter'),980);});
-      const sourceDead=el(sideZoneId(active.who,'dead'));
+      const sourceDead=ruShownDeadEl(active.who);
       if(sourceDead){sourceDead.classList.remove('area-dead-exit');void sourceDead.offsetWidth;sourceDead.classList.add('area-dead-enter');setTimeout(()=>sourceDead.classList.remove('area-dead-enter'),850);}
       showAreaBanner(`Terraformation: ${active.card.name}!`, CLASS_COLORS[active.card.class]||'#6F0417');
       fields.forEach(f=>{if(!f)return;spawnAreaParticles(f, active.who, areaCfgFromCard(active.card));});
     } else if(prev){
       fields.forEach(f=>{if(!f)return;f.classList.remove('area-enter');void f.offsetWidth;f.classList.add('area-exit');setTimeout(()=>{f.classList.remove('area-exit','area-active');['--area-rgb','--area-dark-rgb','--area-origin-x'].forEach(v=>f.style.removeProperty(v));},920);});
-      const sourceDead=el(sideZoneId(prevOwner,'dead'));
+      const sourceDead=ruShownDeadEl(prevOwner);
       if(sourceDead){sourceDead.classList.remove('area-dead-enter');void sourceDead.offsetWidth;sourceDead.classList.add('area-dead-exit');setTimeout(()=>{sourceDead.classList.remove('area-dead-exit','area-dead-active');sourceDead.style.removeProperty('--area-light-rgb');},820);}
     }
     GLOBAL_AREA_VIS={key,owner:active?active.who:''};
@@ -25599,15 +25652,17 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   // The user clicks a Battlefield card on the board — any player's, where legal(owner, zone, card) allows (legal cards
   // glow) — always asked, even with one legal card. cb(owner, zone, card), or cb(null) when nothing is legal.
-  // Cancelling the pick (Cancel / End Turn) ends the effect; target before paying, so nothing is lost.
+  // Cancelling the pick (Cancel / End Turn) is the answer "no card": cb(null), so the effect ends through its own
+  // no-target path and whatever it is part of (an attack being declared, a Casualty Draw line) goes on. Target before
+  // paying, so nothing is lost.
   function boardPick(w,hint,legal,cb){
     var cands=[];
     living().forEach(function(s2){ ZONES.forEach(function(z){ var c=zc(G[s2],z); if(c&&legal(s2,z,c))cands.push({s:s2,z:z,c:c}); }); });
     if(!cands.length){ cb(null); return; }
     if(!isHumanSeat(w)){ var x=cands.find(function(e){ return !ruSameTeam(e.s,w); })||cands[0]; cb(x.s,x.z,x.c); return; }
-    G._oppZoneAnySide=true; G._oppZoneZones=ZONES; G._oppZoneOwner=w;
+    G._oppZoneAnySide=true; G._oppZoneZones=ZONES; G._oppZoneOwner=w; G._oppZoneNoneOk=true;
     G._oppZoneFilter=function(c,owner,zone){ return legal(owner,zone,c); };
-    G._oppZoneCb=function(zone,card,owner){ G._oppZoneCb=null; G._oppZoneFilter=null; G._oppZoneAnySide=null; G._oppZoneZones=null; G._oppZoneOwner=null; clearHL(); hide('btn-can'); setHint(''); cb(owner,zone,card); };
+    G._oppZoneCb=function(zone,card,owner){ G._oppZoneCb=null; G._oppZoneFilter=null; G._oppZoneAnySide=null; G._oppZoneZones=null; G._oppZoneOwner=null; G._oppZoneNoneOk=null; clearHL(); hide('btn-can'); setHint(''); cb(owner||null,zone,card); };
     G.mode='oppzonepick'; renderAll(); clearHL();
     cands.forEach(function(e){ var el2=document.getElementById(window.zId(e.s,e.z)); if(el2)el2.classList.add('ht'); });
     setHint(hint+' — click a highlighted card.'); show('btn-can');

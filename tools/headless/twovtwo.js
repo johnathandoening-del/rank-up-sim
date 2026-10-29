@@ -266,7 +266,70 @@ function partnerAnswer(choice) {
   eq([st.bh, st.bu, st.au], [0, 1, 0], 'team: the payer pays the card and the Action slot');
 }
 
-['team2v2', 'tag2v2'].forEach((mode) => { rules(mode); deckOut(mode); evoElements(mode); });
+// A Safeguard that targets a card on the board (Kismet's Balance), its board pick cancelled by the defender: that is the
+// answer "no card" — Balance is not used and the attack goes on. (Cancel used to drop the pick's continuation, so the
+// attack it was answering vanished: the attacker kept its attack and nothing was logged.)
+function pickCancelMidAttack(mode) {
+  const m = newMatch({ seed: 43, rngSeed: 43, mode, order: ORDER.slice(), classes: { player: 'temporal', ai: 'kismet', ai2: 'light', ai3: 'inferno' } });
+  m.eng.run(STATE_CODE);
+  const R = (x) => m.eng.run(x);
+  R('var __kd=buildDeck("kismet"), __bal=__kd.find(function(c){return c.name==="Balance";}), __fill=__kd.filter(function(c){return c.type==="numeral";}).slice(0,2);' +
+    'closeModal(); _modalQueue.length=0; SF=null; G.turn="player"; G.phase="battle"; G.mode="normal"; G._turnsCompletedBy={player:1,ai:1,ai2:1,ai3:1};' +
+    '["player","ai","ai2","ai3"].forEach(function(w){var p=G[w]; p.hand=[]; p.mp=15; p.actUsed=0; p.attacksUsed={}; p.rankZone=Object.assign({},p.rankZone,{numeral:4,currentNP:4,rank:1,currentRP:1,A:1,attacksLeft:1,canAttack:true,_empty:false,type:"numeral"});});' +
+    'G.player.rankZone.currentNP=7; G.ai.hand.push(Object.assign({},__bal,{id:"t-bal"}),Object.assign({},__fill[0],{id:"t-f1"}),Object.assign({},__fill[1],{id:"t-f2"}));' +
+    '(G._actLog=G._actLog||[]).push({n:9001,turn:G._turnNo||0,who:"ai2",name:"Plus",how:"hand",changes:[]});');   // an Action Card was used this turn
+  m.apply({ t: 'atkMode', s: 'player' });
+  m.apply({ t: 'zone', o: 'player', z: 'rank', s: 'player' });
+  m.apply({ t: 'zone', o: 'ai', z: 'rank', s: 'player' });
+  let usedBalance = false, cancelled = false;
+  for (let i = 0; i < 16; i++) {
+    const pd = m.pending();
+    if (pd.kind === 'modal') {
+      const L = pd.labels || [];
+      let ix = !usedBalance ? L.findIndex((l) => /Use Balance/.test(l)) : -1;
+      if (ix >= 0) usedBalance = true; else { ix = L.findIndex((l) => /Pass|Continue|Skip|Decline/.test(l)); if (ix < 0) ix = L.length - 1; }
+      m.apply({ t: 'modal', i: ix, s: pd.owner }); continue;
+    }
+    if (pd.kind === 'pick') { m.apply({ t: 'pick', ix: [0], ids: [], s: pd.owner }); continue; }
+    if (pd.kind === 'turn' && pd.mode === 'oppzonepick') { ok(pd.owner === 'ai', mode + ': the board pick is the defender’s'); m.apply({ t: 'cancel', s: 'ai' }); cancelled = true; continue; }
+    break;
+  }
+  ok(usedBalance && cancelled, mode + ': the defender chose Balance, then cancelled its board pick');
+  const st = JSON.parse(R('JSON.stringify({left:G.player.rankZone.attacksLeft,cmp:G.ai.mp,bal:G.ai.hand.some(function(c){return c.id==="t-bal";}),cu:G.ai.actUsed||0,mode:G.mode})'));
+  eq(st.left, 0, mode + ': the attack still happened after the cancelled pick');
+  ok(st.cmp < 15, mode + ': the attacked player took the Morale Damage');
+  eq([st.bal, st.cu], [true, 0], mode + ': Balance was not used (still in hand, no Action slot spent)');
+}
+
+// Tag: a Casualty Draw's Dead Draw its owner leaves unused may be activated by the partner (one shared Deadzone, one
+// player): B skips Rank Star from B's Deck, A activates it — and its stop on further Casualty Draws covers the team.
+// In Team the partner is not asked.
+function partnerDeadDraw(mode) {
+  const m = newMatch({ seed: 47, rngSeed: 47, mode, order: ORDER.slice(), classes: { player: 'light', ai: 'inferno', ai2: 'shadow', ai3: 'blizzard' } });
+  m.eng.run(STATE_CODE);
+  const R = (x) => m.eng.run(x);
+  R('var __rs=buildDeck("light").find(function(c){return c.name==="Rank Star";});' +
+    'closeModal(); _modalQueue.length=0; SF=null; G.turn="ai"; G.phase="battle"; G.mode="normal"; G._casDrawPrevented={}; G._casDrawsNegated=false;' +
+    'G.ai3.deck.unshift(Object.assign({},__rs,{id:"t-rs"})); casDraw("ai3");');
+  const seen = [];
+  for (let i = 0; i < 8; i++) {
+    const pd = m.pending();
+    if (pd.kind !== 'modal' || !/Casualty Draw: Rank Star/.test(pd.title)) break;
+    seen.push(pd.owner);
+    const L = pd.labels || [];
+    m.apply({ t: 'modal', i: L.findIndex((l) => pd.owner === 'ai3' ? /Skip/.test(l) : /Activate/.test(l)), s: pd.owner });
+  }
+  const tag = mode === 'tag2v2';
+  eq(seen, tag ? ['ai3', 'player'] : ['ai3'], mode + ': the owner is asked first' + (tag ? ', then the partner' : ' (and only the owner)'));
+  if (!tag) return;
+  const st = JSON.parse(R('JSON.stringify({a:!!G._casDrawPrevented.player,dz:G.ai3.deadzone.some(function(c){return c.id==="t-rs";}),deck:G.ai3.deck.length,cas:G.player.cas})'));
+  ok(st.a, 'tag: the partner activated the Dead Draw (its effect is theirs)');
+  R('casDraw("ai3");');
+  const after = JSON.parse(R('JSON.stringify({deck:G.ai3.deck.length,cas:G.player.cas})'));
+  eq([after.deck, after.cas], [st.deck, st.cas], 'tag: Rank Star stops further Casualty Draws against either partner');
+}
+
+['team2v2', 'tag2v2'].forEach((mode) => { rules(mode); deckOut(mode); evoElements(mode); pickCancelMidAttack(mode); partnerDeadDraw(mode); });
 partnerAnswer('partner'); partnerAnswer('self');
 console.log(`rules: ${checks} checks passed`);
 const games = Number(process.argv[2] || 4), base = Number(process.argv[3] || 1);
