@@ -27,6 +27,9 @@ async function main(){
         ruOwnPrompt('player');applyE2('player',testRecover);
       },cls);
       await page.locator('#picker-modal.open').waitFor();
+      assert.deepEqual(await page.evaluate(()=>PCK.pool.map(c=>c.type)),['shell']);
+      await page.locator('#pk-cards > div').first().click();
+      await page.locator('#pk-confirm').click();
       assert.match(await page.locator('#pk-title').innerText(),/Recover E2/);
       assert.deepEqual(await page.evaluate(()=>PCK.pool.map(c=>c.name)),['Recover']);
       assert.equal(await page.locator('#pk-confirm').isDisabled(),true);

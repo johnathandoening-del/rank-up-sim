@@ -1559,7 +1559,10 @@ function makeShellCard(w){return {id:'shell-'+w+'-'+uid(),name:'Shell',type:'she
 // aren't enough, fills the rest of the requirement with selectable Shell placeholders instead of
 // silently decrementing the counter. moveRealCard(c) should physically move a picked REAL card
 // (e.g. to Discard); a picked Shell just counts toward the deficit.
-function dzPickWithShells(w,label,realPool,need,moveRealCard,cb){
+function ruDeadzoneShellStep(step){
+  return !!step&&(step.type==='pick_deadzone'||step.type==='take_deadzone')&&step.to==='discard'&&(!step.filter||step.shells===true);
+}
+function dzPickWithShells(w,label,realPool,need,moveRealCard,cb,options){
   const short=Math.max(0,need-realPool.length);
   const shellBudget=Math.max(0,7-shellsOut(w));
   const shellCount=Math.min(short,shellBudget);
@@ -1567,7 +1570,7 @@ function dzPickWithShells(w,label,realPool,need,moveRealCard,cb){
   const pool=realPool.concat(shells);
   const total=Math.min(need,pool.length);
   if(!total){cb([]);return;}
-  window.cChoose(w,pool,total,label,function(picks){
+  const resolve=function(picks){
     picks=picks||[];
     const p=G[w];
     picks.forEach(function(c){
@@ -1575,9 +1578,13 @@ function dzPickWithShells(w,label,realPool,need,moveRealCard,cb){
       else{moveRealCard(c);}
     });
     cb(picks);
-  });
+  };
+  const chooser=options&&options.owner||w;
+  if(options&&window.isHumanSeat(chooser)){
+    ruOwnedPicker(chooser,label,pool,total,Math.min(total,options.min==null?total:options.min),!!options.optional,resolve);
+  }else window.cChoose(w,pool,total,label,resolve);
 }
-try{window.shellsOut=shellsOut;window.makeShellCard=makeShellCard;window.dzPickWithShells=dzPickWithShells;}catch(e){}
+try{window.shellsOut=shellsOut;window.makeShellCard=makeShellCard;window.dzPickWithShells=dzPickWithShells;window.ruDeadzoneShellStep=ruDeadzoneShellStep;}catch(e){}
 // Bank cards belong in their natural slot (Cipher/Digit below Rank0 0, then ascending by Rank then
 // Numeral, MAX last) rather than wherever a skill/effect happened to drop them. Array index 0 is
 // the TOP of the Bank (directly under the Rank Zone card) -- that's the slot Rank-Zone-demotion on
@@ -2477,7 +2484,9 @@ function applyE2L18(w,card){
                 window.safeLogRD3('Return (E2): shuffled chosen Drop/Deadzone cards into Deck; opponent draws 1.','info');
                 window.renderSafeRD3();window.checkSafeRAE18();
               };
-              window.dzPickWithShells(w,'Return (E2) - choose 2 Deadzone card(s) or Shell(s) to shuffle into Deck.',pool,2,function(c){window.moveToRD3(p,c,'deck');},finishReturn);
+              window.cChoose(w,pool,Math.min(2,pool.length),'Return (E2) - choose real Deadzone cards to shuffle into Deck.',function(picks){
+                picks.forEach(function(c){window.moveToRD3(p,c,'deck');});finishReturn(picks);
+              });
             });
           };
           window.discardSelfFromDeadzoneRAE18(w,p,card);
@@ -3267,11 +3276,16 @@ function beginPhaseBase(ph){
     // Clear per-turn flags
     G._reverseNegate=null;G._casDrawsNegated=false;G._casRedirect=null;G._spyNoSafeguard=null;G._spyNoMoreActions=null;G._defState={};G._sgUsedThisAttack=false;G._lastMoraleTo={};G._blizzard5NP=0;G._blizzard5By=null;G._shadow6=null;G._drawbridge7ThisTurn=false;G._noAttack={};G._noAttackingAdvantage={};G._advMultiplier={};G._advApplyMult=null;G._freeMaxSkills={};
     // Shining Star: drop 1 from Deadzone after the Battle Phase
-    if(G._shiningStarDrop){const w=G._shiningStarDrop;G._shiningStarDrop=null;if(G[w]&&G[w].deadzone&&G[w].deadzone.length)takeFromDeadzone(w,1,'Shining Star: drop 1 from your Deadzone','discard');}
+    if(G._shiningStarDrop){const w=G._shiningStarDrop;G._shiningStarDrop=null;if(G[w])takeFromDeadzone(w,1,'Shining Star: drop 1 from your Deadzone','discard');}
     // Resolve queued end-of-step effects
   if(G._inferno4){const w=G._inferno4;G._inferno4=null;const iw=oppOf(w);ruLoseMP(G[iw],3,'numeral');log('Inferno 4 end-step: '+sideVerbLabel(iw,'lose','loses')+' 3 MP.','dmg');checkWin();}
   if(G._d0millQueued){const{who:mw,count:mc}=G._d0millQueued;G._d0millQueued=null;mill(mw,mc);log(`Deckstructive 0: ${sideVerbLabel(mw,'mill')} ${mc} card(s).`,'dmg');}
-  if(G._blizzard6opp){const bw=G._blizzard6opp;G._blizzard6=false;G._blizzard6opp=null;const bp=G[bw];if(bp.deadzone.length){ruOwnedPicker(oppOf(bw),`Opponent Deadzone — Blizzard 6: Drop 1 card.`,bp.deadzone,1,1,false,(picks)=>{picks.forEach(c=>{const i=bp.deadzone.indexOf(c);if(i!==-1){bp.deadzone.splice(i,1);bp.cas=Math.max(-7,(bp.cas||0)-1);if(c&&c.type==='numeral'&&(c.rank||0)>=3&&typeof window.RUr3DeadToDiscard==='function')window.RUr3DeadToDiscard(bp,c);else ruDrop(bp,c);}});if(picks.length)log(`Blizzard 6 end-turn: Opponent drops ${picks[0].name} from Deadzone.`,'dmg');});}else{bp.cas=Math.max(-7,(bp.cas||0)-1);log(`Blizzard 6 end-turn: opponent's Deadzone is empty, so it counts anyway (Deadzone: ${bp.cas}).`,'dmg');}
+  if(G._blizzard6opp){
+    const bw=G._blizzard6opp,bp=G[bw];G._blizzard6=false;G._blizzard6opp=null;
+    dzPickWithShells(bw,'Opponent Deadzone — Blizzard 6: Drop 1 card or Shell.',bp.deadzone.filter(c=>c.name!=='The Lowlands'),1,c=>{
+      const i=bp.deadzone.indexOf(c);if(i===-1)return;bp.deadzone.splice(i,1);bp.cas=Math.max(-7,(bp.cas||0)-1);
+      if(c.type==='numeral'&&(c.rank||0)>=3)window.RUr3DeadToDiscard(bp,c);else ruDrop(bp,c);
+    },picks=>{log('Blizzard 6 end-turn: opponent drops '+picks.map(c=>c.name).join(', ')+'.','dmg');},{owner:oppOf(bw)});
   if(G._setDeferred){(G.sideOrder||['player','ai']).forEach(sw=>{
     const queued=(G._setDeferred[sw]||[]).filter(c=>G[sw].deadzone.includes(c));
     G._setDeferred[sw]=[];
@@ -3777,7 +3791,10 @@ function beginPhaseL35(ph){
           if(G._ru157Blizzard6Drop){
             var target=G._ru157Blizzard6Drop,pool=window.deadPoolRAE21(target,null);
             G._ru157Blizzard6Drop=null;
-            if(pool.length)window.chooseOneRAE21(target,'Blizzard 6 - choose 1 of your Deadzone cards to Drop.',pool,false,function(c){if(c)window.moveToRAE21(window.sideRD6(target),c,'discard');window.safeLogAI9('Blizzard 6: '+((sideVerbLabel(target,'dropped','dropped')+' '))+(c?c.name:'no card')+' from Deadzone.','dmg');window.renderSafeRD6();window.checkSafeRAtk18();});
+            window.dzPickWithShells(target,'Blizzard 6 - choose 1 Deadzone card or Shell to Drop.',pool,1,
+              function(c){window.moveToRAE21(window.sideRD6(target),c,'discard');},function(picks){
+                window.safeLogAI9('Blizzard 6: '+sideSubjectLabel(target)+' dropped '+picks.map(c=>c.name).join(', ')+'.','dmg');window.renderSafeRD6();window.checkSafeRAtk18();
+              });
           }
           G._ru157NoAttackThisTurn=false;
           if(G._ru157BlizzardNoDamage&&ending===G._ru157BlizzardNoDamage.endOwner){G._ru157BlizzardNoDamage.endCount--;if(G._ru157BlizzardNoDamage.endCount<=0)G._ru157BlizzardNoDamage=null;}
@@ -7627,29 +7644,19 @@ function execStepBase(step){
       const need=step.min||step.count||1;
       // Generic (unfiltered) "drop from Deadzone" costs/effects can go negative toward -7 even
       // with no real card there — only name/rank/class/type-specific searches must fail outright.
-      const generic=!step.filter&&step.to==='discard';
+      const generic=ruDeadzoneShellStep(step);
       if(pool.length<need&&!generic){
         if(step.optional){runStep();return;}
         log('No eligible Deadzone cards. Skill cancelled.','dmg');SF=null;renderAll();return;
       }
       if(generic){
-        const takeCount=Math.min(step.max||need,pool.length);
-        const finishGeneric=(picks)=>{
-          picks=picks||[];
+        dzPickWithShells(who,`Your Deadzone — ${step.label}`,pool,step.max||step.count||need,function(){},picks=>{
           ctx.deadPicks.push(...picks);
-          picks.forEach(c=>{
-            const i=p.deadzone.indexOf(c);if(i!==-1)p.deadzone.splice(i,1);
-            if(c&&c.type==='numeral'&&(c.rank||0)>=3&&typeof window.RUr3DeadToDiscard==='function')window.RUr3DeadToDiscard(p,c);
-            else ruDrop(p,c);
+          _resolveDeadDest(p,picks.filter(c=>c.type!=='shell'),'discard',()=>{
+            if(picks.length)log(`From Deadzone: ${picks.map(c=>c.name).join(', ')} → Drop (Deadzone: ${p.cas}).`,'info');
+            renderAll();runStep();
           });
-          const shortfall=Math.max(0,need-picks.length);
-          p.cas=Math.max(-7,(p.cas||0)-picks.length-shortfall);
-          if(picks.length)log(`From Deadzone: ${picks.map(c=>c.name).join(', ')} → discard.`,'info');
-          if(shortfall)log(`Deadzone had ${shortfall} fewer card(s) than needed; counted anyway (Deadzone: ${p.cas}).`,'info');
-          renderAll();runStep();
-        };
-        if(takeCount<=0){finishGeneric([]);return;}
-        ruOwnedPicker(who,`Your Deadzone — ${step.label}`,pool,takeCount,takeCount,false,finishGeneric);
+        },{min:step.optional?0:need,optional:!!step.optional});
         return;
       }
       ruOwnedPicker(who,`Your Deadzone — ${step.label}`,pool,step.max||step.count||1,step.min||step.count||1,step.optional||false,(picks)=>{
@@ -8910,13 +8917,14 @@ function reactiveDefenses(aWho,att,addonNP,tgt,dw){
   // of the turn (this one is stopped); the attacker drops a card from their Deadzone at the end of the turn
   Object.keys(ZK).forEach(z=>{
     const b6=p[ZK[z]];
-    if(!(b6&&b6.type==='numeral'&&b6.class==='blizzard'&&b6.numeral===6&&!b6.usedSkill&&p.hand.length&&p.deadzone.length&&p.deck.length>=2))return;
+    if(!(b6&&b6.type==='numeral'&&b6.class==='blizzard'&&b6.numeral===6&&!b6.usedSkill&&p.hand.length&&p.deck.length>=2))return;
     add(b6,'Blizzard 6 — no attack can be declared this turn; this one is stopped (mill 2, drop 1 hand and 1 Deadzone card)',{
       cost:function(paid){
         F.millN(dw,2);
         dropHand('Blizzard 6 — drop a card from your hand.',()=>p.hand.slice(),1)(function(ok){
           if(!ok){ paid(false); return; }
-          F.pick(dw,'Blizzard 6 — drop a card from your Deadzone.',p.deadzone.slice(),1,1,function(pk){ const c=pk&&pk[0]; if(c)F.deadzoneToDrop(dw,c); paid(true); });
+          window.dzPickWithShells(dw,'Blizzard 6 — drop a Deadzone card or Shell.',p.deadzone.filter(c=>c.name!=='The Lowlands'),1,
+            function(c){F.deadzoneToDrop(dw,c);},function(){paid(true);});
         });
       },
       effect:function(done){
@@ -12103,7 +12111,7 @@ function useRetL2(idx,card){
   }
   function applyCopiedSevenX(w,p,o,asc,chosen){
     const tag=chosen._sevenTag||'';
-    if(tag==='Purify'){const c=p.deadzone.find(x=>x.name!=='The Lowlands'); if(c)moveX(p,c,'discard'); G._noAttack=G._noAttack||{};G._noAttack[w]=true;log(`Ascendant copied Purify: dropped 1 from Deadzone and cannot attack this turn.`,'info');}
+    if(tag==='Purify'){takeFromDeadzone(w,1,'Ascendant copied Purify - drop 1 Deadzone card or Shell.','discard');G._noAttack=G._noAttack||{};G._noAttack[w]=true;log('Ascendant copied Purify: cannot attack this turn.','info');}
     else if(tag==='Surge'){fieldCardsX(p).forEach(c=>c.currentNP=npX(c)+7);logAs(w,'Ascendant copied Surge: all {your} Battlefield cards gain +7 NP this turn.','heal');}
     else if(tag==='Expose'){const hits=o.hand.filter(c=>c.type==='numeral'&&c.numeral>=7);hits.forEach(c=>moveX(o,c,'discard'));p.mp+=hits.length;log(`Ascendant copied Expose: opponent dropped ${hits.length} Numeral(s) 7+; +${hits.length} MP.`,'dmg');}
     else if(tag==='Heaven'){const c=p.deck.find(x=>x.name==='Seven Heaven')||p.discard.find(x=>x.name==='Seven Heaven'); if(c){moveX(p,c,'hand');log('Ascendant copied Heaven: Seven Heaven added to hand.','info');}else log('Ascendant copied Heaven: Seven Heaven not found.','info');}
@@ -12771,7 +12779,7 @@ function useRetL2(idx,card){
         else if(step.type==='pick_deadzone'||step.type==='take_deadzone'){
           const pool=(step.filter?p.deadzone.filter(step.filter):p.deadzone.filter(c=>c.name!=='The Lowlands')).filter(Boolean);const need=step.min||step.count||1;
           if(pool.length<need){
-            if(!step.filter){
+            if(ruDeadzoneShellStep(step)){
               // GENERIC drop (either step type): take whatever real cards exist, then drop nonexistent cards (count goes toward -7)
               pool.forEach(c=>{moveKnown(p,c,step.to||'discard');ctx.deadPicks.push(c);});
               if((step.to||'discard')==='discard'){var _short=need-pool.length;var _dec=Math.min(_short,Math.max(0,(p.cas||0)+7));if(_dec>0){p.cas=Math.max(-7,p.cas-_dec);log(sideVerbLabel(who,'drop')+' '+_dec+' card(s) the Deadzone does not have \u2014 count goes to '+p.cas+'.','info');}}
@@ -12874,7 +12882,7 @@ function useRetL2(idx,card){
       if(st.type==='pay_mp'){mp-=st.amount||0;if(mp<0)return false;}
       if(st.type==='pick_hand'){const need=st.min||st.count||1;if(hand<need)return false;hand-=st.count||need;}
       if(st.type==='pick_bank'){const need=st.min||st.count||1;if(bank<need)return false;bank-=st.count||need;}
-      if((st.type==='take_deadzone'||st.type==='pick_deadzone')&&st.filter){const need=st.min||st.count||1;if(dead<need)return false;dead-=st.count||need;}
+      if((st.type==='take_deadzone'||st.type==='pick_deadzone')&&st.filter&&!ruDeadzoneShellStep(st)){const need=st.min||st.count||1;if(dead<need)return false;dead-=st.count||need;}
       if(st.type==='pick_discard'){const need=st.min||st.count||1;if(disc<need)return false;disc-=st.count||need;}
       if(st.type==='mill'){if(deck<(st.count||1))return false;deck-=st.count||1;}
       if(st.type==='deck_bottom'){if(deck<(st.count||1))return false;deck-=st.count||1;}
@@ -12899,7 +12907,7 @@ function useRetL2(idx,card){
       if(st.type==='pay_mp'){ mp+=(st.gain||0)-(st.amount||0); if(mp<0) return false; }
       else if(st.type==='pick_hand'){ var nh=st.min||st.count||1; if(hand<nh) return false; hand-=(st.count||nh); }
       else if(st.type==='pick_bank'){ var nb=st.min||st.count||1; if(bank<nb) return false; bank-=(st.count||nb); }
-      else if((st.type==='pick_deadzone'||st.type==='take_deadzone')&&st.filter){ var ndz=st.min||st.count||1; if(dead<ndz) return false; dead-=(st.count||ndz); }
+      else if((st.type==='pick_deadzone'||st.type==='take_deadzone')&&st.filter&&!ruDeadzoneShellStep(st)){ var ndz=st.min||st.count||1; if(dead<ndz) return false; dead-=(st.count||ndz); }
       else if(st.type==='pick_discard'){ var ndi=st.min||st.count||1; if(disc<ndi) return false; disc-=(st.count||ndi); }
       else if(st.type==='mill'){ if(deck<(st.count||1)) return false; deck-=(st.count||1); }
       else if(st.type==='deck_bottom'){ if(deck<(st.count||1)) return false; deck-=(st.count||1); }
@@ -12982,7 +12990,7 @@ function useRetL2(idx,card){
         else if(step.type==='pick_deadzone'||step.type==='take_deadzone'){
           const pool=(step.filter?p.deadzone.filter(step.filter):p.deadzone.filter(c=>c.name!=='The Lowlands')).filter(Boolean);const need=step.min||step.count||1;
           if(pool.length<need){
-            if(!step.filter){
+            if(ruDeadzoneShellStep(step)){
               pool.forEach(c=>{moveKnown(p,c,step.to||'discard');ctx.deadPicks.push(c);});
               if((step.to||'discard')==='discard'){const _short=need-pool.length;const _dec=Math.min(_short,Math.max(0,(p.cas||0)+7));if(_dec>0){p.cas=Math.max(-7,p.cas-_dec);log(sideVerbLabel(who,'drop','drops')+' '+_dec+' card(s) the Deadzone does not have — count goes to '+p.cas+'.','info');}}
             } else if(step.optional){continue;}
@@ -13373,7 +13381,7 @@ function useRetL2(idx,card){
     const tag=ruSevenTag(copied);
     const o=ruP(ruOther(w));
     if(tag==='Purify'){
-      if(p.deadzone.length){const d=p.deadzone.pop();p.cas=Math.max(-7,(p.cas||0)-1);if(d&&d.type==='numeral'&&(d.rank||0)>=3){window.RUr3DeadToDiscard(p,d);}else{ruDrop(p,d);}log(`Ascendant copied Purify: dropped ${d.name} from Deadzone.`,'info');}
+      takeFromDeadzone(w,1,'Ascendant copied Purify - drop 1 Deadzone card or Shell.','discard');
       ruNoAttack(w,'Ascendant copied Purify: cannot attack this turn.');
     }else if(tag==='Surge'){
       ruField(p).forEach(c=>c.currentNP=((c.currentNP ?? c.numeral)||0)+7);logAs(w,'Ascendant copied Surge: all {your} Battlefield Numerals gain +7 NP until end of turn.','heal');
@@ -13794,7 +13802,7 @@ function useRetL2(idx,card){
       if(st.type==='pay_mp'){mp-=st.amount||0;if(mp<0)return false;}
       if(st.type==='pick_hand'){const need=st.min||st.count||1;if(hand<need)return false;hand-=st.count||need;}
       if(st.type==='pick_bank'){const need=st.min||st.count||1;if(bank<need)return false;bank-=st.count||need;}
-      if(st.type==='pick_deadzone'||st.type==='take_deadzone'){const need=st.min||st.count||1;if(dead<need&&!st.optional)return false;dead=Math.max(0,dead-(st.count||need));}
+      if(st.type==='pick_deadzone'||st.type==='take_deadzone'){const need=st.min||st.count||1;if(dead<need&&!st.optional&&!ruDeadzoneShellStep(st))return false;dead=Math.max(0,dead-(st.count||need));}
       if(st.type==='pick_discard'){const need=st.min||st.count||1;if(disc<need&&!st.optional)return false;disc=Math.max(0,disc-(st.count||need));}
       if(st.type==='mill'){if(deck<(st.count||1)&&!st.optional)return false;deck=Math.max(0,deck-(st.count||1));}
       if(st.type==='deck_bottom'){if(deck<(st.count||1)&&!st.optional)return false;deck=Math.max(0,deck-(st.count||1));}
@@ -13874,8 +13882,9 @@ function useRetL2(idx,card){
           const picks=(/np total|combined np|total/i.test(st.label||''))?chooseHighest(pool,st.max||st.count||need):chooseLowest(pool,st.max||st.count||need);
           picks.forEach(x=>{moveTo(p,x,st.to||'discard');ctx.bankPicks.push(x);});
         }else if(st.type==='pick_deadzone'||st.type==='take_deadzone'){
-          const pool=(st.filter?p.deadzone.filter(st.filter):p.deadzone).filter(Boolean),need=st.min||st.count||1;if(pool.length<need){if(st.optional)continue;throw new Error('deadzone cost');}
+          const pool=(st.filter?p.deadzone.filter(st.filter):p.deadzone).filter(c=>c&&c.name!=='The Lowlands'),need=st.min||st.count||1;if(pool.length<need&&!ruDeadzoneShellStep(st)){if(st.optional)continue;throw new Error('deadzone cost');}
           const picks=chooseLowest(pool,st.max||st.count||need);picks.forEach(x=>{moveTo(p,x,st.to||'discard');ctx.deadPicks.push(x);});
+          if(ruDeadzoneShellStep(st)){const short=Math.min(Math.max(0,need-picks.length),7-shellsOut(who));p.cas=Math.max(-7,(p.cas||0)-short);}
         }else if(st.type==='pick_discard'){
           const pool=(st.filter?p.discard.filter(st.filter):p.discard).filter(Boolean),need=st.min||st.count||1;if(pool.length<need){if(st.optional)continue;throw new Error('discard cost');}
           const picks=chooseHighest(pool,st.max||st.count||need);picks.forEach(x=>{moveTo(p,x,st.to||'hand');ctx.discPicks.push(x);});
@@ -14262,7 +14271,7 @@ function useRetL2(idx,card){
   function resolveCopiedSeven(w,p,card,copied){
     const o=P(O(w)),tag=sevenTag(copied);
     if(tag==='Purify'){
-      const d=(p.deadzone||[]).find(c=>c.name!=='The Lowlands');if(d)move(p,d,'discard');
+      takeFromDeadzone(w,1,'Ascendant copied Purify - drop 1 Deadzone card or Shell.','discard');
       noAttack(w,'Ascendant copied Purify: dropped 1 from Deadzone and cannot attack this turn.');
     }else if(tag==='Surge'){
       nums(p).forEach(c=>c.currentNP=NP(c)+7);logAs(w,'Ascendant copied Surge: all {your} Battlefield Numerals gain +7 NP until end of turn.','heal');
@@ -14468,8 +14477,7 @@ function useRetL2(idx,card){
       {type:'move_self',to:'discard'},
       {type:'effect',fn(w,p){
         if((p.class||'')==='haste'){logSafe('Repair: Haste profile - this card drops itself.','info');return;}
-        if(sideDeadCount(w)>0){if(isHumanSeat(w))takeFromDeadzone(w,1,'Repair - drop 1 card from your Deadzone.','discard');else dropDeadAuto(w,1,'discard');}
-        else logSafe('Repair: no Deadzone card to drop.','info');
+        takeFromDeadzone(w,1,'Repair - drop 1 Deadzone card or Shell.','discard');
       }}
     ]};
     ACDEFS['Halcyon Star']={steps:[
@@ -14593,7 +14601,8 @@ function useRetL2(idx,card){
     if(nm==='Halcyon Star'){
       addM(w,card);selfToDrop(w,card);
       const _hsPool=[...p.deadzone].filter(c=>c&&c.name!=='The Lowlands');
-      window.dzPickWithShells(w,'Halcyon Star E2 - choose up to 3 of your Deadzone card(s) or Shell(s) to add to hand.',_hsPool,Math.min(3,_hsPool.length),function(c){arrRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);p.hand.push(c);},function(mine){
+      window.cChoose(w,_hsPool,Math.min(3,_hsPool.length),'Halcyon Star E2 - choose real Deadzone cards to add to hand.',function(mine){
+        mine.forEach(function(c){arrRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);p.hand.push(c);});
         const _hsOppPool=[...o.deadzone].filter(c=>c&&c.name!=='The Lowlands');
         const finishHalcyon=function(theirCount){
           drawN(other(w),1);
@@ -14601,7 +14610,9 @@ function useRetL2(idx,card){
           renderSafe();
         };
         if(!_hsOppPool.length){finishHalcyon(0);return;}
-        window.dzPickWithShells(other(w),'Halcyon Star E2 - opponent chooses 1 Deadzone card or Shell to add to hand.',_hsOppPool,1,function(c){arrRem(o.deadzone,c);o.cas=Math.max(-7,(o.cas||0)-1);o.hand.push(c);},function(theirs){finishHalcyon(theirs.length);});
+        window.cChoose(other(w),_hsOppPool,1,'Halcyon Star E2 - opponent chooses 1 real Deadzone card to add to hand.',function(theirs){
+          theirs.forEach(function(c){arrRem(o.deadzone,c);o.cas=Math.max(-7,(o.cas||0)-1);o.hand.push(c);});finishHalcyon(theirs.length);
+        });
       });
       return true;
     }
@@ -17658,8 +17669,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           safeLog('Repair: '+sideClass(w)+' profile hand effect drops only this card.','info');
           return;
         }
-        if(typeof takeFromDeadzone==='function'&&p.deadzone&&p.deadzone.length)takeFromDeadzone(w,1,'Repair - drop 1 card from your Deadzone.','discard');
-        else safeLog('Repair: no Deadzone card to drop.','info');
+        takeFromDeadzone(w,1,'Repair - drop 1 Deadzone card or Shell.','discard');
       }}
     ]};
   }
@@ -18349,9 +18359,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.chooseOneRAE16=chooseOne;
   function handCost(w,count,label,cb,exclude){
     const p=side(w),pool=(p&&p.hand||[]).filter(function(c){return c&&!(exclude&&exclude(c));});
-    chooseMany(w,label,pool,count,function(picks){
-      if(!picks){cb(false,[]);return;}
-      picks.forEach(function(c){moveTo(p,c,'discard');});
+    window.dzPickWithShells(w,label,pool,count,function(c){moveTo(p,c,'discard');},function(picks){
       safeLog(label+': '+picks.map(function(c){return c.name;}).join(', ')+' -> Drop.','info');
       cb(true,picks);
     });
@@ -18423,8 +18431,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           safeLog('Repair: '+sideClass(w)+' profile hand effect drops only this card.','info');
           return;
         }
-        if(typeof takeFromDeadzone==='function'&&p.deadzone&&p.deadzone.length)takeFromDeadzone(w,1,'Repair - drop 1 card from your Deadzone.','discard');
-        else safeLog('Repair: no Deadzone card to drop.','info');
+        takeFromDeadzone(w,1,'Repair - drop 1 Deadzone card or Shell.','discard');
       }}
     ]};
 
@@ -19080,8 +19087,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
           safeLog('Repair: '+sideClass(w)+' profile hand effect drops only this card.','info');
           return;
         }
-        if(typeof takeFromDeadzone==='function'&&p.deadzone&&p.deadzone.length)takeFromDeadzone(w,1,'Repair - drop 1 card from your Deadzone.','discard');
-        else safeLog('Repair: no Deadzone card to drop.','info');
+        takeFromDeadzone(w,1,'Repair - drop 1 Deadzone card or Shell.','discard');
       }}
     ]};
 
@@ -19946,13 +19952,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     var free=!!(card._sevenHeavenFreeCost||card._copySkillFreeCost);
     var finishEffect=function(){
       var ow=other(w),op=side(ow),oppPool=deadPool(ow,null);
-      var afterOpp=function(pick){
-        if(pick)moveTo(op,pick,'discard');
-        setNoAttack(w,'Light 7: opponent dropped '+(pick?pick.name:'no Deadzone card')+'. You cannot attack this turn.');
+      var afterOpp=function(picks){
+        setNoAttack(w,'Light 7: opponent dropped '+picks.map(c=>c.name).join(', ')+'. You cannot attack this turn.');
         if(typeof SF!=='undefined')SF=null;renderSafe();checkSafe();
       };
-      if(oppPool.length)chooseOne(ow,'Light 7 - choose 1 of your Deadzone cards to Drop.',oppPool,false,afterOpp);
-      else afterOpp(null);
+      window.dzPickWithShells(ow,'Light 7 - choose 1 Deadzone card or Shell to Drop.',oppPool,1,function(c){moveTo(op,c,'discard');},afterOpp);
     };
     if(free){
       delete card._sevenHeavenFreeCost;delete card._copySkillFreeCost;
@@ -20057,8 +20061,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         if(['zero','shadow','haste','fission','light'].indexOf(sideClass(w))!==-1){
           safeLog('Repair: '+sideClass(w)+' profile hand effect drops only this card.','info');return;
         }
-        if(typeof takeFromDeadzone==='function'&&p.deadzone&&p.deadzone.length)takeFromDeadzone(w,1,'Repair - drop 1 card from your Deadzone.','discard');
-        else safeLog('Repair: no Deadzone card to drop.','info');
+        takeFromDeadzone(w,1,'Repair - drop 1 Deadzone card or Shell.','discard');
       }}
     ]};
     ACDEFS['Shining Star']={steps:[
@@ -20078,9 +20081,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function lightE2Done(){renderSafe();checkSafe();}
   window.lightE2DoneRAE20=lightE2Done;
   function chooseDeadDrop(w,label,count,exclude,cb){
-    chooseMany(w,label,deadPool(w,exclude),count,function(picks){
-      if(!picks){lightE2Done();cb&&cb(null);return;}
-      picks.forEach(function(c){moveDeadToDrop(w,c);});
+    window.dzPickWithShells(w,label,deadPool(w,exclude),count,function(c){moveDeadToDrop(w,c);},function(picks){
       cb&&cb(picks);
     });
   }
@@ -20404,9 +20405,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function doneE2(){renderSafe();checkSafe();}
   window.doneE2RAE21=doneE2;
   function chooseDeadDrop(w,label,count,exclude,cb){
-    chooseMany(w,label,deadPool(w,exclude),count,function(picks){
-      if(!picks){doneE2();cb&&cb(null);return;}
-      picks.forEach(function(c){moveTo(side(w),c,'discard');});
+    window.dzPickWithShells(w,label,deadPool(w,exclude),count,function(c){moveTo(side(w),c,'discard');},function(picks){
       cb&&cb(picks);
     });
   }
@@ -20685,9 +20684,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function doneE2(){renderSafe();checkSafe();}
   window.doneE2RAE22=doneE2;
   function chooseDeadDrop(w,label,count,exclude,cb){
-    chooseMany(w,label,deadPool(w,exclude),count,function(picks){
-      if(!picks){doneE2();cb&&cb(null);return;}
-      picks.forEach(function(c){moveTo(side(w),c,'discard');});
+    window.dzPickWithShells(w,label,deadPool(w,exclude),count,function(c){moveTo(side(w),c,'discard');},function(picks){
       cb&&cb(picks);
     });
   }
@@ -20972,9 +20969,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function doneE2(){renderSafe();checkSafe();}
   window.doneE2RAE23=doneE2;
   function chooseDeadDrop(w,label,count,exclude,cb){
-    chooseMany(w,label,deadPool(w,exclude),count,function(picks){
-      if(!picks){doneE2();cb&&cb(null);return;}
-      picks.forEach(function(c){moveTo(side(w),c,'discard');});
+    window.dzPickWithShells(w,label,deadPool(w,exclude),count,function(c){moveTo(side(w),c,'discard');},function(picks){
       cb&&cb(picks);
     });
   }
@@ -21125,7 +21120,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.deadPoolRAE24=deadPool;
   function chooseCards(owner,label,pool,max,min,optional,cb){
     pool = (pool || []).filter(Boolean);
-    max = max || 1;
+    max = max == null ? 1 : max;
     min = min == null ? max : min;
     if(pool.length < min){
       if(optional){ cb && cb([]); return; }
@@ -21637,12 +21632,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
   function deadCost(owner,label,count,exclude,cb){
     var p = side(owner);
-    var pool = (p && p.deadzone || []).filter(function(c){ return c !== exclude; });
-    chooseMany(owner,label,pool,count,function(picks){
-      if(!picks){ cb && cb(null); return; }
-      picks.forEach(function(c){ moveTo(p,c,'discard'); });
-      cb && cb(picks);
-    });
+    var pool = (p && p.deadzone || []).filter(function(c){ return c !== exclude && c.name !== 'The Lowlands'; });
+    window.dzPickWithShells(owner,label,pool,count,function(c){moveTo(p,c,'discard');},function(picks){cb&&cb(picks);});
   }
   function dropToDeck(owner,label,count,cb){
     var p = side(owner);
@@ -22362,11 +22353,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   window.commitDeadActionRAE26=commitDeadAction;
   function deadDrop(owner,label,count,cb){
     var p = side(owner);
-    chooseMany(owner,label,(p && p.deadzone || []).filter(function(c){return c && c.name !== 'The Lowlands';}),count,function(picks){
-      if(!picks){ cb && cb(null); return; }
-      picks.forEach(function(c){ moveTo(p,c,'discard'); });
-      cb && cb(picks);
-    });
+    window.dzPickWithShells(owner,label,(p && p.deadzone || []).filter(function(c){return c && c.name !== 'The Lowlands';}),count,
+      function(c){moveTo(p,c,'discard');},function(picks){cb&&cb(picks);});
   }
 
   function runMaximum2(w,p,card){
@@ -22704,11 +22692,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function deadCost(owner,label,count,exclude,cb){
     var p = side(owner);
     var pool = (p && p.deadzone || []).filter(function(c){ return c !== exclude && c.name !== 'The Lowlands'; });
-    chooseMany(owner,label,pool,count,function(picks){
-      if(!picks){ cb && cb(null); return; }
-      picks.forEach(function(c){ moveTo(p,c,'discard'); });
-      cb && cb(picks);
-    });
+    window.dzPickWithShells(owner,label,pool,count,function(c){moveTo(p,c,'discard');},function(picks){cb&&cb(picks);});
   }
   function selfToDrop(w,card){
     var p = side(w);
@@ -22780,11 +22764,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
             var ow = list[i], op = side(ow), nm = sideSubjectLabel(ow);
             // Tag: the other team is ONE player — its shared Deadzone and Morale change once; each seat still draws
             if (list.slice(0,i).some(function(x){ return ruIsTag()&&ruSameTeam(x,ow); })) { try{ draw(ow,1); }catch(e){} seq(list,i+1,names); return; }
-            chooseOne(ow,ruPOV(ow,'Restorative 7 - {You} {choose|chooses} 1 Deadzone card to Drop.'),(op && op.deadzone || []).filter(function(c){ return c && c.name !== 'The Lowlands'; }),true,function(c){
-              if(c) moveTo(op,c,'discard');
+            window.dzPickWithShells(ow,ruPOV(ow,'Restorative 7 - {You} {choose|chooses} 1 Deadzone card or Shell to Drop.'),(op && op.deadzone || []).filter(function(c){ return c && c.name !== 'The Lowlands'; }),1,function(c){moveTo(op,c,'discard');},function(picks){
               try{ draw(ow,1); }catch(e){}
               op.mp += 3;
-              seq(list,i+1,names.concat(c?c.name:(nm+': no card')));
+              seq(list,i+1,names.concat(picks.length?picks.map(c=>c.name).join(', '):(nm+': no card')));
             });
           })(window.ruAllOtherPlayers(w),0,[]);   // "all other players" (in 2v2 your partner too)
         }}
@@ -22812,25 +22795,16 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 
   function resolveRecoverE2(w,card){
     var p = side(w);
+    selfToDrop(w,card);
     var _recNext = function(){
-      selfToDrop(w,card);
       chooseOne(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard || []).slice(),false,function(add){
         if(add) moveTo(p,add,'hand');
         finish('Recover E2: added ' + (add ? add.name : 'no card') + ' from Drop to hand.','heal');
       });
     };
     var _recPool = (p && p.deadzone || []).filter(function(c){ return c !== card && c.name !== 'The Lowlands'; });
-    if(!_recPool.length){
-      var _rShort = Math.max(0,1-_recPool.length);
-      p.cas = Math.max(-7,(p.cas||0)-_rShort);
-      safeLog('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info');
-      _recNext();
-      return;
-    }
-    chooseOne(w,'Recover E2 - choose 1 Deadzone card to Drop as cost.',_recPool,false,function(cost){
-      if(cost) moveTo(p,cost,'discard');
-      _recNext();
-    });
+    window.dzPickWithShells(w,'Recover E2 - choose 1 Deadzone card or Shell to Drop as cost.',_recPool,1,
+      function(cost){moveTo(p,cost,'discard');},_recNext);
   }
   window.resolveRecoverE2=resolveRecoverE2;
   function e2Motivate(w,card){
@@ -23793,8 +23767,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
 
   function runPurify(w,p,card){
     var free = isFreeCost(card);
-    if(!free && (!p.hand.length || !p.bank.length || !(p.deadzone || []).filter(function(c){ return c.name !== 'The Lowlands'; }).length)){
-      safeLog('7th Purify needs one hand card, one Bank card, and one Deadzone card before it can resolve.','dmg');
+    if(!free && (!p.hand.length || !p.bank.length)){
+      safeLog('7th Purify needs one hand card and one Bank card before it can resolve.','dmg');
       clearSF(); renderSafe(); return;
     }
     clearSF();
@@ -23810,12 +23784,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         if(!b){ renderSafe(); return; }
         var total = np(h) + np(b);
         if(total < 7){ safeLog('7th Purify: selected NP total is ' + total + '; need 7+. No cards moved.','dmg'); renderSafe(); return; }
-        chooseOne(w,'7th Purify - choose one Deadzone card to Drop.',(p.deadzone || []).filter(function(c){ return c.name !== 'The Lowlands'; }),false,function(dz){
-          if(!dz){ renderSafe(); return; }
-          moveTo(p,h,'discard');
-          moveTo(p,b,'discard');
-          moveTo(p,dz,'discard');
-          noAttack(w,'7th Purify: paid chosen hand/Bank cost, dropped ' + dz.name + ', and cannot attack this turn.');
+        moveTo(p,h,'discard');
+        moveTo(p,b,'discard');
+        window.dzPickWithShells(w,'7th Purify - choose one Deadzone card or Shell to Drop.',(p.deadzone || []).filter(function(c){ return c.name !== 'The Lowlands'; }),1,function(c){moveTo(p,c,'discard');},function(picks){
+          noAttack(w,'7th Purify: paid chosen hand/Bank cost, dropped ' + picks.map(c=>c.name).join(', ') + ', and cannot attack this turn.');
           renderSafe(); checkSafe();
         });
       });
@@ -23907,9 +23879,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   function resolveCopiedSeven(w,p,asc,copied){
     var o = side(other(w)), tag = sevenTag(copied);
     if(tag === 'Purify'){
-      chooseOne(w,'Ascendant copied Purify - choose one Deadzone card to Drop.',(p.deadzone || []).filter(function(c){ return c.name !== 'The Lowlands'; }),true,function(dz){
-        if(dz) moveTo(p,dz,'discard');
-        noAttack(w,'Ascendant copied Purify: dropped ' + (dz ? dz.name : 'no card') + ' and cannot attack this turn.');
+      window.dzPickWithShells(w,'Ascendant copied Purify - choose one Deadzone card or Shell to Drop.',(p.deadzone || []).filter(function(c){ return c.name !== 'The Lowlands'; }),1,function(c){moveTo(p,c,'discard');},function(picks){
+        noAttack(w,'Ascendant copied Purify: dropped ' + picks.map(c=>c.name).join(', ') + ' and cannot attack this turn.');
         renderSafe(); checkSafe();
       });
     }else if(tag === 'Surge'){
@@ -25410,7 +25381,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
         if(bank.length-used.bank<1)return 'no card in the Bank'; used.bank++;
       }else if(s.type==='pick_discard'&&s.to!=='hand'){
         if((p.discard||[]).filter(function(c){ return c!==card&&(!s.filter||s.filter(c)); }).length<need)return 'not enough cards in the Drop';
-      }else if(s.type==='pick_deadzone'&&s.to!=='hand'&&!(!s.filter&&s.to==='discard')){   // an unfiltered Deadzone drop may count a shortfall
+      }else if(s.type==='pick_deadzone'&&s.to!=='hand'&&!ruDeadzoneShellStep(s)){
         if((p.deadzone||[]).filter(function(c){ return c!==card&&(!s.filter||s.filter(c)); }).length<need)return 'not enough eligible cards in the Deadzone';
       }
     }
@@ -27064,10 +27035,10 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     pick(w,label,pool,1,1,function(pk){ var c=pk&&pk[0]; if(c){ p.discard.splice(p.discard.indexOf(c),1); intoDeck(p,c); say(label.split(' —')[0]+': '+c.name+' returns to '+sidePossLower(w)+' Deck.','info'); } cb(c||null); });
   }
   ACDEFS['Neo Orchestral Star']={
-    check:function(w,card){ var p=side(w); if(!deadPool(p).length||!p.discard.length){ ruNotice(w,'Neo Orchestral Star: needs a card in your Deadzone to drop and one in your Drop to return to your Deck.','dmg'); return false; } return true; },
+    check:function(w,card){ var p=side(w); if(!deadPool(p).length&&!p.discard.some(c=>c!==card)){ ruNotice(w,'Neo Orchestral Star: needs a real card to return from Drop after its costs.','dmg'); return false; } return true; },
     steps:[
       {type:'move_self',to:'discard'},
-      {type:'pick_deadzone',count:1,min:1,to:'discard',filter:function(c){ return c.name!=='The Lowlands'; },label:'Neo Orchestral Star — drop one card from your Deadzone.'},
+      {type:'pick_deadzone',count:1,min:1,to:'discard',shells:true,filter:function(c){ return c.name!=='The Lowlands'; },label:'Neo Orchestral Star — drop one card from your Deadzone.'},
       {type:'effect',marksEffect:true,fn:function(w,p,o,fz,card){
         returnFromDrop(w,'Neo Orchestral Star — return a card from your Drop to your Deck.',card,function(c){
           if(!c){ refresh(); return; }

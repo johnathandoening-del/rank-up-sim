@@ -10,6 +10,8 @@ for(const mode of ['standard','tag2v2','team2v2']){
     e.run(`window.recover=mkAct('Recover');G['${seat}'].deadzone=[recover];G['${seat}'].cas=1;
       ruOwnPrompt('${seat}');applyE2('${seat}',recover);`);
     e.settle(10000);
+    assert.equal(e.run('PCK.pool[0].type'),'shell','empty Deadzone payment offers a Shell');
+    m.apply({t:'pick',s:seat,ix:[0]});
     const d=e.run('__M.decider()');
     assert.equal(d.kind,'pick',mode+' '+seat+' '+cls+' must offer the sole Recover');
     assert.equal(d.seat,seat,'the activating player owns the choice');
@@ -49,6 +51,8 @@ for(const cls of ['restorative','shadow']){
   const d=e.run('__M.decider()'),i=d.labels.findIndex(x=>/Activate E2 Effect/.test(x));
   assert.ok(i>=0,'Casualty Draw offers Recover E2');
   m.apply({t:'modal',s:'player',i});
+  assert.equal(e.run('PCK.pool[0].type'),'shell');
+  m.apply({t:'pick',s:'player',ix:[0]});
   assert.equal(e.run('__M.decider().kind'),'pick');
   assert.equal(e.run('PCK.pool[0]===recover'),true);
   m.apply({t:'pick',s:'player',ix:[0]});
