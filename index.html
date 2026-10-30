@@ -1767,7 +1767,6 @@ function applyE2Base(who,card){
   else if(nm==='Set'){G._setDeferred=G._setDeferred||{};G._setDeferred[who]=(G._setDeferred[who]||[]).concat([card]);logAs(who,'Set (E2): {you} may set this card on top of {your} Deck at end of turn.','info');}
   else if(nm==='Protect'){window.cChoose(who,p.hand,Math.min(1,p.hand.length),'Protect (E2) — choose 1 hand card to Drop.',function(pk){const h=pk[0];if(h){const i=p.hand.indexOf(h);if(i>=0)p.hand.splice(i,1);ruDrop(p,h);}const _prPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_prPool,Math.min(1,_prPool.length),'Protect (E2) — choose 1 Deadzone card to Drop.',function(pk2){const c=pk2[0];if(c){acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);if(c.type==='numeral'&&(c.rank||0)>=3){p.hand.push(c);log('Protect (E2): dropped '+(h?h.name:'no hand card')+' and added '+c.name+' from Deadzone to hand (Rank³+).','heal');}else{ruDrop(p,c);log('Protect (E2): dropped '+(h?h.name:'no hand card')+' and '+(c?c.name:'no Deadzone card')+'.','heal');}}else{log('Protect (E2): dropped '+(h?h.name:'no hand card')+' and no Deadzone card.','heal');}});});}
   else if(nm==='Rank Star'){G._casDrawPrevented=G._casDrawPrevented||{};G._casDrawPrevented[who]=true;G._casDrawsNegated=false;log('Rank Star (E2): further Casualty Draws against '+(sideObjectLabel(who))+' do not flip cards into Deadzone this turn.', 'heal');}
-  else if(nm==='Recover'){const c=p.discard.pop();if(c)p.hand.push(c);log('Recover (E2): add 1 card from Drop to hand.','heal');}
   else if(nm==='Return'){for(let i=0;i<2&&p.discard.length;i++)p.deck.push(p.discard.pop());const _retPool=p.deadzone.filter(c=>c.name!=='The Lowlands');window.cChoose(who,_retPool,Math.min(2,_retPool.length),'Return (E2) — choose up to 2 Deadzone cards to shuffle into Deck.',function(pk){(pk||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);p.deck.push(c);});shuffle(p.deck);draw(ow,1);log('Return (E2): shuffled Drop cards and '+(pk?pk.length:0)+' chosen Deadzone card(s) into Deck; opponent draws 1.','heal');});}
   else if(nm==='Reduce'){if(p.hand.length){window.cChoose(who,p.hand,1,'Reduce (E2) — choose 1 hand card to Drop.',function(pk){const _rc=pk&&pk[0];if(_rc){const i=p.hand.indexOf(_rc);if(i>=0)p.hand.splice(i,1);ruDrop(p,_rc);log('Reduce (E2): dropped this and 1 from hand ('+_rc.name+').','info');}});}else{log('Reduce (E2): dropped this card; no hand card to also drop.','info');}}
   else if(nm==='Divide'){window.cChoose(who,p.hand,Math.min(2,p.hand.length),'Divide (E2) — choose up to 2 hand cards to Drop.',function(pk){(pk||[]).forEach(c=>{const i=p.hand.indexOf(c);if(i>=0)p.hand.splice(i,1);ruDrop(p,c);});const _dvPool=p.deadzone.filter(c=>c.name!=='The Lowlands');const n=Math.floor(_dvPool.length/2);if(!n){log('Divide (E2): dropped '+(pk?pk.length:0)+' from hand; fewer than 2 Deadzone cards to halve.','heal');return;}window.cChoose(who,_dvPool,n,'Divide (E2) — choose '+n+' Deadzone card(s) to Drop (half).',function(pk2){(pk2||[]).forEach(c=>{acRem(p.deadzone,c);p.cas=Math.max(-7,(p.cas||0)-1);ruDrop(p,c);});log('Divide (E2): dropped '+(pk?pk.length:0)+' from hand and '+(pk2?pk2.length:0)+' chosen from Deadzone (half).','heal');});});}
@@ -1950,26 +1949,6 @@ function applyE2L11(w,card){
           if(c)window.moveKnown11(o,c,'discard');
           window.safeLog11('Reveal (E2): '+(c?c.name:'no card')+' chosen from opponent hand.','dmg');
           window.renderSafe11();window.checkSafe11();
-        });
-        return;
-      }
-      if(card&&card.name==='Recover'){
-        var p2=window.side11(w);
-        var dz=p2.deadzone.filter(function(c){return c!==card&&c.name!=='The Lowlands';});
-        window.e2AddMRAE11(w,card);window.settleE2SelfRAE11(w,card);
-        var _recNext=function(){
-          var drop=p2.discard.filter(function(c){return c!==card;});
-          if(!drop.length){window.safeLog11('Recover (E2): cost paid, but no Drop card can be added to hand.','info');window.renderSafe11();window.checkSafe11();return;}
-          window.chooseOne11(w,'Recover E2 - choose Drop card to add to hand.',drop,false,function(chosen){
-            if(chosen)window.moveKnown11(p2,chosen,'hand');
-            window.safeLog11('Recover (E2): manually added '+(chosen?chosen.name:'no card')+' from Drop to hand.','heal');
-            window.renderSafe11();window.checkSafe11();
-          });
-        };
-        if(!dz.length){var _rShort=Math.max(0,1-dz.length);p2.cas=Math.max(-7,(p2.cas||0)-_rShort);window.safeLog11('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p2.cas+').','info');_recNext();return;}
-        window.chooseOne11(w,'Recover E2 - choose Deadzone card to drop as cost.',dz,false,function(cost){
-          if(cost)window.moveKnown11(p2,cost,'discard');
-          _recNext();
         });
         return;
       }
@@ -2629,19 +2608,6 @@ function applyE2L20(w,card){
         });
         return;
       }
-      if(nm==='Recover'){
-        window.addMRAE20(w,card);window.moveToL7(p,card,'discard');
-        var _recPool=window.deadPoolRAE20(w,card);
-        var _recNext=function(){
-          window.chooseOneRAE20(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard||[]).slice(),false,function(c){
-            if(c)window.moveToL7(p,c,'hand');
-            window.safeLogL7('Recover (E2): added '+(c?c.name:'no card')+' from Drop to hand.','heal');window.lightE2DoneRAE20();
-          });
-        };
-        if(!_recPool.length){var _rShort=Math.max(0,1-_recPool.length);p.cas=Math.max(-7,(p.cas||0)-_rShort);window.safeLogL7('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info');_recNext();return;}
-        window.chooseOneRAE20(w,'Recover E2 - choose 1 Deadzone card to Drop as cost.',_recPool,false,function(d){if(d)window.moveDeadToDropRAE20(w,d);_recNext();});
-        return;
-      }
       if(nm==='Counterattack'){
         if(!p.hand.length){window.safeLogL7('Counterattack (E2): cannot pay hand cost.','dmg');window.lightE2DoneRAE20();return;}
         window.addMRAE20(w,card);
@@ -2740,14 +2706,6 @@ function applyE2L21(w,card){
         });
         return;
       }
-      if(nm==='Recover'){
-        window.addMRAE21(w,card);window.moveToRAE21(p,card,'discard');
-        var _recPool=window.deadPoolRAE21(w,card);
-        var _recNext=function(){window.chooseOneRAE21(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard||[]).slice(),false,function(c){if(c)window.moveToRAE21(p,c,'hand');window.safeLogAI9('Recover (E2): added '+(c?c.name:'no card')+' from Drop to hand.','heal');window.doneE2RAE21();});};
-        if(!_recPool.length){var _rShort=Math.max(0,1-_recPool.length);p.cas=Math.max(-7,(p.cas||0)-_rShort);window.safeLogAI9('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info');_recNext();return;}
-        window.chooseOneRAE21(w,'Recover E2 - choose 1 Deadzone card to Drop as cost.',_recPool,false,function(d){if(d)window.moveToRAE21(p,d,'discard');_recNext();});
-        return;
-      }
       if(nm==='Divide'){
         if(p.hand.length<2){window.safeLogAI9('Divide (E2): cannot pay 2-card hand cost.','dmg');window.doneE2RAE21();return;}
         window.addMRAE21(w,card);window.moveToRAE21(p,card,'discard');
@@ -2810,16 +2768,6 @@ function applyE2L22(w,card){
           var _protFinish=function(){window.safeLogRAtk19('Protect (E2): chosen hand and Deadzone costs paid.','heal');window.doneE2RAE22();};
           window.dzPickWithShells(w,'Protect E2 - choose 1 Deadzone card or Shell to Drop.',_protPool,1,function(d){window.moveToRAE22(p,d,'discard');},function(picks){_protFinish();});
         });
-        return;
-      }
-      if(nm==='Recover'){
-        window.addMRAE22(w,card);window.moveToRAE22(p,card,'discard');
-        var _recPool=window.deadPoolRAE22(w,card);
-        var _recNext=function(){
-          window.chooseOneRAE22(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard||[]).slice(),false,function(c){if(c)window.moveToRAE22(p,c,'hand');window.safeLogRAtk19('Recover (E2): added '+(c?c.name:'no card')+' from Drop to hand.','heal');window.doneE2RAE22();});
-        };
-        if(!_recPool.length){var _rShort=Math.max(0,1-_recPool.length);p.cas=Math.max(-7,(p.cas||0)-_rShort);window.safeLogRAtk19('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info');_recNext();return;}
-        window.chooseOneRAE22(w,'Recover E2 - choose 1 Deadzone card to Drop as cost.',_recPool,false,function(d){if(d)window.moveToRAE22(p,d,'discard');_recNext();});
         return;
       }
       if(nm==='Rank Star'){
@@ -2891,14 +2839,6 @@ function applyE2L23(w,card){
       if(nm==='Rank Star'){
         window.addMRAE23(w,card);window.moveToRAE23(p,card,'discard');
         G._casDrawPrevented=G._casDrawPrevented||{};G._casDrawPrevented[w]=true;G._casDrawsNegated=false;window.safeLogSG8('Rank Star (E2): further Casualty Draws against '+(sideObjectLabel(w))+' do not flip cards into Deadzone this turn.','heal');window.doneE2RAE23();
-        return;
-      }
-      if(nm==='Recover'){
-        window.addMRAE23(w,card);window.moveToRAE23(p,card,'discard');
-        var _recPool=window.deadPoolRAE23(w,card);
-        var _recNext=function(){window.chooseOneRAE23(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard||[]).slice(),false,function(c){if(c)window.moveToRAE23(p,c,'hand');window.safeLogSG8('Recover (E2): added '+(c?c.name:'no card')+' from Drop to hand.','heal');window.doneE2RAE23();});};
-        if(!_recPool.length){var _rShort=Math.max(0,1-_recPool.length);p.cas=Math.max(-7,(p.cas||0)-_rShort);window.safeLogSG8('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info');_recNext();return;}
-        window.chooseOneRAE23(w,'Recover E2 - choose 1 Deadzone card to Drop as cost.',_recPool,false,function(d){if(d)window.moveToRAE23(p,d,'discard');_recNext();});
         return;
       }
       if(nm==='Divide'){
@@ -2990,23 +2930,6 @@ function applyE2L24(w,card){
         window.chooseOpponentHandRD8(w,'Reveal E2 - opponent reveals hand; choose up to 1 card to Drop.',1,0,function(picks){
           window.safeLogRD8('Reveal (E2): dropped ' + (picks && picks[0] ? picks[0].name : 'no opponent hand card') + '.','dmg');
           window.e2DoneRAE24();
-        });
-        return;
-      }
-      if(nm === 'Recover'){
-        window.addMRAE24(w,card);
-        var _recPool = window.deadPoolRAE24(w,card);
-        var _recNext = function(){
-          window.chooseOneRD8(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard || []).slice(),false,function(found){
-            if(found) window.moveToRD8(p,found,'hand');
-            window.safeLogRD8('Recover (E2): added ' + (found ? found.name : 'no card') + ' from Drop to hand.','heal');
-            window.e2DoneRAE24();
-          });
-        };
-        if(!_recPool.length){ var _rShort=Math.max(0,1-_recPool.length); p.cas=Math.max(-7,(p.cas||0)-_rShort); window.safeLogRD8('Recover (E2): Deadzone had '+_rShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info'); _recNext(); return; }
-        window.chooseOneRD8(w,'Recover E2 - choose 1 Deadzone card to Drop as cost.',_recPool,false,function(cost){
-          if(cost) window.moveToRD8(p,cost,'discard');
-          _recNext();
         });
         return;
       }
@@ -3131,7 +3054,6 @@ function applyE2L26(who,card){
 // ---- L27 -> applyE2L27 ----
 function applyE2L27(who,card){
       if(card && window.isRestorativeSideRAE27(who)){
-        if(card.name === 'Recover'){ window.e2RecoverRAE27(who,card); return; }
         if(card.name === 'Motivate'){ window.e2MotivateRAE27(who,card); return; }
         if(card.name === 'Halcyon Star'){ window.e2HalcyonStarRAE27(who,card); return; }
       }
@@ -3145,6 +3067,10 @@ function applyE2(who,card){
       var _lk=window.ruActLocked&&window.ruActLocked(who,card,'dead');
       if(_lk){ window.ruActRefuse(who,card,'dead',_lk); return; }
       if(window.ruActBegin)window.ruActBegin(who,card,'dead');
+      if(card&&card.name==='Recover'){
+        window.resolveRecoverE2(who,card);
+        return;
+      }
       if(card&&card.name==='Cease'){
         const p=G[who],mg=card.M||0;
         if(mg)p.mp+=mg;
@@ -14631,15 +14557,6 @@ function useRetL2(idx,card){
       });
       return true;
     }
-    if(nm==='Recover'){
-      addM(w,card);selfToDrop(w,card);
-      const _recDropped=dropDeadAuto(w,1,'discard',card);
-      const _recShort=Math.max(0,1-_recDropped.length);
-      if(_recShort){p.cas=Math.max(-7,(p.cas||0)-_recShort);logSafe('Recover (E2): Deadzone had '+_recShort+' fewer card(s) than needed; counted anyway (Deadzone: '+p.cas+').','info');}
-      const pick=[...p.discard].reverse().find(c=>c!==card)||p.discard[p.discard.length-1];
-      if(pick)moveTo(p,pick,'hand');
-      logSafe('Recover (E2): paid Deadzone cost and added '+(pick?pick.name:'no card')+' from Drop to hand.','heal');renderSafe();return true;
-    }
     if(nm==='Divide'){
       if(!p||p.hand.length<2){failCost(nm);return true;}
       addM(w,card);selfToDrop(w,card);
@@ -22893,11 +22810,11 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
   }
 
 
-  function e2Recover(w,card){
+  function resolveRecoverE2(w,card){
     var p = side(w);
     var _recNext = function(){
       selfToDrop(w,card);
-      chooseOne(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard || []).filter(function(c){ return c !== card; }),true,function(add){
+      chooseOne(w,'Recover E2 - choose 1 Drop card to add to hand.',(p.discard || []).slice(),false,function(add){
         if(add) moveTo(p,add,'hand');
         finish('Recover E2: added ' + (add ? add.name : 'no card') + ' from Drop to hand.','heal');
       });
@@ -22915,7 +22832,7 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
       _recNext();
     });
   }
-  window.e2RecoverRAE27=e2Recover;
+  window.resolveRecoverE2=resolveRecoverE2;
   function e2Motivate(w,card){
     var p = side(w);
     var pool = (p.deadzone || []).filter(function(c){ return isNum(c) && (c.rank || 0) <= 2 && c !== card; });
