@@ -32,7 +32,9 @@ var MOVES_CODE = `
       var b = modalButtons(m);
       return { kind: 'modal', seat: m._ruOwner || G.turn, n: b.length, enabled: b.map(function(x){ return !x.disabled; }), labels: b.map(function(x){ return x.textContent; }), title: m._ruStash ? m._ruStash.title : ((document.getElementById('m-title')||{}).textContent || '') };
     }
-    return { kind: 'turn', seat: (window.ruModeOwner && ruModeOwner()) || G.turn, phase: G.phase, mode: G.mode || 'normal' };
+    var counter=G._counterFrame;
+    return { kind: 'turn', seat: (window.ruModeOwner && ruModeOwner()) || G.turn, phase: G.phase, mode: G.mode || 'normal',
+      counter:counter?{stage:counter.stage,who:counter.who,cardId:counter.cardId,sourceZone:counter.sourceZone}:null };
   }
 
   function npOf(c){ return c ? (c.currentNP != null ? c.currentNP : (c.numeral || 0)) : 0; }
@@ -83,6 +85,19 @@ var MOVES_CODE = `
       return out;
     }
     if (mode && mode !== 'normal') {
+      if(mode==='oppzonepick'&&typeof G._oppZoneFilter==='function'){
+        (G.sideOrder||['player','ai']).forEach(function(owner){
+          if(!G[owner]||G.eliminated&&G.eliminated[owner])return;
+          ZONES.forEach(function(z){
+            var c=zoneCard(G[owner],z);
+            if(c&&(window.ruOppZonePickLegal?ruOppZonePickLegal(owner,z,c):G._oppZoneFilter(c,owner,z)))out.push({t:'zone',o:owner,z:z,s:seat});
+          });
+        });
+        // A committed counterattack has exactly one source. Select it without
+        // spending a search on a cancel/reopen cycle; target choice remains strategic.
+        if(G._counterFrame&&G._counterFrame.stage==='attacker'&&out.length===1)return out;
+        out.push({t:'cancel',s:seat});return out;
+      }
       out.push({ t:'cancel', s:seat });
       ZONES.forEach(function(z){ if (zoneCard(p, z)) out.push({ t:'zone', o:seat, z:z, s:seat }); });
       // every other living seat's zones — in 2v2 the partner's too (an Addon, an "any player" pick); the legality

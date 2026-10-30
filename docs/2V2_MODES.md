@@ -6,8 +6,9 @@ The user's rules (2026-10-26) are summarised here; the engine design follows the
 
 **Both modes.** Teams are A+B vs C+D. Turn order is A → D → B → C → A; only the starting player is random. An Exchange
 counts once all four have had a turn. The player who goes last in the first round is the first who may declare an
-attack. Partners may use each other's field cards as Evolution elements, as field-sacrifice cost payments, and as
-Max Rank Up / Chief Flank material. A player may activate a Safeguard or Retaliatory card when their partner is being
+attack. Partners may use each other's Flank cards as Evolution elements, never the partner's Rank Zone.
+Other permitted field-sacrifice, Max Rank Up and Chief Flank material rules are unchanged.
+A player may activate a Safeguard or Retaliatory card when their partner is being
 attacked, or has been, as if it happened to them.
 - "Target player" = any of the 4. "Target opponent" or a plain "your opponent" = the user picks one of the 2 opponents.
 - "All players" = 4; "all other players" = 3; "all opponents" = the other team.

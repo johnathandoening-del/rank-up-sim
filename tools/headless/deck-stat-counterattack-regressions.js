@@ -81,6 +81,7 @@ for(const w of ['player','ai']){
       me.rankZone.attacksLeft=0;me.attacksUsed[me.rankZone.id]=true;
       ruWithActor('${w}',()=>doCounterAttack(0));
     `);
+    p.apply({t:'zone',s:w,o:w,z:'rank'});p.apply({t:'zone',s:w,o:other,z:'rank'});
     if(!used){assert.equal(p.pending().owner,other);p.button('Use Cease');}
     pass(p);
     assert.equal(p.run('G._attackDeclarations.length'),1,'exactly one immediate counterattack');
@@ -91,6 +92,7 @@ for(const w of ['player','ai']){
   }
   {
     const p=setup(w);p.run(`foe.hand=[mkAct('Subtract'),mkAct('Plus')];me.rankZone.currentNP=8;ruWithActor('${w}',()=>doCounterAttack(0));`);
+    p.apply({t:'zone',s:w,o:w,z:'rank'});p.apply({t:'zone',s:w,o:other,z:'rank'});
     while(p.pending().labels&&p.pending().labels.includes('Continue'))p.button('Continue');
     assert.equal(p.pending().owner,other);p.button('Use Subtract');p.pick([0]);pass(p);
     assert.equal(p.run('foe.actUsed'),1);assert.equal(p.run("foe.discard.some(c=>c.name==='Subtract')"),true);
@@ -111,7 +113,7 @@ for(const w of ['player','ai']){
   {
     const p=setup(w);p.run(`me.rankZone.attacksLeft=0;me.rankZone.canAttack=false;me.attacksUsed[me.rankZone.id]=true;
       grantRankAttackRAE21('${w}','Fixture grant');`);
-    p.button('Attack ');pass(p);
+    p.apply({t:'zone',s:w,o:w,z:'rank'});p.apply({t:'zone',s:w,o:other,z:'rank'});pass(p);
     assert.equal(p.run('G._attackDeclarations.length'),1);assert.equal(p.run('me.rankZone.attacksLeft'),0);
     assert.equal(p.run('G._counterAtkQ.length'),0);ok(p,w+' queued grant after exhaustion');
   }

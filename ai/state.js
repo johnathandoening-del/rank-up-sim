@@ -71,7 +71,7 @@ var STATE_CODE = `
       try { PCK = { cb: null, pool: [], sel: [], max: 1, min: 1, opt: false, npMode: false, npMin: 0 }; } catch(e){}   // the game's own idle picker state
       try { SF = null; } catch(e){}
       if (window.ruSettleReset) window.ruSettleReset();
-      window._RUcq = s.cq.slice(); window._RUcbusy = false;
+      window._RUcq = s.cq.slice(); window._RUcbusy = false;window._RUcasCurrent=null;
       G = fastClone(s.G);
       if (window.ruLinkTeamPools) window.ruLinkTeamPools(G);   // Tag (2v2): a copy turns the shared pools into plain data
       window.ruRngRestore(s.rng);

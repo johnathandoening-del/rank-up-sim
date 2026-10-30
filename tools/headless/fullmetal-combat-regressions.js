@@ -98,6 +98,7 @@ for(const w of ['player','ai']){
     const t=setup(w,4),{p,other,id}=t;
     p.run(`var c=G['${w}'].delta[0];G['${w}'].delta=[];G['${w}'].rankZone=c;
       G._lastAtkInfo={aWho:'${other}'};ruWithActor('${w}',()=>doCounterAttack(0,{direct:true}));`);
+    p.apply({t:'zone',s:w,o:w,z:'rank'});p.apply({t:'zone',s:w,o:other,z:'rank'});
     assert.equal(p.pending().owner,w);p.button('Declare attack - forfeit protection');settle(p);
     assert.equal(p.run(`RUFullmetal.protected(ruFindCard('${id}').card,'${w}','battle')`),false,'counterattack forfeits protection');
   }
