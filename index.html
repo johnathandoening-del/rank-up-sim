@@ -5307,10 +5307,6 @@ function resolveAtkL20(aWho,aZone,dWho,dZone,addonNP){
             window.safeLogSG8('Phantom 8: after 2 successful attacks, gains +1 NP and +'+(att._ru159Phantom8Rank||0)+' RP until end of turn.','heal');
           }else window.safeLogSG8('Phantom 8: successful attack '+att._ru159Phantom8Hits+' logged.','info');
         }});
-        if(ruBotControlledSeat(dWho)&&def&&def.class==='phantom'&&def.numeral===0&&!def.usedSkill&&window.sideSG8(dWho)&&window.sideSG8(dWho).deck.length){
-          def.usedSkill=true;window.topDeckRD7(dWho,1,'discard');
-          window.moveOpponentHandToDeadzoneRD7(dWho,window.sideSG8(dWho).cas||0,'Phantom 0',function(picks){window.safeLogSG8(ruPOV(oppOf(dWho),'Phantom 0: {You} {send|sends} '+(picks?picks.length:0)+' hand card(s) to Deadzone.'),'dmg');window.renderSafeSG8();window.checkSafeSG8();});
-        }
       }catch(e){}
       return result;
     }
@@ -5484,6 +5480,11 @@ function resolveAtk(aWho,aZone,dWho,dZone,addonNP){
       var botDef=!!(dWho!==aWho&&G[dWho]&&ruBotControlledSeat(dWho));
       if(botDef && window.aiConsiderSafeguardRAtk28(aWho,aZone,dWho,dZone,addonNP)){window.ruFinishAttackDeclaration(declaration,'negated');return;}
       var preMP=botDef?G[dWho].mp:null,preCas=botDef?(G[dWho].cas||0):null;
+      const phantom=window.zCard(G[dWho],dZone);
+      if(botDef&&phantom&&phantom.class==='phantom'&&phantom.numeral===0&&!phantom.usedSkill&&G[dWho].deck.length){
+        phantom.usedSkill=true;window.topDeckRD7(dWho,1,'discard');
+        ruDeferPhantomZero(aWho,dWho);
+      }
       var r=resolveAtkL28.apply(this,arguments);
       window.ruFinishAttackDeclaration(declaration,G._battleResult?'resolved':'negated',G._battleResult);
       if(botDef){
@@ -8838,6 +8839,23 @@ function ruDefPrompt(dw,title,body,btns){ruOwnPrompt(dw);openModal(title,body,bt
 // negation, its cost, its S, an opponent's Shadow 6, then its effect. After one resolves, the others still usable are
 // offered again — until the defender passes, or the attack is negated or turned onto another card.
 // An entry: {card, label, cost(paid), effect(done), mark()} — or {area(next), label} for an Area Card's effect (not a skill).
+function ruDeferPhantomZero(aWho,dw){
+  const declaration=G._pendingAttackDeclaration,frame=G._counterFrame||null;
+  // An interrupted attack must finish its own Casualty queue, not a nested counterattack's queue.
+  window.ruWhenSettled(function(){
+    return (!declaration||!!declaration.status)&&(G._counterFrame||null)===frame&&
+      window.ruTableClear()&&!window._RUcbusy&&!(window._RUcq&&window._RUcq.length);
+  },function(){
+    if(G.gameOver)return;
+    const p=G[dw],o=G[aWho],n=Math.min(Math.max(0,p.cas||0),o.hand.length);
+    if(!n){log('Phantom 0: no cards to send.','info');return;}
+    window.ruFx.pick(dw,'Phantom 0 — choose '+n+' card(s) from '+sidePossLower(aWho)+' hand for their Deadzone.',o.hand.slice(),n,n,function(pk){
+      (pk||[]).forEach(c=>{const i=o.hand.indexOf(c);if(i!==-1){o.hand.splice(i,1);window.dzAdd(o,c);}});
+      log('Phantom 0: '+(pk||[]).length+' card(s) from '+sidePossLower(aWho)+' hand go to the Deadzone.','dmg');
+      renderAll();checkWin();
+    });
+  },{defer:true});
+}
 function reactiveDefenses(aWho,att,addonNP,tgt,dw){
   const F=window.ruFx,p=G[dw],o=G[aWho],tc=tgt&&tgt.card,out=[];
   const ZK={'rank':'rankZone','left-flank':'leftFlank','right-flank':'rightFlank','rear-flank':'rearFlank'};
@@ -8908,16 +8926,11 @@ function reactiveDefenses(aWho,att,addonNP,tgt,dw){
     cost:function(paid){ topToDrop(1); paid(true); },
     effect:function(done){ const got=window.findAndMoveFastTrackRD1(dw); log('Haste 0: '+(got?'Fast Track is added to '+sidePossLower(dw)+' hand.':'no Fast Track to add.'),'info'); done(); }});
   // Phantom 0 — the top card of your Deck to the Drop: cards from the attacker's hand go to their Deadzone, as many as your
-  // Casualty Count
+  // Casualty Count after the attack and its Casualty Draws finish.
   if(is('phantom',0)&&p.deck.length)add(tc,'Phantom 0 — cards from '+sidePossLower(aWho)+' hand to their Deadzone, as many as your Casualty Count (the top of your Deck to the Drop)',{
     cost:function(paid){ topToDrop(1); paid(true); },
     effect:function(done){
-      const n=Math.min(Math.max(0,p.cas||0),o.hand.length);
-      if(!n){ log('Phantom 0: no cards to send.','info'); done(); return; }
-      F.pick(dw,'Phantom 0 — choose '+n+' card(s) from '+sidePossLower(aWho)+' hand for their Deadzone.',o.hand.slice(),n,n,function(pk){
-        (pk||[]).forEach(c=>{ o.hand.splice(o.hand.indexOf(c),1); window.dzAdd(o,c); });
-        log('Phantom 0: '+(pk||[]).length+' card(s) from '+sidePossLower(aWho)+' hand go to the Deadzone.','dmg'); done();
-      });
+      ruDeferPhantomZero(aWho,dw);done();
     }});
   // Blizzard 0 — drop the top card of your Deck: the attacking card cannot attack until the end of its owner's next turn
   if(is('blizzard',0)&&p.deck.length)add(tc,'Blizzard 0 — '+att.name+' cannot attack until the end of '+sidePossLower(aWho)+' next turn (the top of your Deck to the Drop)',{
