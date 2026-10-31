@@ -12,18 +12,27 @@
  *   RUBots.available()            can bots run here? (a Web Worker, served over http(s))
  *   RUBots.attach()               the game just built has bot seats (G._botSeats): start driving them
  *   RUBots.noteInput(a)           every input, before it is applied (the input layer calls this)
+ *   RUBots.setHost(on)            online: does THIS screen drive the room's bots (the room picks one player's screen)?
+ *
+ * Online (a room whose empty seats bots took), every screen keeps the bots' position — so any of them can take the bots
+ * over — but only the one the room picked thinks for them: it sends each bot input to the room like a person's input, and
+ * every screen, this one included, applies it in room order.
  */
 (function () {
   if (window.RUBots || window.__headless) return;      // (also loaded inside the headless realms: nothing to do there)
   var lastDiv = null;
   var worker = null, ready = false, seq = 0, pending = null, timer = null, gameId = 0, failures = 0, lastSig = null, lastSeat = null, repeats = 0;
+  var hosting = false, awaiting = null;       // online: this screen drives the bots; the bot input sent and not yet back
   var track = { anchor: null, path: [], game: 0 };
   var PACE = { plan: 750, search: 1200 };     // never faster than this between a bot's inputs (ms) — readable play
 
   function available() { return typeof Worker !== 'undefined' && /^https?:$/.test(location.protocol); }
   function base() { return location.href.replace(/[?#].*$/, '').replace(/[^\/]*$/, ''); }
   function say(msg, cls) { try { if (window.log) window.log(msg, cls || 'info'); } catch (e) {} }
-  function soloGame() { return typeof G !== 'undefined' && G && G._soloNet && G._botSeats; }
+  function botGame() { return typeof G !== 'undefined' && G && G._botSeats; }
+  function online() { return !!(G && G._netMode && !G._soloNet); }
+  // Does this screen think for the bots? Solo: always. Online: when the room picked it.
+  function soloGame() { return botGame() && (G._soloNet || hosting); }
 
   // The page uses the very same helpers the worker uses (ai/state.js, ai/moves.js), installed here read-only: the
   // quiet test, the position copy (plain data: functions skipped, shared references kept) and who decides now.
@@ -40,7 +49,7 @@
   // Every input, before it is applied: the anchor is the position before the first input since the last quiet
   // point, the path is every input since.
   function noteInput(a) {
-    if (!soloGame() || !a) return;
+    if (!botGame() || !a) return;
     if (track.game !== gameId || quiet()) { track.anchor = snap(); track.path = [copy(a)]; track.game = gameId; }
     else track.path.push(copy(a));
   }
@@ -56,9 +65,12 @@
 
   function tierOf(seat) { return G && G._botSeats && G._botSeats[seat]; }
   function tick() {
-    if (!soloGame()) { stop(); return; }
-    if (G.gameOver || pending) return;
+    if (!botGame()) { stop(); return; }
+    if (!soloGame() || G.gameOver || pending) return;
     if (window.ruInboxBusy && window.ruInboxBusy()) return;
+    // online: the bot input this screen sent comes back from the room before the bot is asked again (a no-op input, or
+    // one the room refused, leaves the position unchanged: after a while it thinks again)
+    if (awaiting) { if (window.ruStateSig() === awaiting.sig && Date.now() - awaiting.t < 15000) return; awaiting = null; }
     // (no waiting for the table to settle here: a continuation can be pending exactly BECAUSE a bot's prompt is open —
     // the next Casualty Draw waits for this one's answer. The input itself is applied through ruCanApplyNow, which
     // settles first, like an online player's input.)
@@ -118,6 +130,14 @@
     pending = null; shown();
     if (!m.move) { failures++; console.warn('[bots] no move:', m.why); if (failures > 3) say('The bot found no move here (' + m.why + ').', 'dmg'); return; }
     var a = copy(m.move); a.s = p.seat; a.sig = m.moveSig || m.sig;
+    if (online()) {
+      // to the room as the bot's seat; it comes back to every screen (this one too), which applies it in room order
+      if (window.RUNet && RUNet.sendBotAction && RUNet.sendBotAction(a)) awaiting = { sig: window.ruStateSig(), t: Date.now() };
+      if (lastSig === m.sig && lastSeat === p.seat) { if (++repeats > 4) { say('The bot is stuck (its input had no effect).', 'dmg'); stop(); } }
+      else { repeats = 0; failures = 0; }
+      lastSig = m.sig; lastSeat = p.seat;
+      return;
+    }
     // the order every screen applies an input in: settle, (the host's copy), the pre-input checkpoint, the input
     if (window.ruSettleNow) window.ruSettleNow();
     noteInput(a);
@@ -129,10 +149,12 @@
     lastSig = m.sig; lastSeat = p.seat;
   }
 
-  function stop() { if (timer) { clearInterval(timer); timer = null; } pending = null; }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } pending = null; awaiting = null; }
+  function setHost(on) { hosting = !!on; if (!hosting) { pending = null; awaiting = null; } }
   function attach() {
     stop();
-    if (!soloGame()) return;
+    hosting = false;                                   // (online: the room's start says which screen drives the bots)
+    if (!botGame()) return;
     if (!helpers()) { say('The bots could not start (their helper scripts did not load).', 'dmg'); return; }
     gameId++; failures = 0; repeats = 0; lastSig = null; track = { anchor: null, path: [], game: 0 };
     ensureWorker();
@@ -174,7 +196,7 @@
     });
   }
 
-  window.RUBots = { available: available, attach: attach, stop: stop, noteInput: noteInput, ready: function () { return ready; }, debugDiff: debugDiff,
+  window.RUBots = { available: available, attach: attach, stop: stop, noteInput: noteInput, setHost: setHost, hosting: function () { return hosting; }, ready: function () { return ready; }, debugDiff: debugDiff,
     thinking: function () { return pending ? pending.seat : null; }, lastDivergence: function () { return lastDiv; },
     history: history, explain: explain, request: function (k) { return hist[hist.length - (k || 1)] || null; } };
 })();

@@ -44,6 +44,12 @@
   function engineSeat(roomSeat){ var i = ROOM_SEATS.indexOf(roomSeat); return i === -1 ? null : ENGINE_SEATS[i]; }
   function roomSeat(engineSeatId){ var i = ENGINE_SEATS.indexOf(engineSeatId); return i === -1 ? null : ROOM_SEATS[i]; }
 
+  // A room's kind (its creator's menu mode) and a seat's name in it, for the lobby status line.
+  function roomKind(mode, size){ return ({ '1v1v1':'1v1v1', royale4:'Royale', tag2v2:'2v2 Tag', team2v2:'2v2 Team' })[mode] || (size > 2 ? size + '-player' : 'Standard 1v1'); }
+  function seatLabel(mode, idx){ return (mode === 'tag2v2' || mode === 'team2v2') ? 'Player ' + 'ACDB'[idx] : 'Player ' + (idx + 1); }
+  var botTimer = null;
+  function stopBotCountdown(){ if (botTimer) { clearInterval(botTimer); botTimer = null; } }
+
   function oppName(){
     // The OTHER seat's player name (for rematch prompts).
     return (state.mySeat === 1) ? (state.name0 || 'your opponent') : (state.name1 || 'your opponent');
@@ -97,6 +103,8 @@
       waitSince = 0;
       inbox.shift();
       var before = sigNow();
+      // a match with bots: every screen keeps the position the bots think about (any of them may be asked to drive them)
+      try { if (G._botSeats && window.RUBots) RUBots.noteInput(a); } catch(e){}
       try { window.ruApplyAction(a); state.applied++; } catch(e){ console.error('[net] apply failed', e, a); }
       if(a.s===engineSeat(state.seat))state.clockAwaiting=false;
       histPush({ dir:'in', a: brief(a), made: a.sig, before: before, after: sigNow(), ready: ready });
@@ -131,19 +139,26 @@
       areaSupports: { player: cfg.seat0AreaSupport || null, ai: cfg.seat1AreaSupport || null },
       actionSupports: { player: cfg.seat0ActionSupport || null, ai: cfg.seat1ActionSupport || null }
     };
-    // A 2v2 room (Tag / Team): four seats; the turn order is A → D → B → C from the seat the room drew to start.
-    if (cfg.size === 4 && cfg.mode) {
-      var byEngine = function(arr, dflt){ var o = {}; ENGINE_SEATS.forEach(function(w, i){ o[w] = (arr && arr[i] != null) ? arr[i] : dflt; }); return o; };
-      var cyc = ['player', 'ai2', 'ai3', 'ai'], k = cyc.indexOf(ENGINE_SEATS[(cfg.firstSeat || 0) % 4]);
-      Object.assign(window.RU_NET_CONFIG, { mode: cfg.mode, order: cyc.slice(k).concat(cyc.slice(0, k)),
+    // A room of 3-4 seats (1v1v1, Royale, 2v2 Tag / Team): every seat's class, name and Δ Deck by engine seat, and the
+    // turn order — 2v2: A → D → B → C from the seat the room drew to start; each for themselves: the seats in order from it.
+    if (cfg.size > 2 && cfg.mode) {
+      var seats = ENGINE_SEATS.slice(0, cfg.size), f = (cfg.firstSeat || 0) % cfg.size, order;
+      var byEngine = function(arr, dflt){ var o = {}; seats.forEach(function(w, i){ o[w] = (arr && arr[i] != null) ? arr[i] : dflt; }); return o; };
+      if (cfg.mode === 'tag2v2' || cfg.mode === 'team2v2') { var cyc = ['player', 'ai2', 'ai3', 'ai'], k = cyc.indexOf(ENGINE_SEATS[f]); order = cyc.slice(k).concat(cyc.slice(0, k)); }
+      else order = seats.slice(f).concat(seats.slice(0, f));
+      Object.assign(window.RU_NET_CONFIG, { mode: cfg.mode, order: order,
         classes: byEngine(cfg.classes, 'light'), names: byEngine(cfg.names, null), deltaDecks: byEngine(cfg.deltaDecks, []),
         areaSupports: byEngine(cfg.areaSupports, null), actionSupports: byEngine(cfg.actionSupports, null) });
+      // the bots the room seated (their level by engine seat); one player's screen drives them (cfg.botHost)
+      if (cfg.bots && cfg.bots.some(Boolean)) { var nb = {}; seats.forEach(function(w, i){ if (cfg.bots[i]) nb[w] = cfg.bots[i]; }); window.RU_NET_CONFIG.netBots = nb; }
     }
     try { if (typeof startGame === 'function') startGame(); }
     finally { window.RU_NET_CONFIG = null; }
+    if (window.RUBots && RUBots.setHost) RUBots.setHost(!cfg.spectator && cfg.botHost != null && cfg.mySeat === cfg.botHost);
     if(window.RUTime&&cfg.clock)RUTime.receive(cfg.clock,cfg.serverNow);
     if (cfg.spectator) setStatus('Spectating room "' + (state.room || '') + '" — read-only.', 'ok');
-    else if (cfg.size === 4) log2('2v2 game started — seed ' + cfg.seed + ', you are ' + ((cfg.names || [])[cfg.mySeat] || 'a player') + ' (Player ' + 'ACDB'[cfg.mySeat] + ').');
+    else if (cfg.size > 2) log2(roomKind(cfg.mode, cfg.size) + ' game started — seed ' + cfg.seed + ', you are ' + ((cfg.names || [])[cfg.mySeat] || 'a player') + ' (' + seatLabel(cfg.mode, cfg.mySeat) + ')' +
+      ((cfg.bots || []).some(Boolean) ? '; ' + (cfg.bots || []).filter(Boolean).length + ' bot(s) in the empty seat(s)' : '') + '.');
     else log2('game started — seed ' + cfg.seed + ', you are ' + (cfg.mySeat === 1 ? (cfg.name1 || 'Player 2') : (cfg.name0 || 'Player 1')) + ' (Player ' + (cfg.mySeat + 1) + ').');
   }
 
@@ -166,17 +181,37 @@
     switch (msg.type) {
       case 'joined':
         state.room = msg.room; state.seat = msg.seat; state.mySeat = msg.spectator ? null : msg.seatIdx;
+        state.roomMode = msg.mode || null; state.roomSize = msg.size || 2;
         if (msg.spectator) { setStatus('Watching room "' + msg.room + '" — waiting for the match to start…', 'ok'); break; }
-        log2('joined room ' + msg.room + ' as Player ' + (msg.seatIdx + 1) + ' — waiting for opponent…');
-        setStatus('In room "' + msg.room + '" as Player ' + (msg.seatIdx + 1) + '. Waiting for an opponent to join…', 'ok');
+        log2('joined ' + roomKind(state.roomMode, state.roomSize) + ' room ' + msg.room + ' as ' + seatLabel(state.roomMode, msg.seatIdx) + ' — waiting for players…');
+        setStatus('In ' + roomKind(state.roomMode, state.roomSize) + ' room "' + msg.room + '" as ' + seatLabel(state.roomMode, msg.seatIdx) + '. Waiting for ' + (state.roomSize > 2 ? 'players' : 'an opponent') + ' to join…', 'ok');
+        break;
+      case 'bots-soon': {
+        // the room's bot countdown (re)started — or was called off (ms 0)
+        stopBotCountdown();
+        if (state.active) break;
+        if (!msg.ms) { setStatus('In room "' + (state.room || '') + '". Waiting for players to join…', 'ok'); break; }
+        var until = Date.now() + msg.ms, nb = msg.bots || 1;
+        var tickBots = function(){
+          var s = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+          if (state.active || !s) { stopBotCountdown(); if (!state.active) setStatus('Seating the bots — starting…', 'ok'); return; }
+          setStatus('Starting in ' + s + 's: ' + (nb > 1 ? nb + ' bots take the empty seats' : 'a bot takes the empty seat') + ' unless more players join.', 'ok');
+        };
+        botTimer = setInterval(tickBots, 500); tickBots();
+        break;
+      }
+      case 'bot-host':
+        // another player's screen dropped: this one may now drive the bots
+        if (window.RUBots && RUBots.setHost) RUBots.setHost(!state.spectator && msg.seat === state.mySeat);
         break;
       case 'loadout-request':
         // The room is about to start a match: confirm what this player has picked right now.
         if (!state.spectator && ws && ws.readyState === 1) { try { ws.send(JSON.stringify(Object.assign({ type:'loadout' }, currentLoadout()))); } catch(e){} }
         break;
       case 'start':
+        stopBotCountdown();
         log2('match starting…');
-        setStatus('Opponent found — starting match!', 'ok');
+        setStatus((msg.size || 2) > 2 ? 'Everyone is seated — starting match!' : 'Opponent found — starting match!', 'ok');
         startNetGame(msg);
         break;
       case 'resume':
@@ -204,7 +239,8 @@
           setStatus((msg.name || 'Your opponent') + ' reconnected — resuming.', 'ok');
           try { if (typeof log === 'function') log((msg.name || 'Your opponent') + ' reconnected.', 'imp'); } catch(e){}
         } else if (msg.event === 'join' && !state.active) {
-          setStatus((msg.name || 'An opponent') + ' joined — starting…', 'ok');
+          if ((state.roomSize || 2) > 2) setStatus((msg.name || 'A player') + ' joined — ' + ((msg.players || []).length) + ' of ' + state.roomSize + ' seats taken.', 'ok');
+          else setStatus((msg.name || 'An opponent') + ' joined — starting…', 'ok');
         }
         break;
       case 'clock':
@@ -274,11 +310,15 @@
 
   // This player's match loadout — class, Δ Deck (first 3), Area Support, Allow Evolutions — read from the menu
   // NOW. Sent on join and again whenever the room confirms loadouts before a match starts.
+  // A room's creator also sends the bots for the seats nobody takes (rooms of 3+ seats): whether to seat them, and the
+  // class / level / Δ Deck the menu holds for each seat (the room's mode, once known; before that the menu's).
   function currentLoadout(preferCls){
     var cls = preferCls || (typeof pCls !== 'undefined' && pCls) || 'light';
     var evo = (typeof evolutionsAllowed === 'function') ? !!evolutionsAllowed() : true;
     var dd = (Array.isArray(window.RU_PLAYER_DELTA_DECK) ? window.RU_PLAYER_DELTA_DECK.slice(0,3) : []);   // the format's only rule: at most 3
-    return { cls: cls, deltaDeck: dd, areaSupport: window.RU_PLAYER_AREA_SUPPORT || null, actionSupport: window.ruDeltaActionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT), evo: evo, timeControl:window.RUTime?RUTime.menu():null };
+    var mode = state.roomMode || (window.ruOnlineRoomMode ? ruOnlineRoomMode() : null);
+    return { cls: cls, deltaDeck: dd, areaSupport: window.RU_PLAYER_AREA_SUPPORT || null, actionSupport: window.ruDeltaActionSupportCounts(window.RU_PLAYER_ACTION_SUPPORT), evo: evo, timeControl:window.RUTime?RUTime.menu():null,
+             botFill: !!(window.ruOnlineBotFill && ruOnlineBotFill()), bots: window.ruOnlineBotPlan ? ruOnlineBotPlan(mode) : null };
   }
 
   window.RUNet = {
@@ -287,6 +327,7 @@
       var myClass = o.cls || (typeof pCls !== 'undefined' && pCls) || 'light';
       state.name = name || 'Guest';
       state.intentionalClose = false;
+      if (!o._resume) { state.roomMode = null; state.roomSize = 2; }   // a new room: its kind comes with 'joined'
       state.lastConnect = { url: url, room: room, name: state.name, cls: myClass, spectator: !!o.spectator };   // remembered for auto-reconnect
       var wsUrl = url || ('ws://' + (location.hostname || 'localhost') + ':8833');
       if (ws) { try { var old = ws; ws = null; old.close(); } catch(e){} }
@@ -301,12 +342,14 @@
         // `evo` is this player's Allow-Evolutions choice (the room uses the host's — Player 1's — for the match).
         var lo = currentLoadout(o.cls);
         // clientId lets the server give us back our SAME seat on reconnect; build lets it reject a stale client.
-        var roomMode = (window.modeState && window.ruIs2v2Mode && ruIs2v2Mode(window.modeState.mode)) ? window.modeState.mode : null;
+        // mode: the menu's mode — a new room is made for exactly that (Standard 1v1, 1v1v1, Royale, 2v2 Tag / Team).
+        var roomMode = window.ruOnlineRoomMode ? ruOnlineRoomMode() : null;
         var roleEl = document.getElementById('online-role');
-        ws.send(JSON.stringify({ type:'join', mode: roomMode, role: (o.role || (roleEl && roleEl.value) || null), room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, timeControl:lo.timeControl, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
+        ws.send(JSON.stringify({ type:'join', mode: roomMode, role: (o.role || (roleEl && roleEl.value) || null), room:room, name:state.name, cls:lo.cls, deltaDeck:lo.deltaDeck, areaSupport:lo.areaSupport, actionSupport:lo.actionSupport, evo:lo.evo, timeControl:lo.timeControl, botFill:lo.botFill, bots:lo.bots, build: state.loadedBuild || null, clientId: clientId(), spectator: !!o.spectator })); };
       ws.onmessage = function(ev){ if (thisWs !== ws) return; try { handle(JSON.parse(ev.data)); } catch(e){ console.error('[net] bad msg', e); } };
       ws.onclose = function(){ if (thisWs !== ws) return;   // superseded by a newer socket (reconnect) — ignore
         state.connected = false; log2('disconnected');
+        if (window.RUBots && RUBots.setHost) RUBots.setHost(false);   // the room hands the bots to a connected player (back on resume)
         // Unexpected drop while a match is live → try to reconnect to the same room (the server holds our seat and
         // replays the log so we resume). A deliberate leave (intentionalClose) or a non-active state just tidies up.
         if (state.active && !state.intentionalClose) { setStatus('Connection lost — reconnecting…', 'err'); scheduleReconnect(); }
@@ -320,6 +363,15 @@
     state: function(){ return JSON.parse(JSON.stringify(state)); },
     isActive: function(){ return !!state.active; },
     clockProgress:function(progress){if(!state.spectator&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'clock-progress',progress}));},
+    // The screen driving the bots sends a bot's input to the room as that bot's seat; the room relays it to every screen
+    // (this one too) and each applies it in room order. false: not sent.
+    sendBotAction: function(a){
+      var i = ENGINE_SEATS.indexOf(a && a.s);
+      if (i < 0 || !state.active || state.spectator || !ws || ws.readyState !== 1) return false;
+      ws.send(JSON.stringify({ type:'action', action:a, as:i })); state.sent++;
+      histPush({ dir:'out-bot', a: brief(a), made: a.sig });
+      return true;
+    },
     oppName: function(){ return oppName(); },
     // Vote to rematch (true) or decline/cancel (false). When BOTH seats vote true the server deals a fresh
     // identically-seeded game (a new 'start') and both clients rebuild in the same room.
@@ -329,7 +381,8 @@
     reportResult: function(winner){ try { if (!state.spectator && ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'result', winner: winner === 'draw' ? 'draw' : roomSeat(winner) })); } catch(e){} },
     // Leave the match for good: the room frees this seat at once (no reconnect grace) and tells the other player.
     leave: function(){ try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type:'leave' })); } catch(e){} window.RUNet.disconnect(); showLeave(false); setStatus('You left the room.'); },
-    disconnect: function(){ state.intentionalClose = true; state.active = false; clearInbox(); if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; } if (ws) { var w0 = ws; ws = null; try { w0.close(); } catch(e){} } }
+    disconnect: function(){ state.intentionalClose = true; state.active = false; clearInbox(); stopBotCountdown(); state.roomMode = null; state.roomSize = 2;
+      if (window.RUBots && RUBots.setHost) RUBots.setHost(false); if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; } if (ws) { var w0 = ws; ws = null; try { w0.close(); } catch(e){} } }
   };
 
   // ── Lobby glue (title-screen "Play Online" panel) ──

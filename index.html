@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rank Up! — Classic Mode v14.0.0</title>
-<link rel="stylesheet" href="styles.css?v=20261028">
+<link rel="stylesheet" href="styles.css?v=20261030">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap');
 </style>
@@ -43,6 +43,7 @@
       <button class="start-btn online-btn" id="online-spectate-btn" onclick="ruSpectateOnline()" title="Watch a match in progress in this room (read-only)">SPECTATE</button>
       <button class="start-btn online-btn" id="online-leaderboard-btn" onclick="ruLeaderboard()" title="Online ratings">🏆</button>
       <button class="online-leave" id="online-leave-btn" onclick="ruLeaveOnline()" style="display:none">Leave</button>
+      <label class="online-bots" id="online-bots-wrap" style="display:none" title="When you make a 1v1v1, Royale or 2v2 room: 15 seconds after a second player joins (the wait starts again whenever someone else joins), bots take every seat nobody took — playing the classes you picked for Player C / D / your partner (or the other players) at the bot level you set."><input type="checkbox" id="online-bots" checked> Bots fill empty seats</label>
     </div>
     <div class="online-status" id="online-status">Pick your class above, enter a room code, and share it. Two players in the same room start a match.</div>
   </div>
@@ -382,6 +383,8 @@ function ruInstallOnlineSeats(g,cfg){
   // SOLO with the thinking bots: the same lockstep rules, no network. Bot seats are input-driven like a remote
   // player (ai/host.js gives them their inputs); _botSeats holds each bot seat's tier (ladder key).
   if(cfg.solo){g._soloNet=true;g._botSeats=Object.assign({},cfg.solo.bots||{});}
+  // ONLINE with bots in the seats nobody took: input-driven the same way; one player's screen thinks for them (ai/host.js).
+  else if(cfg.netBots){g._botSeats=Object.assign({},cfg.netBots);}
   // Rule options come from the room (the host's choice), never from each device's own menu checkbox.
   g.allowEvolutions=(cfg.allowEvolutions!==false);
   // Both players' Δ Decks / Area Supports, so every client builds both seats' evolutions identically.
@@ -412,6 +415,8 @@ function startOnlineGame(){
   // client (before any player can act) — never on a free-running timer.
   try{ if(window.installDeltaDecks)window.installDeltaDecks(); }catch(e){ console.error(e); }
   if(G)renderAll();
+  // bots in the seats nobody took: every screen keeps their position; the one the room picks drives them (net.js)
+  if(G&&G._botSeats&&window.RUBots)window.RUBots.attach();
   setTimeout(window.ensureModeEnhancements,0);
 }
 window.startOnlineGame=startOnlineGame;
@@ -473,7 +478,7 @@ function startGame(){
   // AI-vs-AI watch pulse (the built-in bot only).
   if(G&&G.ruMode==='ai-vs-ai'&&!G._soloNet)window.ru135StartWatchPulse();
   // The thinking bots take their seats.
-  if(G&&G._soloNet&&window.RUBots)window.RUBots.attach();
+  if(G&&G._botSeats&&window.RUBots)window.RUBots.attach();
   // Gauntlet/tournament bracket intro.
   if(G){
     if(mode==='gauntlet'){G.ruMode='gauntlet';G.gauntlet=Object.assign({},window.RU1355_GAUNTLET);try{log('Gauntlet Mode: Match '+G.gauntlet.round+' of '+G.gauntlet.order.length+'. Route is custom for '+window.clsNameRU135(pCls)+'.','imp');}catch(e){}}
@@ -487,19 +492,42 @@ window.startGame=startGame;
 // The lockstep config for a two-seat solo match with the thinking bots (null when they can't run here, or for a
 // mode they don't cover yet). The human is Seat 1 ('player'); in AI vs AI both seats are bots and nobody acts here.
 // Each bot seat keeps its chosen tier (ladder key) and its Δ Deck / Area Support, chosen for its class and tier.
+// A bot seat's level, Δ Deck and Area Support for a match in `mode` (solo matches and the bots an online room seats
+// are built alike). A bot running a Δ Deck sometimes fields Amalgamation Nation (more often at higher tiers).
+function ruBotTier(w,mode){return window.ru14KeyFor?window.ru14KeyFor(w,mode):'basic-1';}
+function ruBotDelta(cls,w,mode){return (evolutionsAllowed()&&window.ruBotDeltaDeckFor)?window.ruBotDeltaDeckFor(cls,w,mode):[];}
+function ruBotArea(w,deck,mode){
+  if(typeof window.RU_AI_AREA_SUPPORT!=='undefined')return window.RU_AI_AREA_SUPPORT||null;
+  if(!deck||!deck.length)return null;
+  const i=(window.RU_LADDER_ORDER||[]).indexOf(ruBotTier(w,mode));
+  return Math.random()<Math.min(0.5,0.15+0.35*Math.max(0,i)/13)?'area-amalgamation-nation':null;
+}
+// ── ONLINE ROOMS ── a new room is made for the menu's mode: Standard 1v1, 1v1v1, Royale, 2v2 Tag or Team (the modes
+// with no online table — Tournament, Gauntlet, AI vs AI — make a Standard room). null = Standard.
+const RU_ONLINE_MODES=['1v1v1','royale4','tag2v2','team2v2'];
+function ruOnlineRoomMode(){const s=document.getElementById('ru135-mode-select');const m=(s&&s.value)||(window.modeState&&window.modeState.mode)||'standard';return RU_ONLINE_MODES.indexOf(m)!==-1?m:null;}
+// Bots take the seats nobody took (rooms of 3+ seats)?
+function ruOnlineBotFill(){const c=document.getElementById('online-bots');return !!(c&&c.checked);}
+// The bots for a room of `mode`: one loadout per room seat index (null for the creator's seat). Seat indexes are engine
+// seats 'player', 'ai', 'ai2', 'ai3' (2v2: A, C, D, B); each bot plays the menu's pick for that seat (Player C / D / your
+// partner B, or the 2nd–4th player), at the menu's bot level, with a Δ Deck / Area Support of its own.
+function ruOnlineBotPlan(mode){
+  if(RU_ONLINE_MODES.indexOf(mode)===-1)return null;
+  const seats=mode==='1v1v1'?['player','ai','ai2']:['player','ai','ai2','ai3'],pick={ai:aCls,ai2:aCls2,ai3:aCls3};
+  return seats.map(function(w){
+    if(w==='player')return null;
+    const cls=(pick[w]&&CM[pick[w]])?pick[w]:(aCls||pCls||'light'),dd=ruBotDelta(cls,w,mode);
+    return {cls:cls,tier:ruBotTier(w,mode),deltaDeck:dd,areaSupport:ruBotArea(w,dd,mode)};
+  });
+}
+window.ruOnlineRoomMode=ruOnlineRoomMode;window.ruOnlineBotFill=ruOnlineBotFill;window.ruOnlineBotPlan=ruOnlineBotPlan;
 function ruSoloBotConfig(mode){
   if(!window.RUBots||!window.RUBots.available())return null;
   if(['standard','tournament','gauntlet','ai-vs-ai','1v1v1','royale4','tag2v2','team2v2'].indexOf(mode)===-1)return null;
   const aivai=mode==='ai-vs-ai', evo=evolutionsAllowed();
-  const tierOf=function(w){return window.ru14KeyFor?window.ru14KeyFor(w,mode):'basic-1';};
-  const botDelta=function(cls,w){return (evo&&window.ruBotDeltaDeckFor)?window.ruBotDeltaDeckFor(cls,w,mode):[];};
-  // a bot running a Δ Deck sometimes fields Amalgamation Nation (more often at higher tiers)
-  const botArea=function(w,deck){
-    if(typeof window.RU_AI_AREA_SUPPORT!=='undefined')return window.RU_AI_AREA_SUPPORT||null;
-    if(!deck||!deck.length)return null;
-    const i=(window.RU_LADDER_ORDER||[]).indexOf(tierOf(w));
-    return Math.random()<Math.min(0.5,0.15+0.35*Math.max(0,i)/13)?'area-amalgamation-nation':null;
-  };
+  const tierOf=function(w){return ruBotTier(w,mode);};
+  const botDelta=function(cls,w){return ruBotDelta(cls,w,mode);};
+  const botArea=function(w,deck){return ruBotArea(w,deck,mode);};
   const dA=aivai?botDelta(pCls,'player'):(evo&&window.legalDeltaDeck(window.RU_PLAYER_DELTA_DECK).ok?(window.RU_PLAYER_DELTA_DECK||[]).slice():[]);
   const dB=botDelta(aCls,'ai');
   const bots={ai:tierOf('ai')};if(aivai)bots.player=tierOf('player');
@@ -1202,7 +1230,9 @@ function initGame(){
   }else if(netCfg){
     try{
       const meS=ruLocalSeatId();
-      log('Online match: '+sideNameLabel('player')+' ('+CM[netCfg.seat0Class].name+') vs '+sideNameLabel('ai')+' ('+CM[netCfg.seat1Class].name+').'+(meS?(' You are '+ruOnlineSeatLabel(meS)+'.'):' You are spectating.'),'imp');
+      // every seat, in turn order (3-4 seat rooms name each player — and say which seats bots play)
+      const who=(sideOrder.length>2?sideOrder:['player','ai']).map(function(w){return sideNameLabel(w)+' ('+(CM[clsFor(w)]||{name:clsFor(w)}).name+(G._botSeats&&G._botSeats[w]?', bot':'')+')';});
+      log('Online match: '+who.join(sideOrder.length>2?', ':' vs ')+'.'+(meS?(' You are '+(sideOrder.length>2?sideMeta(meS).label:ruOnlineSeatLabel(meS))+'.'):' You are spectating.'),'imp');
       log(sidePossessiveLabel(firstTurn)+' turn first.','imp');
     }catch(e){}
   }
@@ -14842,6 +14872,8 @@ window.RU_V13_DELAYED_TRIGGER_NAMES={version:'v13.0.0-delayed-trigger-names',not
     if(label)label.textContent=modeState.mode==='ai-vs-ai'?'Choose AI A Combat-Class':'Choose Your Combat-Class';
     const aWrap=document.getElementById('ai-level-a-wrap');
     if(aWrap)aWrap.style.display=modeState.mode==='ai-vs-ai'?'inline-flex':'none';
+    const botsWrap=document.getElementById('online-bots-wrap');   // online: bots for the empty seats of a 3-4 seat room
+    if(botsWrap)botsWrap.style.display=RU_ONLINE_MODES.indexOf(modeState.mode)!==-1?'inline-flex':'none';
     const is3way=modeState.mode==='1v1v1';
     const isRoyale=modeState.mode==='royale4';
     const is2v2=ruIs2v2Mode(modeState.mode);
@@ -30312,7 +30344,8 @@ window.ruSpecPace=function(base){
   // checkpoint (the order every screen applies an input in: settle, checkpoint, the input) — the host keeps the
   // position the bots think about, and replays each input in exactly that order.
   function before(a){
-    var g=G_(); if(!a||!g||!g._soloNet||!window.RUBots||g._replaying||g._inInput) return;
+    var g=G_(); if(!a||!g||!g._botSeats||!window.RUBots||g._replaying||g._inInput) return;
+    if(g._netMode&&!g._soloNet&&g.timeControl&&g.timeControl.enabled) return;   // (a timed online input is applied — and noted — when the room sends it back)
     if(a.s==null) a.s=localSeat();
     try{ window.RUBots.noteInput(a); }catch(e){}
   }

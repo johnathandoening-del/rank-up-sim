@@ -86,6 +86,15 @@ replays; `MODE=tag2v2|team2v2 node tools/headless/hostsim.js` — the thinking b
 - [x] Online rooms: the creator's Mode (2v2 Tag / Team) makes a four-seat room; joiners pick "Join as opponent /
       partner" (first opponent C, next D, partner B); a four-seat start builds the match on every client
       (`tools/headless/online2v2.js`: real server, seating by role, four clients in lockstep). 2v2 results are not rated.
+- [x] Every room is made for its creator's menu mode (2026-10-30): Standard 2 seats, 1v1v1 3, Royale 4, 2v2 Tag /
+      Team 4 (Tournament / AI vs AI make a Standard room); a joiner's own menu mode never changes the room.
+- [x] Bots in empty seats (2026-10-30, "Bots fill empty seats", rooms of 3+ seats): once two people are in, the match
+      starts 15 s after the last join (each join starts the wait again) with a bot in every seat nobody took — the
+      creator's menu picks for those seats (Player C / D / partner B, or players 2–4) at the menu's bot level. One
+      person's screen drives the bots (`room.botHost`, `RUBots.setHost`): it sends each bot input to the room as the
+      bot's seat (`{as}`), and every screen applies it in room order; every screen keeps the bots' position, so when the
+      driver drops another player's screen takes over (`bot-host`). Bots count as present for the start, the clock and
+      rematches (`tools/headless/online-bots.js`).
 
 - [x] Tag: a team acts as ONE player (ruling 2026-10-27) — "each opponent" / "all players" Morale effects change a
       team's shared pool once (`ruOncePerTeam`, `ruEachOpp`), "players without a Numeral 7" / Asteroid Field judge the

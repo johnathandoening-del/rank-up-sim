@@ -52,6 +52,8 @@ body{background:var(--bg-deep);color:var(--text-main);font-family:'Crimson Pro',
 .online-btn{font-size:.72rem;letter-spacing:.14em;padding:.5rem 1.4rem;flex:0 0 auto;}
 .online-btn:hover:not(:disabled){background:rgba(201,168,76,.12);box-shadow:0 0 18px rgba(201,168,76,.25);}
 .online-btn:disabled{opacity:.4;cursor:not-allowed;}
+.online-bots{align-items:center;gap:.3rem;font-family:'Cinzel',serif;font-size:.58rem;color:var(--text-dim);white-space:nowrap;cursor:pointer;}
+.online-row-sub .online-bots input{flex:0 0 auto;margin:0;}
 .online-leave{font-family:'Cinzel',serif;font-size:.58rem;padding:.35rem .8rem;background:transparent;border:1px solid rgba(200,80,80,.5);color:#e07070;cursor:pointer;border-radius:6px;}
 .online-status{font-family:'Cinzel',serif;font-size:.6rem;line-height:1.5;letter-spacing:.04em;color:var(--text-dim);text-align:center;min-height:1.4em;}
 .online-status.err{color:#e08070;}

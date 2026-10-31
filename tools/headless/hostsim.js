@@ -43,6 +43,7 @@ function game(g, tierA, tierB) {
   for (let steps = 0; steps < 4000; steps++) {
     const d = page.run('__M.decider()');
     if (d.kind === 'over' || d.kind === 'none') break;
+    if (process.env.PROGRESS && steps % Number(process.env.PROGRESS) === 0) console.log(`  step ${steps} turn ${page.run('G._turnNo||0')} ${page.run('G.phase')} ${d.kind} ${d.seat} ${Math.round((Date.now() - t0) / 1000)} s`);   // PROGRESS=n: a line every n steps
     const tier = bots[d.seat] || tierB;
     if (!anchor) { anchor = snap(); path = []; }
     // the worker: restore + replay + plan
